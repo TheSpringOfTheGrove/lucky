@@ -32,6 +32,8 @@
 - 管理端 API 统一位于 `/admin-api/lottery/**`，公开房间 API 位于 `/app-api/lottery/room/**`。前者依赖登录租户上下文；后者必须显式传 `tenantId`，再由服务层写入租户上下文，禁止相信客户端提交的任意业务 `tenant_id`。
 - 所有 `lucky5_*` 业务表都包含 `tenant_id`、`user_id`、审计字段与逻辑删除字段；DO 继承 `LotteryUserBaseDO`。`LotteryUserDataPermissionRule` 允许 `super_admin` 查看租户内全部数据，其他后台角色只能访问当前 `user_id`，不要在 Mapper 或 Service 中绕开这条规则。
 - 公开会员端没有后台登录上下文，查询时必须从会员记录取得归属 `user_id` 并显式限定。赔率和快捷指令使用“本人优先、本人完全没有时回退 `user_id=1` 超级管理员默认值”；本人第一次保存后即形成独立配置。其他业务配置不回退。
+- 系统管理创建后台用户后会同步发布 `AdminUserCreatedMessage`，Lottery 侧由 `LotteryOwnerInitializationService` 在同一事务内把该用户初始化为独立老板盘口。租户 1 优先分配兼容角色代码 `crm_admin`（界面名称“老板账号”），其它租户回退 `tenant_admin`；初始化失败必须让账号创建整体回滚，不能留下半初始化用户。
+- 老板初始化只补缺失数据、绝不覆盖已有配置：复制超级管理员的安全配置、赔率、开关定义、吃码额度和快捷指令，房间固定默认关闭且默认老板模式；玩家链接、设备号、盘口地址/账号/密码、盘口连接状态和第三方登录信息必须清空。快捷指令使用按租户+用户+模板 ID 生成的稳定 UUID，避免主键与超级管理员冲突。若当前租户没有模板，则使用代码和 `lucky5-business.sql` 中的内置基线。
 - 前端集中在 `lucky5-ui/src/views/lottery`、`src/api/lottery` 和 `src/store/modules/lottery.ts`。多数管理页面从 `/lottery/bootstrap` 取得租户内快照，再调用细粒度写接口。
 - 菜单基线只保留当前系统原有的“系统管理”“基础设施”，并加入：首页、配置管理、赔率设置、链接配置、预设订单管理、跟单列表、会员管理、会员操作管理、上下分审核、订单查询、历史记录、开奖历史记录、返水管理、吃码额度设定、吃码盈亏、消息记录。“快捷指令”是根级菜单，排序位于“系统管理”正上方，与“系统管理”平级。
 - `sql/mysql/lucky5-business.sql` 的菜单 SQL 使用递归临时表保留系统/基础设施后代，再软删除其它旧菜单。改菜单时同时检查 `system_menu`、`system_role_menu`、`system_tenant_package_menu`，不要只改前端静态路由。

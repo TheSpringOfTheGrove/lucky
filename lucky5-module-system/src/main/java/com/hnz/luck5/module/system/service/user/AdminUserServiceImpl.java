@@ -12,6 +12,7 @@ import com.hnz.luck5.framework.common.util.collection.CollectionUtils;
 import com.hnz.luck5.framework.common.util.object.BeanUtils;
 import com.hnz.luck5.framework.common.util.validation.ValidationUtils;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
+import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import com.hnz.luck5.module.infra.api.config.ConfigApi;
 import com.hnz.luck5.module.system.controller.admin.auth.vo.AuthRegisterReqVO;
 import com.hnz.luck5.module.system.controller.admin.user.vo.profile.UserProfileUpdatePasswordReqVO;
@@ -116,6 +117,12 @@ public class AdminUserServiceImpl implements AdminUserService {
         if (CollectionUtil.isNotEmpty(user.getPostIds())) {
             userPostMapper.insertBatch(convertList(user.getPostIds(),
                     postId -> new UserPostDO().setUserId(user.getId()).setPostId(postId)));
+        }
+
+        // 2.3 通知业务模块初始化该账号的独立数据
+        Long tenantId = TenantContextHolder.getTenantId();
+        if (tenantId != null) {
+            adminUserProducer.sendUserCreatedMessage(tenantId, user.getId(), user.getUsername());
         }
 
         // 3. 记录操作日志上下文

@@ -6,6 +6,7 @@ import com.hnz.luck5.framework.common.exception.ServiceException;
 import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.framework.common.util.collection.ArrayUtils;
 import com.hnz.luck5.framework.common.util.collection.CollectionUtils;
+import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import com.hnz.luck5.framework.test.core.ut.BaseDbUnitTest;
 import com.hnz.luck5.module.infra.api.config.ConfigApi;
 import com.hnz.luck5.module.infra.api.file.FileApi;
@@ -30,6 +31,7 @@ import com.hnz.luck5.module.system.service.oauth2.OAuth2TokenService;
 import com.hnz.luck5.module.system.service.permission.PermissionService;
 import com.hnz.luck5.module.system.service.tenant.TenantService;
 import jakarta.annotation.Resource;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
@@ -95,6 +97,11 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         when(configApi.getConfigValueByKey(USER_INIT_PASSWORD_KEY)).thenReturn("lucky5yuanma");
     }
 
+    @AfterEach
+    public void after() {
+        TenantContextHolder.clear();
+    }
+
     @Test
     public void testCreatUser_success() {
         // 准备参数
@@ -126,6 +133,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         when(passwordEncoder.encode(eq(reqVO.getPassword()))).thenReturn("lucky5yuanma");
 
         // 调用
+        TenantContextHolder.setTenantId(1L);
         Long userId = userService.createUser(reqVO);
         // 断言
         AdminUserDO user = userMapper.selectById(userId);
@@ -136,6 +144,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         List<UserPostDO> userPosts = userPostMapper.selectListByUserId(user.getId());
         assertEquals(1L, userPosts.get(0).getPostId());
         assertEquals(2L, userPosts.get(1).getPostId());
+        verify(adminUserProducer).sendUserCreatedMessage(1L, userId, reqVO.getUsername());
     }
 
     @Test

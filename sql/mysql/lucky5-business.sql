@@ -435,6 +435,18 @@ INSERT IGNORE INTO `lucky5_odd` (`tenant_id`,`user_id`,`code`,`play`,`item`,`rat
 (1,1,'regex2d','二定位','',96,'启用'),(1,1,'regex1d','一定位','',9,'启用'),
 (1,1,'regexlh','龙虎','',0,'启用'),(1,1,'regexh','和','',0,'启用');
 
+INSERT IGNORE INTO `lucky5_quick_command` (`id`,`tenant_id`,`user_id`,`label`,`content`,`sort`,`enabled`) VALUES
+('QC01',1,1,'11335566778899倒四定各0.5','11335566778899倒四定各0.5',1,b'1'),
+('QC02',1,1,'2456789百0245689个各20','2456789百0245689个各20',2,b'1'),
+('QC03',1,1,'123456780头123467890百234567890十0123456789个。两数合012345除三重除三兄弟各0.5','123456780头123467890百234567890十0123456789个。两数合012345除三重除三兄弟各0.5',3,b'1'),
+('QC04',1,1,'6789千13579百0123457十各5','6789千13579百0123457十各5',4,b'1'),
+('QC05',1,1,'头13579百24680十1245789各0.5','头13579百24680十1245789各0.5',5,b'1'),
+('QC06',1,1,'百13579十1245798尾02468各0.5','百13579十1245798尾02468各0.5',6,b'1'),
+('QC07',1,1,'023456789千023456789百012345679十012345679个。含016789千十合01234579千个合23456789百十合01245679除三重除两双重各0.5','023456789千023456789百012345679十012345679个。含016789千十合01234579千个合23456789百十合01245679除三重除两双重各0.5',7,b'1'),
+('QC08',1,1,'1243790头1234567百1234789尾各2','1243790头1234567百1234789尾各2',8,b'1'),
+('QC09',1,1,'0123456789千百十个。含347两数合024取两兄弟各0.5','0123456789千百十个。含347两数合024取两兄弟各0.5',9,b'1'),
+('QC10',1,1,'百02468十1245789尾13579各0.5','百02468十1245789尾13579各0.5',10,b'1');
+
 INSERT INTO `system_menu` (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`path`,`icon`,`component`,`component_name`,`status`,`visible`,`keep_alive`,`always_show`,`creator`,`updater`,`deleted`) VALUES
 (7000,'首页','lottery:dashboard:query',2,10,0,'/lucky5/dashboard','ep:data-board','lottery/dashboard/index','LotteryDashboard',0,b'0',b'1',b'1','1','1',b'0'),
 (7010,'配置管理','lottery:config:manage',2,20,0,'/lucky5/config','ep:setting','lottery/config/index','LotteryConfig',0,b'1',b'1',b'1','1','1',b'0'),
@@ -474,9 +486,12 @@ UPDATE `system_menu` SET `deleted`=b'1' WHERE `id` NOT IN (SELECT `id` FROM `luc
 UPDATE `system_menu` SET `deleted`=b'0' WHERE `id` IN (SELECT `id` FROM `lucky5_retained_menu`);
 UPDATE `system_role_menu` rm LEFT JOIN `system_menu` m ON m.id=rm.menu_id SET rm.deleted=b'1' WHERE m.id IS NULL OR m.deleted=b'1';
 
+UPDATE `system_role` SET `name`='老板账号',`remark`='Lucky5 独立老板账号',`updater`='1'
+WHERE `tenant_id`=1 AND `code`='crm_admin' AND `deleted`=b'0';
+
 INSERT INTO `system_role_menu` (`role_id`,`menu_id`,`creator`,`updater`,`tenant_id`)
 SELECT r.id,m.id,'1','1',r.tenant_id FROM system_role r JOIN system_menu m ON m.id BETWEEN 7000 AND 7190
-WHERE r.deleted=b'0' AND r.code IN ('super_admin','tenant_admin')
+WHERE r.deleted=b'0' AND r.code IN ('super_admin','tenant_admin','crm_admin')
 AND NOT EXISTS (SELECT 1 FROM system_role_menu rm WHERE rm.role_id=r.id AND rm.menu_id=m.id AND rm.deleted=b'0');
 
 SET SESSION group_concat_max_len=1000000;

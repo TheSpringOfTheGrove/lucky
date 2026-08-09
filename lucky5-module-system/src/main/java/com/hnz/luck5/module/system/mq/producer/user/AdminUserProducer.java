@@ -1,5 +1,6 @@
 package com.hnz.luck5.module.system.mq.producer.user;
 
+import com.hnz.luck5.module.system.api.message.user.AdminUserCreatedMessage;
 import com.hnz.luck5.module.system.api.message.user.AdminUserProfileUpdateMessage;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +18,14 @@ public class AdminUserProducer {
 
     @Resource
     private ApplicationContext applicationContext;
+
+    /**
+     * 发送后台用户创建消息。订阅方与用户创建事务同步执行。
+     */
+    public void sendUserCreatedMessage(Long tenantId, Long userId, String username) {
+        applicationContext.publishEvent(new AdminUserCreatedMessage()
+                .setTenantId(tenantId).setUserId(userId).setUsername(username));
+    }
 
     /**
      * 发送 {@link AdminUserProfileUpdateMessage} 消息
