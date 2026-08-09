@@ -262,7 +262,7 @@ public class LotteryServiceImpl implements LotteryService {
         return map("id", item.getId(), "channel", item.getChannel(), "member", item.getMember(), "period", item.getPeriod(),
                 "content", item.getContent(), "status", item.getStatus(), "orderId", item.getOrderId(), "error", item.getError(),
                 "commandType", item.getCommandType(), "reply", item.getReply(), "processedAt", date(item.getProcessedAt()),
-                "time", date(item.getCreateTime()));
+                "createdAt", date(item.getCreateTime()), "time", date(item.getCreateTime()));
     }
 
     private Map<String, Object> chimaConfigMap(ChimaConfigDO item) {

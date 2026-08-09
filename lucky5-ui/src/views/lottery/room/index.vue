@@ -45,6 +45,7 @@ const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
 const sessionStartedAt = ref(new Date().toISOString())
+const autoFollowMessages = ref(true)
 const scratchVisible = ref(false)
 const scratchRemaining = ref(0)
 const autoScratch = ref(localStorage.getItem('lucky5-auto-scratch') !== 'false')
@@ -74,7 +75,7 @@ const chatMessages = computed<ChatItem[]>(() => {
   const sourceDates = [
     ...session.value.messages.map((item) => item.createdAt),
     ...session.value.amountRecords.map((item) => item.createdAt)
-  ]
+  ].filter(Boolean)
   const firstDate = sourceDates.sort()[0] || sessionStartedAt.value
   const messages: ChatItem[] = [
     {
@@ -142,7 +143,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       })
     }
     messages.push({
-      id: `robot-message-${message.id}-${message.status}`,
+      id: `robot-message-${message.id}`,
       kind: 'robot',
       type: order ? 'order' : 'text',
       content: order
@@ -175,7 +176,7 @@ const chatMessages = computed<ChatItem[]>(() => {
     }
     if (!relatedMessage) {
       messages.push({
-        id: `robot-amount-${amountRecord.id}-${amountRecord.status}`,
+        id: `robot-amount-${amountRecord.id}`,
         kind: 'robot',
         type: 'amount',
         content: `${amountRecord.type}${isMemberRequest ? '申请' : ''}${amountRecord.status}`,
@@ -188,7 +189,13 @@ const chatMessages = computed<ChatItem[]>(() => {
   }
 
   messages.push(...localMessages.value)
-  messages.sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf())
+  messages.sort((a, b) => {
+    const left = dayjs(a.createdAt)
+    const right = dayjs(b.createdAt)
+    const timeDifference =
+      (left.isValid() ? left.valueOf() : 0) - (right.isValid() ? right.valueOf() : 0)
+    return timeDifference || a.id.localeCompare(b.id)
+  })
   return messages.map((item, index) => {
     const previous = messages[index - 1]
     return {
@@ -209,6 +216,7 @@ const keyboardRows = [
 
 let refreshTimer: number | undefined
 let countdownTimer: number | undefined
+let sessionRequestSequence = 0
 
 const money = (value: number) => Number(value || 0).toFixed(2)
 const receiptText = (value: string) => value.replace(/\n点击退码\s*$/, '')
@@ -225,6 +233,13 @@ const orderStatusClass = (status: string) => {
 const scrollToBottom = async (behavior: ScrollBehavior = 'auto') => {
   await nextTick()
   chatRef.value?.scrollTo({ top: chatRef.value.scrollHeight, behavior })
+  autoFollowMessages.value = true
+}
+
+const handleChatScroll = () => {
+  const stream = chatRef.value
+  if (!stream) return
+  autoFollowMessages.value = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 80
 }
 
 const loadSession = async (quiet = false) => {
@@ -233,10 +248,12 @@ const loadSession = async (quiet = false) => {
     loading.value = false
     return
   }
+  const requestSequence = ++sessionRequestSequence
   if (!quiet) loading.value = true
   try {
     const previousDrawPeriod = session.value?.draws[0]?.period || ''
     const nextSession = await getRoomSessionApi(credential.value)
+    if (requestSequence !== sessionRequestSequence) return
     session.value = nextSession
     scratchRemaining.value = nextSession.issue.remainingSeconds
     const nextDrawPeriod = nextSession.draws[0]?.period || ''
@@ -251,9 +268,10 @@ const loadSession = async (quiet = false) => {
     }
     error.value = ''
   } catch (reason: any) {
+    if (requestSequence !== sessionRequestSequence) return
     error.value = reason?.message || '会员链接已失效'
   } finally {
-    loading.value = false
+    if (requestSequence === sessionRequestSequence) loading.value = false
   }
 }
 
@@ -342,8 +360,15 @@ const cancelOrder = async (order: RoomOrder) => {
 }
 
 watch(
-  () => chatMessages.value.at(-1)?.id,
-  () => void scrollToBottom()
+  () => {
+    const lastMessage = chatMessages.value.at(-1)
+    return lastMessage
+      ? `${lastMessage.id}:${lastMessage.order?.status || ''}:${lastMessage.content}`
+      : ''
+  },
+  () => {
+    if (autoFollowMessages.value) void scrollToBottom()
+  }
 )
 
 watch(
@@ -407,7 +432,12 @@ onBeforeUnmount(() => {
         @update:auto-popup="updateAutoScratch"
       />
 
-      <main ref="chatRef" class="chat-stream" aria-live="polite">
+      <main
+        ref="chatRef"
+        class="chat-stream"
+        aria-live="polite"
+        @scroll.passive="handleChatScroll"
+      >
         <article
           v-for="message in chatMessages"
           :key="message.id"
@@ -1314,4 +1344,3 @@ onBeforeUnmount(() => {
   }
 }
 </style>
-
