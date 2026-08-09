@@ -139,11 +139,9 @@ public class Wa55MarketClient {
                 String period = text(first(row, "period_no", "PeriodNo", "period"));
                 String drawResult = digitFields(row);
                 if (drawResult.isEmpty()) {
-                    String direct = text(first(row, "result", "draw_no", "DrawNo")).replaceAll("\\D", "");
-                    if (!direct.isEmpty() && direct.length() < 5) direct = "0".repeat(5 - direct.length()) + direct;
-                    drawResult = direct.length() > 5 ? direct.substring(0, 5) : direct;
+                    drawResult = normalizeDirectResult(text(first(row, "result", "draw_no", "DrawNo")));
                 }
-                if (!period.matches("\\d+") || !drawResult.matches("\\d{5}")) continue;
+                if (!period.matches("\\d+")) continue;
                 result.add(new Draw(period, drawResult,
                         date(first(row, "draw_datetime", "DrawDatetime", "draw_time", "DrawTime", "open_time")),
                         date(first(row, "period_datetime", "PeriodDatetime", "update_time", "UpdateTime", "updated_at")),
@@ -158,10 +156,15 @@ public class Wa55MarketClient {
         for (String key : List.of("thousand_no", "hundred_no", "ten_no", "one_no", "ball5")) {
             JsonNode value = first(row, key, pascal(key));
             String digit = text(value).replaceAll("\\D", "");
-            if (digit.isEmpty()) return "";
-            result.append(digit.charAt(digit.length() - 1));
+            if (digit.length() != 1) return "";
+            result.append(digit);
         }
         return result.toString();
+    }
+
+    String normalizeDirectResult(String raw) {
+        String result = raw == null ? "" : raw.replaceAll("\\D", "");
+        return result.matches("\\d{5}") ? result : "";
     }
 
     private JsonNode jsonRequest(Session session, String path) {

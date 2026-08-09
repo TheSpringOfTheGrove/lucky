@@ -218,7 +218,8 @@ public class LotteryController {
 
     @PostMapping("/draws/{period}/settle")
     @PreAuthorize("@ss.hasPermission('lottery:draw:manage')")
-    public CommonResult<Map<String, Object>> settlePeriod(@PathVariable String period, @RequestBody LotteryReqVO.Settle reqVO) {
+    public CommonResult<Map<String, Object>> settlePeriod(@PathVariable String period,
+                                                           @Valid @RequestBody LotteryReqVO.Settle reqVO) {
         return success(lotteryService.settlePeriod(period, reqVO));
     }
 

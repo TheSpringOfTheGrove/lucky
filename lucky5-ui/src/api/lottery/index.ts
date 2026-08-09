@@ -84,8 +84,8 @@ export const processIncomingMessageApi = (data: Record<string, any>) =>
 
 export const cancelOrderApi = (id: string) => request.post({ url: `${base}/orders/${id}/cancel` })
 
-export const settlePeriodApi = (period: string, result = '') =>
-  request.post({ url: `${base}/draws/${period}/settle`, data: result ? { result } : {} })
+export const settlePeriodApi = (period: string, result: string, reason: string) =>
+  request.post({ url: `${base}/draws/${period}/settle`, data: { result, reason } })
 
 export const setIssueStatusApi = (period: string, status: 'open' | 'close') =>
   request.post({ url: `${base}/issues/${encodeURIComponent(period)}/${status}` })
@@ -126,5 +126,4 @@ export const deleteFollowOrderApi = (id: string) =>
 
 export const markMessageApi = (id: number, status: string) =>
   request.patch({ url: `${base}/messages/${id}`, data: { status } })
-
 

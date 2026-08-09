@@ -6,15 +6,37 @@ import { useLucky5Store } from '@/store/modules/lottery'
 const store = useLucky5Store()
 const settleVisible = ref(false)
 const issuePeriod = ref('')
-const form = reactive({ period: '', result: '' })
+const form = reactive({ period: '', result: '', reason: '' })
 const issue = computed(() => store.market.issue)
 
 const submit = async () => {
-  if (!form.period.trim() || !form.result.trim()) {
-    ElMessage.warning('请填写期号和开奖号码')
+  const normalizedResult = form.result.replace(/[,，\s]/g, '')
+  if (!form.period.trim() || !normalizedResult || !form.reason.trim()) {
+    ElMessage.warning('请填写期号、开奖号码和人工开奖原因')
     return
   }
-  const saved: any = await store.settlePeriod(form.period.trim(), form.result.trim())
+  if (!/^\d{5}$/.test(normalizedResult)) {
+    ElMessage.warning('开奖号码必须是完整的五位数字')
+    return
+  }
+  if (normalizedResult === '00000') {
+    ElMessage.error('00000 属于异常开奖号码，禁止结算和派奖')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认使用 ${normalizedResult} 对 ${form.period.trim()} 期执行人工开奖、结算和派奖？`,
+      '人工开奖二次确认',
+      { type: 'warning', confirmButtonText: '确认结算', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  const saved: any = await store.settlePeriod(
+    form.period.trim(),
+    normalizedResult,
+    form.reason.trim()
+  )
   if (saved) {
     settleVisible.value = false
     const result = saved.data
@@ -63,10 +85,21 @@ const changeIssue = async (status: 'open' | 'close') => {
         <el-button type="primary" @click="settleVisible = true">手动开奖/结算</el-button>
       </div>
       <el-alert
-        title="盘口同步会自动驱动开盘、封盘和开奖；老板模式无开奖源时可使用手动操作。自动结算具备重复处理保护。"
+        title="只有开奖API二次确认的正常五位号码才会自动结算；00000 和非法号码会标记异常并停止派奖。"
         type="info"
         :closable="false"
       />
+    </el-card>
+
+    <el-card v-if="store.drawAlerts.length" shadow="never" class="mb-16px">
+      <template #header><strong>开奖确认与异常</strong></template>
+      <el-table :data="store.drawAlerts" border>
+        <el-table-column prop="period" label="期号" min-width="150" />
+        <el-table-column prop="status" label="状态" min-width="140" />
+        <el-table-column prop="result" label="API号码" min-width="120" />
+        <el-table-column prop="drawConfirmations" label="确认次数" min-width="100" />
+        <el-table-column prop="error" label="说明" min-width="260" />
+      </el-table>
     </el-card>
 
     <el-card shadow="never">
@@ -88,6 +121,15 @@ const changeIssue = async (status: 'open' | 'close') => {
         <el-form-item label="开奖号码"
           ><el-input v-model="form.result" placeholder="例如：12345"
         /></el-form-item>
+        <el-form-item label="开奖原因"
+          ><el-input
+            v-model="form.reason"
+            type="textarea"
+            :rows="3"
+            maxlength="500"
+            show-word-limit
+            placeholder="请填写人工开奖原因"
+        /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="settleVisible = false">取消</el-button>
@@ -105,5 +147,3 @@ const changeIssue = async (status: 'open' | 'close') => {
   margin: 16px 0;
 }
 </style>
-
-

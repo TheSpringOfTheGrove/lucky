@@ -131,6 +131,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     amountRecords: [] as any[],
     orders: [] as any[],
     drawHistory: [] as any[],
+    drawAlerts: [] as any[],
     fakeOrders: [] as any[],
     quickCommands: [] as any[],
     followOrders: [] as any[],
@@ -190,6 +191,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
         this.amountRecords = data.amountRecords
         this.orders = data.orders
         this.drawHistory = data.drawHistory
+        this.drawAlerts = data.drawAlerts || []
         this.fakeOrders = data.fakeOrders
         this.quickCommands = data.quickCommands || []
         this.followOrders = data.followOrders
@@ -328,8 +330,8 @@ const useLucky5StoreBase = defineStore('lucky5', {
     cancelOrder(id: string) {
       return this.perform(() => cancelOrderApi(id), '订单已退码')
     },
-    settlePeriod(period: string, result = '') {
-      return this.perform(() => settlePeriodApi(period, result), '期号已结算')
+    settlePeriod(period: string, result: string, reason: string) {
+      return this.perform(() => settlePeriodApi(period, result, reason), '期号已结算')
     },
     setIssueStatus(period: string, status: 'open' | 'close') {
       return this.perform(

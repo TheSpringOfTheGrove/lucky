@@ -26,6 +26,8 @@ public class IssueDO extends LotteryUserBaseDO {
     private LocalDateTime drawTime;
     private LocalDateTime drawUpdatedAt;
     private String result;
+    private Integer drawConfirmations;
+    private LocalDateTime drawFirstSeenAt;
     private String source;
     private String rawSnapshot;
     private String error;

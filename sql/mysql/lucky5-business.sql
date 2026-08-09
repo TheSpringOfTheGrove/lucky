@@ -208,6 +208,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_issue` (
   `market_status` int NULL, `remaining_seconds` int NOT NULL DEFAULT 0, `server_time` datetime NULL,
   `next_period` varchar(40) NOT NULL DEFAULT '', `opened_at` datetime NULL, `closed_at` datetime NULL,
   `draw_time` datetime NULL, `draw_updated_at` datetime NULL, `result` varchar(100) NOT NULL DEFAULT '',
+  `draw_confirmations` int NOT NULL DEFAULT 0, `draw_first_seen_at` datetime NULL,
   `source` varchar(50) NOT NULL DEFAULT '盘口', `raw_snapshot` json NULL, `error` varchar(1000) NOT NULL DEFAULT '',
   `settlement_started_at` datetime NULL, `settled_at` datetime NULL, `order_sequence` int NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -216,6 +217,21 @@ CREATE TABLE IF NOT EXISTS `lucky5_issue` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_period` (`tenant_id`,`user_id`,`period`,`deleted`),
   KEY `idx_lucky5_issue_status` (`tenant_id`,`user_id`,`status`,`update_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 期号';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_issue' AND column_name='draw_confirmations')=0,
+  'ALTER TABLE `lucky5_issue` ADD COLUMN `draw_confirmations` int NOT NULL DEFAULT 0 AFTER `result`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_issue' AND column_name='draw_first_seen_at')=0,
+  'ALTER TABLE `lucky5_issue` ADD COLUMN `draw_first_seen_at` datetime NULL AFTER `draw_confirmations`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_issue_transition` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `period` varchar(40) NOT NULL,

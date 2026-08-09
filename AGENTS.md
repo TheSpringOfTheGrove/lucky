@@ -44,8 +44,9 @@
 - 退码只能操作会员自己的未开奖订单，且要求 `openCancel`；事务内恢复余额和总下注并同步消息状态。结算按用户+期号幂等，同开奖结果重复调用直接返回 `alreadySettled`，不同结果拒绝；逐注计算派彩、更新订单/会员/消息，并生成中奖结算消息。
 - 盘口只读协议已迁移到 `Wa55MarketClient`：使用浏览器 User-Agent 登录 `/Member/DoLogin`，从 `GetMemberPrint`、`GetCurrentPeriodStatus`、`GetDrawNoTable` 读取余额、期号和开奖。盘口返回字段存在多种大小写/旧版别名，特别是 `last_seconds`、`system_db_now` 和五个号码字段；修改解析时要保留前导零并运行 `Wa55MarketClientTest`。
 - 盘口密码沿用旧项目 `v1:iv:tag:ciphertext` AES-256-GCM 格式，由 `MARKET_CREDENTIAL_KEY` 外部注入；保存空密码或 `********` 必须保留现有密文，禁止再写 `externalized` 等占位值。Compose 的默认密钥仅供本地兼容迁移数据，生产环境必须覆盖。
-- `LotteryMarketSyncService` 按 `tenant_id + user_id` 独立同步，每 30 秒刷新盘口、每 5 秒领取最多 10 个 `DRAWN` 期号结算。定时任务没有登录上下文，所有查询和结算都必须显式限定用户并在对应 `TenantUtils.execute(...)` 内运行；禁止把一个用户的期号、订单或余额写到另一个用户。
-- 开奖只接受经过校验的五位数字，`Issue.result` 是迁移历史 placeholder 开奖的可信回填来源；不得在接口缺字段或解析失败时写入 `00000`。状态流转保持 `DRAWN -> SETTLING -> SETTLED`，领取、派彩和失败回退必须幂等。
+- `LotteryMarketSyncService` 按 `tenant_id + user_id` 独立同步，每 30 秒刷新盘口、每 5 秒领取最多 10 个已确认期号结算。定时任务没有登录上下文，所有查询和结算都必须显式限定用户并在对应 `TenantUtils.execute(...)` 内运行；禁止把一个用户的期号、订单或余额写到另一个用户。
+- 自动开奖只接受开奖 API 连续两次、间隔至少 5 秒返回的同一个非 `00000` 五位号码；状态依次为 `DRAW_ABNORMAL|DRAW_PENDING -> DRAWN -> SETTLING -> SETTLED`。非法号码和 `00000` 必须保留异常状态并停止结算、派奖；结算过程中或结算后的号码冲突不得覆盖原结果，必须留待人工复核。
+- `lucky5_issue.result` 保存紧凑号码（如 `12345`），`lucky5_draw.result` 保存逗号分隔号码（如 `1,2,3,4,5`），不要混用。人工开奖必须填写原因并写入期号流转和操作日志；大小单双、单双、龙虎只能从五位号码推导，不能信任客户端覆盖值。自动和人工结算都必须按 `tenant_id + user_id + period` 幂等执行。
 - 全员流水清理和吃码记录清理是破坏性业务动作，服务端要求当前管理员密码复核；前端确认框不能代替后端校验。
 
 ## 后端约定

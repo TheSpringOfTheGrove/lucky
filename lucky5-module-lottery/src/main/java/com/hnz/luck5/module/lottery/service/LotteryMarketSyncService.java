@@ -18,14 +18,15 @@ import com.hnz.luck5.module.lottery.dal.mysql.SystemStateMapper;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,8 +50,12 @@ public class LotteryMarketSyncService {
     @Resource private SystemStateMapper systemStateMapper;
     @Resource private MarketCredentialService credentialService;
     @Resource private Wa55MarketClient marketClient;
+    @Resource private LotteryDrawVerificationService drawVerificationService;
     @Resource private TransactionTemplate transactionTemplate;
     @Lazy @Resource private LotteryService lotteryService;
+
+    @Value("${lottery.market.draw-confirmation-delay-ms:5000}")
+    private long drawConfirmationDelayMs;
 
     @Scheduled(initialDelayString = "${lottery.market.initial-delay-ms:15000}",
             fixedDelayString = "${lottery.market.sync-interval-ms:30000}")
@@ -82,6 +87,8 @@ public class LotteryMarketSyncService {
             List<IssueDO> pending = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
                     () -> issueMapper.selectList(new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getStatus, "DRAWN")
                             .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
+                            .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
+                            .ge(IssueDO::getDrawConfirmations, 2)
                             .orderByAsc(IssueDO::getPeriod).last("LIMIT 200"))));
             pending.stream().map(issue -> issue.getTenantId() + ":" + issue.getUserId()).distinct().forEach(key -> {
                 String[] parts = key.split(":", 2);
@@ -155,7 +162,8 @@ public class LotteryMarketSyncService {
         if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")) return false;
         IssueDO issue = findIssue(userId, snapshot.period());
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
-        boolean terminal = issue != null && List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus());
+        boolean terminal = issue != null && List.of("DRAW_PENDING", "DRAW_ABNORMAL", "DRAWN", "SETTLING", "SETTLED")
+                .contains(issue.getStatus());
         String nextStatus = terminal ? issue.getStatus() : snapshot.status();
         if ("OPEN".equals(nextStatus)) {
             List<IssueDO> previous = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
@@ -177,6 +185,7 @@ public class LotteryMarketSyncService {
             issue.setSource("盘口");
             issue.setError("");
             issue.setOrderSequence(0);
+            issue.setDrawConfirmations(0);
             issue.setOpenedAt("OPEN".equals(nextStatus) ? now : null);
             issue.setClosedAt("CLOSED".equals(nextStatus) ? now : null);
             fillIssueSnapshot(issue, snapshot);
@@ -186,7 +195,7 @@ public class LotteryMarketSyncService {
             if ("CLOSED".equals(nextStatus) && issue.getClosedAt() == null) issue.setClosedAt(now);
             issue.setStatus(nextStatus);
             issue.setSource("盘口");
-            issue.setError("");
+            if (!terminal) issue.setError("");
             fillIssueSnapshot(issue, snapshot);
             issueMapper.updateById(issue);
         }
@@ -206,37 +215,46 @@ public class LotteryMarketSyncService {
     }
 
     private void upsertDrawIssue(Long userId, Wa55MarketClient.Draw draw, LocalDateTime now) {
-        if (!draw.period().matches("\\d{8,20}") || !draw.result().matches("\\d{5}")) return;
+        if (!draw.period().matches("\\d{8,20}")) return;
         IssueDO issue = findIssue(userId, draw.period());
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
-        String nextStatus = "SETTLED".equals(oldStatus) ? "SETTLED" : "DRAWN";
+        LotteryDrawVerificationService.Decision decision = drawVerificationService.evaluate(oldStatus,
+                issue == null ? "" : issue.getResult(), issue == null ? 0 : issue.getDrawConfirmations(),
+                issue == null ? null : issue.getDrawFirstSeenAt(), draw.result(), now,
+                Duration.ofMillis(Math.max(0, drawConfirmationDelayMs)));
         if (issue == null) {
             issue = new IssueDO();
             issue.setUserId(userId);
             issue.setPeriod(draw.period());
-            issue.setStatus(nextStatus);
+            issue.setStatus(decision.status());
             issue.setRemainingSeconds(0);
             issue.setNextPeriod("");
-            issue.setResult(draw.result());
+            issue.setResult(decision.result());
+            issue.setDrawConfirmations(decision.confirmations());
+            issue.setDrawFirstSeenAt(decision.firstSeenAt());
             issue.setSource("盘口");
             issue.setRawSnapshot(draw.raw());
-            issue.setError("");
+            issue.setError(decision.error());
             issue.setOrderSequence(0);
             issue.setDrawTime(draw.drawTime());
             issue.setDrawUpdatedAt(draw.updatedAt());
             issueMapper.insert(issue);
         } else {
-            issue.setStatus(nextStatus);
-            issue.setResult(draw.result());
+            issue.setStatus(decision.status());
+            issue.setResult(decision.result());
+            issue.setDrawConfirmations(decision.confirmations());
+            issue.setDrawFirstSeenAt(decision.firstSeenAt());
             issue.setSource("盘口");
             issue.setRawSnapshot(draw.raw());
-            issue.setError("");
+            issue.setError(decision.error());
             issue.setDrawTime(draw.drawTime());
             issue.setDrawUpdatedAt(draw.updatedAt());
             issueMapper.updateById(issue);
         }
-        if (!Objects.equals(oldStatus, nextStatus)) {
-            transition(userId, draw.period(), oldStatus, nextStatus, "盘口开奖同步", "");
+        if (!Objects.equals(oldStatus, decision.status()) || decision.outcome() == LotteryDrawVerificationService.Outcome.CONFLICT) {
+            transition(userId, draw.period(), oldStatus, decision.status(), transitionSource(decision.outcome()),
+                    "{\"apiResult\":\"" + jsonValue(draw.result()) + "\",\"confirmations\":"
+                            + decision.confirmations() + "}");
         }
     }
 
@@ -244,10 +262,13 @@ public class LotteryMarketSyncService {
         List<IssueDO> candidates = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
                         .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
+                        .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
+                        .ge(IssueDO::getDrawConfirmations, 2)
                         .orderByAsc(IssueDO::getPeriod).last("LIMIT 10")));
         for (IssueDO issue : candidates) {
             int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
                     .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
+                    .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 2)
                     .set(IssueDO::getStatus, "SETTLING").set(IssueDO::getSettlementStartedAt, LocalDateTime.now())
                     .set(IssueDO::getError, ""));
             if (claimed != 1) continue;
@@ -257,6 +278,7 @@ public class LotteryMarketSyncService {
             } catch (RuntimeException ex) {
                 issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
                         .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getStatus, "SETTLING")
                         .set(IssueDO::getStatus, "DRAWN").set(IssueDO::getError, rootMessage(ex)));
                 transition(userId, issue.getPeriod(), "SETTLING", "DRAWN", "结算失败", rootMessage(ex));
                 LOGGER.error("期号 {} 用户 {} 自动结算失败", issue.getPeriod(), userId, ex);
@@ -347,6 +369,20 @@ public class LotteryMarketSyncService {
         Throwable current = error;
         while (current.getCause() != null && current.getCause() != current) current = current.getCause();
         return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
+    }
+
+    private String transitionSource(LotteryDrawVerificationService.Outcome outcome) {
+        return switch (outcome) {
+            case ABNORMAL -> "盘口开奖异常";
+            case CANDIDATE -> "盘口开奖待确认";
+            case VERIFIED -> "盘口开奖确认";
+            case CONFLICT -> "盘口开奖冲突";
+            case UNCHANGED -> "盘口开奖同步";
+        };
+    }
+
+    private String jsonValue(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private Map<String, Object> issueMap(Wa55MarketClient.Issue issue) {

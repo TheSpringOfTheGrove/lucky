@@ -17,6 +17,12 @@ class Wa55MarketClientTest {
         assertThat(client.digitFields(objectMapper.readTree("""
                 {"thousand_no":0,"hundred_no":3,"ten_no":3,"one_no":5,"ball5":6}
                 """))).isEqualTo("03356");
+        assertThat(client.digitFields(objectMapper.readTree("""
+                {"thousand_no":10,"hundred_no":3,"ten_no":3,"one_no":5,"ball5":6}
+                """))).isEmpty();
+        assertThat(client.normalizeDirectResult("03356")).isEqualTo("03356");
+        assertThat(client.normalizeDirectResult("0")).isEmpty();
+        assertThat(client.normalizeDirectResult("123456")).isEmpty();
     }
 
     @Test

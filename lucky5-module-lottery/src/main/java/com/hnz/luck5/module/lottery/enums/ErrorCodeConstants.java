@@ -26,4 +26,8 @@ public interface ErrorCodeConstants {
     ErrorCode PLAY_TYPE_DISABLED = new ErrorCode(2_001_000_019, "当前配置未开放该玩法");
     ErrorCode PRIVATE_BET_DISABLED = new ErrorCode(2_001_000_020, "该会员未开启私聊下注");
     ErrorCode BET_STATE_CHANGED = new ErrorCode(2_001_000_021, "下注状态已变化，请刷新后重试");
+    ErrorCode DRAW_RESULT_INVALID = new ErrorCode(2_001_000_022, "开奖号码必须是完整的五位数字");
+    ErrorCode DRAW_RESULT_ABNORMAL = new ErrorCode(2_001_000_023, "00000 属于异常开奖号码，禁止结算和派奖");
+    ErrorCode DRAW_RESULT_NOT_VERIFIED = new ErrorCode(2_001_000_024, "开奖号码尚未通过开奖API二次确认");
+    ErrorCode DRAW_REASON_REQUIRED = new ErrorCode(2_001_000_025, "人工开奖必须填写原因");
 }

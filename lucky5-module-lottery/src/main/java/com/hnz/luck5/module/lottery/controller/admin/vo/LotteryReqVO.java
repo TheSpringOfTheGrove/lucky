@@ -123,6 +123,8 @@ public final class LotteryReqVO {
     @Data
     public static class Settle {
         private String result;
+        @Size(max = 500)
+        private String reason;
         private String bigSmall;
         private String oddEven;
         private String dragonTiger;
