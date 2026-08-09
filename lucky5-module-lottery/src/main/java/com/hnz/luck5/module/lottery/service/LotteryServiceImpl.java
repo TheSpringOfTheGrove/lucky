@@ -76,9 +76,12 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private OperationLogMapper operationLogMapper;
     @Resource private MessageMapper messageMapper;
     @Resource private RebateRecordMapper rebateRecordMapper;
+    @Resource private BalanceLedgerMapper balanceLedgerMapper;
     @Resource private ChimaRecordMapper chimaRecordMapper;
     @Resource private LotteryBettingService bettingService;
     @Resource private LotteryRoomMessagePolicy roomMessagePolicy;
+    @Resource private LotteryRebateCalculator rebateCalculator;
+    @Resource private LotteryBalanceLedgerService balanceLedgerService;
     @Resource private MarketCredentialService marketCredentialService;
     @Resource private LotteryMarketSyncService marketSyncService;
     @Resource private SecurityFrameworkService securityFrameworkService;
@@ -156,10 +159,10 @@ public class LotteryServiceImpl implements LotteryService {
                 "bound", links != null) : Map.of());
         result.put("odds", has("lottery:odds:manage") ? odds.stream().map(this::oddMap).toList() : List.of());
 
-        Map<String, BigDecimal[]> betBases = calculateBetBases(orders, itemsByOrder);
-        Map<String, BigDecimal[]> rebateUsed = calculateRebateUsage(rebates);
+        boolean separateDragonRebate = loginUserId != null && enabled("dragonTigerSeparateRebate", loginUserId);
         result.put("members", hasAny("lottery:member:manage", "lottery:rebate:manage")
-                ? members.stream().map(item -> memberMap(item, betBases, rebateUsed)).toList() : List.of());
+                ? members.stream().map(item -> memberMap(item, rebateCalculator.calculate(item, orders, itemsByOrder,
+                        rebates, separateDragonRebate))).toList() : List.of());
         result.put("amountRecords", has("lottery:amount:manage") ? amountRecords.stream().map(this::amountRecordMap).toList() : List.of());
         result.put("orders", hasAny("lottery:order:manage", "lottery:history:query")
                 ? orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()))).toList() : List.of());
@@ -198,11 +201,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "maxLimit", money(item.getMaxLimit()), "status", item.getStatus());
     }
 
-    private Map<String, Object> memberMap(MemberDO item, Map<String, BigDecimal[]> bases, Map<String, BigDecimal[]> used) {
-        BigDecimal[] basis = bases.getOrDefault(item.getId(), new BigDecimal[]{ZERO, ZERO});
-        BigDecimal[] consumed = used.getOrDefault(item.getId(), new BigDecimal[]{ZERO, ZERO});
-        BigDecimal normalPending = basis[0].subtract(consumed[0]).max(ZERO);
-        BigDecimal dragonPending = basis[1].subtract(consumed[1]).max(ZERO);
+    private Map<String, Object> memberMap(MemberDO item, LotteryRebateCalculator.RebateResult rebate) {
         Map<String, Object> result = map("id", item.getId(), "name", item.getName(), "balance", money(item.getBalance()),
                 "status", item.getStatus(), "partner", item.getPartner(), "normalRate", money(item.getNormalRate()),
                 "lhhRate", money(item.getLhhRate()), "tag", item.getTag(), "externalNickname", item.getExternalNickname(),
@@ -211,9 +210,8 @@ public class LotteryServiceImpl implements LotteryService {
                 "searchable", bool(item.getSearchable()), "fingerprint", value(item.getFingerprint(), ""),
                 "privateChat", bool(item.getPrivateChat()), "webOnly", bool(item.getWebOnly()),
                 "blueWhalePassword", value(item.getBlueWhalePassword(), ""), "avatar", value(item.getAvatar(), 1),
-                "normalBet", money(basis[0]), "dragonBet", money(basis[1]),
-                "normalRebate", money(normalPending.multiply(value(item.getNormalRate(), ZERO)).divide(new BigDecimal("100"))),
-                "dragonRebate", money(dragonPending.multiply(value(item.getLhhRate(), ZERO)).divide(new BigDecimal("100"))));
+                "normalBet", rebate.normalBet(), "dragonBet", rebate.dragonBet(),
+                "normalRebate", rebate.normalAmount(), "dragonRebate", rebate.dragonAmount());
         return result;
     }
 
@@ -221,6 +219,15 @@ public class LotteryServiceImpl implements LotteryService {
         return map("id", item.getId(), "member", item.getMemberName(), "type", item.getType(), "amount", money(item.getAmount()),
                 "status", item.getStatus(), "createdAt", date(item.getCreateTime()), "remark", value(item.getRemark(), ""),
                 "auditedAt", item.getAuditedAt() == null ? null : date(item.getAuditedAt()));
+    }
+
+    private Map<String, Object> balanceLedgerMap(BalanceLedgerDO item) {
+        return map("id", item.getId(), "businessType", item.getBusinessType(),
+                "type", balanceBusinessLabel(item.getBusinessType()), "businessId", item.getBusinessId(),
+                "direction", item.getDirection(), "amount", money(item.getAmount()),
+                "balanceBefore", money(item.getBalanceBefore()), "balanceAfter", money(item.getBalanceAfter()),
+                "actor", value(item.getActor(), ""), "remark", value(item.getRemark(), ""),
+                "createdAt", date(item.getCreateTime()));
     }
 
     private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets) {
@@ -434,6 +441,8 @@ public class LotteryServiceImpl implements LotteryService {
         if (duplicate != null) throw exception(MEMBER_NAME_EXISTS);
         MemberDO item = StrUtil.isBlank(reqVO.getId()) ? null : memberMapper.selectById(reqVO.getId());
         boolean create = item == null;
+        BigDecimal oldBalance = create ? ZERO : money(item.getBalance());
+        BigDecimal requestedBalance = money(value(reqVO.getBalance(), oldBalance));
         if (create) {
             item = new MemberDO();
             item.setId(id());
@@ -442,7 +451,7 @@ public class LotteryServiceImpl implements LotteryService {
             item.setVersion(0);
         }
         item.setName(reqVO.getName());
-        item.setBalance(value(reqVO.getBalance(), ZERO));
+        item.setBalance(oldBalance);
         item.setStatus(value(reqVO.getStatus(), "离线"));
         item.setPartner(value(reqVO.getPartner(), "无"));
         item.setNormalRate(value(reqVO.getNormalRate(), ZERO));
@@ -458,7 +467,24 @@ public class LotteryServiceImpl implements LotteryService {
         item.setPrivateChat(value(reqVO.getPrivateChat(), false));
         item.setWebOnly(value(reqVO.getWebOnly(), false));
         item.setBlueWhalePassword(value(reqVO.getBlueWhalePassword(), ""));
-        if (create) memberMapper.insert(item); else memberMapper.updateById(item);
+        if (create) {
+            memberMapper.insert(item);
+            if (requestedBalance.signum() > 0) {
+                balanceLedgerService.change(item, requestedBalance, LotteryBalanceLedgerService.OPENING_BALANCE,
+                        item.getId(), loginName(), "新建会员初始积分");
+            }
+        } else {
+            int version = value(item.getVersion(), 0);
+            item.setVersion(version + 1);
+            int updated = memberMapper.update(item, new LambdaUpdateWrapper<MemberDO>().eq(MemberDO::getId, item.getId())
+                    .eq(MemberDO::getUserId, item.getUserId()).eq(MemberDO::getVersion, version));
+            if (updated != 1) throw exception(BET_STATE_CHANGED);
+            BigDecimal delta = requestedBalance.subtract(oldBalance);
+            if (delta.signum() != 0) {
+                balanceLedgerService.change(item, delta, LotteryBalanceLedgerService.MANUAL_ADJUSTMENT,
+                        "member-adjustment:" + id(), loginName(), "编辑会员资料调整积分");
+            }
+        }
         log(item.getName(), create ? "新增会员" : "修改会员");
         return item.getId();
     }
@@ -467,20 +493,19 @@ public class LotteryServiceImpl implements LotteryService {
     @Transactional(rollbackFor = Exception.class)
     public void transferMember(String id, LotteryReqVO.Transfer reqVO) {
         MemberDO member = requireMember(id);
-        BigDecimal balance = value(member.getBalance(), ZERO);
+        requireTransferType(reqVO.getType());
+        String recordId = id();
+        BigDecimal delta;
         if ("下分".equals(reqVO.getType())) {
-            if (balance.compareTo(reqVO.getAmount()) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
-            balance = balance.subtract(reqVO.getAmount());
-        } else if ("上分".equals(reqVO.getType())) {
-            balance = balance.add(reqVO.getAmount());
+            delta = reqVO.getAmount().negate();
         } else {
-            throw exception(RECORD_NOT_FOUND);
+            delta = reqVO.getAmount();
         }
-        member.setBalance(money(balance));
-        member.setVersion(value(member.getVersion(), 0) + 1);
-        memberMapper.updateById(member);
+        balanceLedgerService.change(member, delta, "上分".equals(reqVO.getType())
+                        ? LotteryBalanceLedgerService.DEPOSIT : LotteryBalanceLedgerService.WITHDRAW,
+                recordId, loginName(), value(reqVO.getRemark(), "后台即时操作"));
         AmountRecordDO record = new AmountRecordDO();
-        record.setId(id());
+        record.setId(recordId);
         record.setMemberId(member.getId());
         record.setMemberName(member.getName());
         record.setType(reqVO.getType());
@@ -498,6 +523,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Transactional(rollbackFor = Exception.class)
     public String createAmountRequest(String id, LotteryReqVO.Transfer reqVO) {
         MemberDO member = requireMember(id);
+        requireTransferType(reqVO.getType());
         AmountRecordDO record = new AmountRecordDO();
         record.setId(id());
         record.setMemberId(member.getId());
@@ -523,9 +549,15 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, List<BetItemDO>> items = ids.isEmpty() ? Map.of() : betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, ids)).stream()
                 .collect(Collectors.groupingBy(BetItemDO::getOrderId));
-        Map<String, Object> result = memberMap(member, Map.of(), Map.of());
+        List<RebateRecordDO> rebates = rebateRecordMapper.selectList(new LambdaQueryWrapper<RebateRecordDO>()
+                .eq(RebateRecordDO::getMemberId, id));
+        List<BalanceLedgerDO> ledgers = balanceLedgerMapper.selectList(new LambdaQueryWrapper<BalanceLedgerDO>()
+                .eq(BalanceLedgerDO::getMemberId, id).orderByDesc(BalanceLedgerDO::getCreateTime).last("LIMIT 100"));
+        Map<String, Object> result = memberMap(member, rebateCalculator.calculate(member, orders, items, rebates,
+                enabled("dragonTigerSeparateRebate", member.getUserId())));
         result.put("amountRecords", amounts.stream().map(this::amountRecordMap).toList());
         result.put("orders", orders.stream().map(item -> orderMap(item, items.getOrDefault(item.getId(), List.of()))).toList());
+        result.put("balanceLedgers", ledgers.stream().map(this::balanceLedgerMap).toList());
         return result;
     }
 
@@ -649,56 +681,56 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> applyRebatesInternal(Long userId, String actor) {
+        lockOwnerFinance(userId);
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, userId).in(OrderDO::getStatus, "已中奖", "未中奖")));
         List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
         List<BetItemDO> items = orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId).in(BetItemDO::getOrderId, orderIds)));
-        Map<String, String> orderMembers = orders.stream().collect(Collectors.toMap(OrderDO::getId, OrderDO::getMemberId));
-        Map<String, BigDecimal[]> bases = new HashMap<>();
-        for (BetItemDO item : items) {
-            String memberId = orderMembers.get(item.getOrderId());
-            if (memberId == null) continue;
-            BigDecimal[] values = bases.computeIfAbsent(memberId, ignored -> new BigDecimal[]{ZERO, ZERO});
-            int index = "龙虎".equals(item.getPlay()) ? 1 : 0;
-            values[index] = values[index].add(value(item.getAmount(), ZERO));
-        }
+        Map<String, List<BetItemDO>> itemsByOrder = items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
         List<RebateRecordDO> rebateRecords = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
                 new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)));
-        Map<String, BigDecimal[]> used = calculateRebateUsage(rebateRecords);
         BigDecimal total = ZERO;
         int count = 0;
+        List<Map<String, Object>> paidMembers = new ArrayList<>();
         List<MemberDO> members = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
                 new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)));
+        boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         for (MemberDO member : members) {
-            BigDecimal[] base = bases.getOrDefault(member.getId(), new BigDecimal[]{ZERO, ZERO});
-            BigDecimal[] consumed = used.getOrDefault(member.getId(), new BigDecimal[]{ZERO, ZERO});
-            BigDecimal normalBet = base[0].subtract(consumed[0]).max(ZERO);
-            BigDecimal dragonBet = base[1].subtract(consumed[1]).max(ZERO);
-            BigDecimal normalAmount = money(normalBet.multiply(value(member.getNormalRate(), ZERO))
-                    .divide(new BigDecimal("100")));
-            BigDecimal dragonAmount = money(dragonBet.multiply(value(member.getLhhRate(), ZERO))
-                    .divide(new BigDecimal("100")));
-            BigDecimal amount = normalAmount.add(dragonAmount);
+            LotteryRebateCalculator.RebateResult rebate = rebateCalculator.calculate(member, orders, itemsByOrder,
+                    rebateRecords, separateDragonRebate);
+            BigDecimal amount = rebate.totalAmount();
             if (amount.signum() <= 0) continue;
             RebateRecordDO record = new RebateRecordDO();
             record.setId(id());
             record.setMemberId(member.getId());
-            record.setNormalBet(normalBet);
-            record.setDragonBet(dragonBet);
-            record.setNormalAmount(normalAmount);
-            record.setDragonAmount(dragonAmount);
+            record.setNormalBet(rebate.pendingNormalBet());
+            record.setDragonBet(rebate.pendingDragonBet());
+            record.setNormalAmount(rebate.normalAmount());
+            record.setDragonAmount(rebate.dragonAmount());
             record.setTotalAmount(amount);
             record.setUserId(member.getUserId());
+            balanceLedgerService.change(member, amount, LotteryBalanceLedgerService.REBATE,
+                    record.getId(), actor, "普通 " + rebate.normalAmount() + " / 龙虎 " + rebate.dragonAmount());
             rebateRecordMapper.insert(record);
-            member.setBalance(money(value(member.getBalance(), ZERO).add(amount)));
-            member.setVersion(value(member.getVersion(), 0) + 1);
-            memberMapper.updateById(member);
+            AmountRecordDO amountRecord = new AmountRecordDO();
+            amountRecord.setId(record.getId());
+            amountRecord.setMemberId(member.getId());
+            amountRecord.setMemberName(member.getName());
+            amountRecord.setType("返水");
+            amountRecord.setAmount(amount);
+            amountRecord.setStatus("已通过");
+            amountRecord.setRemark("普通 " + rebate.normalAmount() + " / 龙虎 " + rebate.dragonAmount());
+            amountRecord.setAuditedAt(LocalDateTime.now());
+            amountRecord.setAuditedBy(actor);
+            amountRecord.setUserId(member.getUserId());
+            amountRecordMapper.insert(amountRecord);
             total = total.add(amount);
             count++;
+            paidMembers.add(map("id", member.getId(), "name", member.getName(), "amount", amount));
         }
         logAs(userId, actor, "-", "发放返水 " + count + " 人，合计 " + money(total));
-        return map("count", count, "amount", money(total));
+        return map("count", count, "amount", money(total), "totalAmount", money(total), "members", paidMembers);
     }
 
     @Override
@@ -723,24 +755,22 @@ public class LotteryServiceImpl implements LotteryService {
         if (record == null) throw exception(RECORD_NOT_FOUND);
         if (!"待审核".equals(record.getStatus())) throw exception(RECORD_ALREADY_PROCESSED);
         if (!Set.of("已通过", "已拒绝").contains(reqVO.getStatus())) throw exception(RECORD_NOT_FOUND);
+        requireTransferType(record.getType());
         MemberDO member = requireMember(record.getMemberId());
-        if ("已通过".equals(reqVO.getStatus())) {
-            BigDecimal balance = value(member.getBalance(), ZERO);
-            if ("下分".equals(record.getType())) {
-                if (balance.compareTo(record.getAmount()) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
-                balance = balance.subtract(record.getAmount());
-            } else {
-                balance = balance.add(record.getAmount());
-            }
-            member.setBalance(money(balance));
-            member.setVersion(value(member.getVersion(), 0) + 1);
-            memberMapper.updateById(member);
-        }
         record.setStatus(reqVO.getStatus());
         record.setRemark(StrUtil.blankToDefault(reqVO.getRemark(), value(record.getRemark(), "")));
         record.setAuditedAt(LocalDateTime.now());
         record.setAuditedBy(loginName());
-        amountRecordMapper.updateById(record);
+        int audited = amountRecordMapper.update(record, new LambdaUpdateWrapper<AmountRecordDO>()
+                .eq(AmountRecordDO::getId, id).eq(AmountRecordDO::getUserId, record.getUserId())
+                .eq(AmountRecordDO::getStatus, "待审核"));
+        if (audited != 1) throw exception(RECORD_ALREADY_PROCESSED);
+        if ("已通过".equals(reqVO.getStatus())) {
+            BigDecimal delta = "下分".equals(record.getType()) ? record.getAmount().negate() : record.getAmount();
+            balanceLedgerService.change(member, delta, "上分".equals(record.getType())
+                            ? LotteryBalanceLedgerService.DEPOSIT : LotteryBalanceLedgerService.WITHDRAW,
+                    record.getId(), loginName(), value(record.getRemark(), "上下分审核"));
+        }
         log(member.getName(), record.getType() + reqVO.getStatus());
     }
 
@@ -806,7 +836,8 @@ public class LotteryServiceImpl implements LotteryService {
         if (issueUpdated != 1) throw exception(BET_STATE_CHANGED);
 
         int oldMemberVersion = value(member.getVersion(), 0);
-        BigDecimal balance = money(value(member.getBalance(), ZERO).subtract(total));
+        BigDecimal balanceBefore = money(member.getBalance());
+        BigDecimal balance = money(balanceBefore.subtract(total));
         BigDecimal totalBet = money(value(member.getTotalBet(), ZERO).add(total));
         int memberUpdated = memberMapper.update(null, new LambdaUpdateWrapper<MemberDO>()
                 .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, member.getUserId())
@@ -834,6 +865,11 @@ public class LotteryServiceImpl implements LotteryService {
         order.setVersion(0);
         order.setUserId(member.getUserId());
         orderMapper.insert(order);
+        member.setBalance(balance);
+        member.setVersion(oldMemberVersion + 1);
+        balanceLedgerService.recordAppliedChange(member, balanceBefore, balance,
+                LotteryBalanceLedgerService.BET_DEBIT, order.getId(), actor,
+                "期号 " + order.getPeriod() + " 下注 " + order.getContent());
         for (LotteryBettingService.ParsedBet value : parsed) {
             BetItemDO item = new BetItemDO();
             item.setId(id());
@@ -890,13 +926,16 @@ public class LotteryServiceImpl implements LotteryService {
                 .eq(OrderDO::getVersion, orderVersion));
         if (cancelled != 1) throw exception(ORDER_CAN_NOT_CANCEL);
         int memberVersion = value(member.getVersion(), 0);
-        member.setBalance(money(value(member.getBalance(), ZERO).add(order.getAmount())));
+        BigDecimal balanceBefore = money(member.getBalance());
+        member.setBalance(money(balanceBefore.add(order.getAmount())));
         member.setTotalBet(money(value(member.getTotalBet(), ZERO).subtract(order.getAmount()).max(ZERO)));
         member.setVersion(memberVersion + 1);
         int refunded = memberMapper.update(member, new LambdaUpdateWrapper<MemberDO>()
                 .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, member.getUserId())
                 .eq(MemberDO::getVersion, memberVersion));
         if (refunded != 1) throw exception(BET_STATE_CHANGED);
+        balanceLedgerService.recordAppliedChange(member, balanceBefore, member.getBalance(),
+                LotteryBalanceLedgerService.BET_REFUND, order.getId(), actor, "退码订单 " + order.getId());
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                 .eq(MessageDO::getOrderId, id).set(MessageDO::getStatus, "已退码"));
         logAs(member.getUserId(), actor, member.getName(), "退码订单 " + id);
@@ -925,6 +964,8 @@ public class LotteryServiceImpl implements LotteryService {
         if (LotteryDrawVerificationService.ZERO_RESULT.equals(normalizedResult)) throw exception(DRAW_RESULT_ABNORMAL);
         String reason = StrUtil.trim(reqVO.getReason());
         if (!"system".equals(actor) && StrUtil.isBlank(reason)) throw exception(DRAW_REASON_REQUIRED);
+        boolean autoRebate = enabled("autoDiscount", userId);
+        if (autoRebate) lockOwnerFinance(userId);
         if ("system".equals(actor)) {
             IssueDO verified = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                     .eq(IssueDO::getUserId, userId).eq(IssueDO::getPeriod, period).last("LIMIT 1")));
@@ -997,13 +1038,19 @@ public class LotteryServiceImpl implements LotteryService {
             if (settled != 1) throw exception(BET_STATE_CHANGED);
             MemberDO member = requireMember(order.getMemberId(), userId);
             int memberVersion = value(member.getVersion(), 0);
-            member.setBalance(money(value(member.getBalance(), ZERO).add(payout)));
+            BigDecimal balanceBefore = money(member.getBalance());
+            member.setBalance(money(balanceBefore.add(payout)));
             member.setProfitLoss(money(value(member.getProfitLoss(), ZERO).add(payout.subtract(order.getAmount()))));
             member.setVersion(memberVersion + 1);
             int memberUpdated = memberMapper.update(member, new LambdaUpdateWrapper<MemberDO>()
                     .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, userId)
                     .eq(MemberDO::getVersion, memberVersion));
             if (memberUpdated != 1) throw exception(BET_STATE_CHANGED);
+            if (payout.signum() > 0) {
+                balanceLedgerService.recordAppliedChange(member, balanceBefore, member.getBalance(),
+                        LotteryBalanceLedgerService.PAYOUT, order.getId(), actor,
+                        "期号 " + period + " 派奖");
+            }
             messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
                     .eq(MessageDO::getOrderId, order.getId()).set(MessageDO::getStatus, order.getStatus()));
             totalAmount = totalAmount.add(order.getAmount());
@@ -1072,7 +1119,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "oddEven", record.getOddEven(), "dragonTiger", record.getDragonTiger(), "orders", details.size(),
                 "totalBet", money(totalAmount), "totalPayout", money(totalPayout), "details", details,
                 "alreadySettled", false);
-        if (enabled("autoDiscount", userId)) result.put("rebate", applyRebatesInternal(userId, actor));
+        if (autoRebate) result.put("rebate", applyRebatesInternal(userId, actor));
         return result;
     }
 
@@ -1542,6 +1589,22 @@ public class LotteryServiceImpl implements LotteryService {
         }
     }
 
+    private void requireTransferType(String type) {
+        if (!Set.of("上分", "下分").contains(type)) {
+            throw exception(RECORD_NOT_FOUND);
+        }
+    }
+
+    private void lockOwnerFinance(Long userId) {
+        requireState(userId);
+        SystemStateDO locked = DataPermissionUtils.executeIgnore(() -> systemStateMapper.selectOne(
+                new LambdaQueryWrapper<SystemStateDO>().eq(SystemStateDO::getUserId, userId)
+                        .last("LIMIT 1 FOR UPDATE")));
+        if (locked == null) {
+            throw exception(BET_STATE_CHANGED);
+        }
+    }
+
     private MessageDO saveCommandMessage(MemberDO member, LotteryReqVO.IncomingMessage reqVO, String type, String reply) {
         MessageDO message = new MessageDO();
         message.setChannel(reqVO.getChannel());
@@ -1607,27 +1670,18 @@ public class LotteryServiceImpl implements LotteryService {
         return period.length() <= 3 ? period : period.substring(period.length() - 3);
     }
 
-    private Map<String, BigDecimal[]> calculateBetBases(List<OrderDO> orders, Map<String, List<BetItemDO>> itemsByOrder) {
-        Map<String, BigDecimal[]> result = new HashMap<>();
-        for (OrderDO order : orders) {
-            if (!Set.of("已中奖", "未中奖").contains(order.getStatus())) continue;
-            BigDecimal[] values = result.computeIfAbsent(order.getMemberId(), ignored -> new BigDecimal[]{ZERO, ZERO});
-            for (BetItemDO item : itemsByOrder.getOrDefault(order.getId(), List.of())) {
-                int index = "龙虎".equals(item.getPlay()) ? 1 : 0;
-                values[index] = values[index].add(value(item.getAmount(), ZERO));
-            }
-        }
-        return result;
-    }
-
-    private Map<String, BigDecimal[]> calculateRebateUsage(List<RebateRecordDO> records) {
-        Map<String, BigDecimal[]> result = new HashMap<>();
-        for (RebateRecordDO item : records) {
-            BigDecimal[] values = result.computeIfAbsent(item.getMemberId(), ignored -> new BigDecimal[]{ZERO, ZERO});
-            values[0] = values[0].add(value(item.getNormalBet(), ZERO));
-            values[1] = values[1].add(value(item.getDragonBet(), ZERO));
-        }
-        return result;
+    private String balanceBusinessLabel(String type) {
+        return switch (value(type, "")) {
+            case LotteryBalanceLedgerService.OPENING_BALANCE -> "初始积分";
+            case LotteryBalanceLedgerService.MANUAL_ADJUSTMENT -> "人工调整";
+            case LotteryBalanceLedgerService.DEPOSIT -> "上分";
+            case LotteryBalanceLedgerService.WITHDRAW -> "下分";
+            case LotteryBalanceLedgerService.BET_DEBIT -> "下注扣款";
+            case LotteryBalanceLedgerService.BET_REFUND -> "退码退款";
+            case LotteryBalanceLedgerService.PAYOUT -> "开奖派奖";
+            case LotteryBalanceLedgerService.REBATE -> "返水";
+            default -> value(type, "未知");
+        };
     }
 
     private List<Map<String, Object>> calculatePeriodChima(List<OrderDO> orders, List<MemberDO> members, SystemStateDO state) {

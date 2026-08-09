@@ -167,6 +167,24 @@ CREATE TABLE IF NOT EXISTS `lucky5_amount_record` (
   KEY `idx_lucky5_amount_member` (`tenant_id`,`user_id`,`member_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 上下分记录';
 
+CREATE TABLE IF NOT EXISTS `lucky5_balance_ledger` (
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL,
+  `member_name` varchar(100) NOT NULL, `business_type` varchar(40) NOT NULL, `business_id` varchar(100) NOT NULL,
+  `direction` varchar(10) NOT NULL, `amount` decimal(18,2) NOT NULL,
+  `balance_before` decimal(18,2) NOT NULL, `balance_after` decimal(18,2) NOT NULL,
+  `actor` varchar(100) NOT NULL DEFAULT '', `remark` varchar(500) NOT NULL DEFAULT '',
+  `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updater` varchar(64) DEFAULT '', `update_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lucky5_balance_business` (`tenant_id`,`user_id`,`member_id`,`business_type`,`business_id`),
+  KEY `idx_lucky5_balance_member` (`tenant_id`,`user_id`,`member_id`,`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 会员资金流水';
+
+ALTER TABLE `lucky5_balance_ledger`
+  MODIFY COLUMN `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  MODIFY COLUMN `update_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6);
+
 CREATE TABLE IF NOT EXISTS `lucky5_order` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
   `period` varchar(40) NOT NULL, `content` varchar(2000) NOT NULL, `amount` decimal(18,2) NOT NULL,
@@ -326,7 +344,7 @@ BEGIN
     WHERE `table_schema`=DATABASE() AND `table_name` IN (
       'lucky5_config','lucky5_system_state','lucky5_market_connection','lucky5_link_config',
       'lucky5_chima_config','lucky5_switch_setting','lucky5_integration','lucky5_odd',
-      'lucky5_member','lucky5_amount_record','lucky5_order','lucky5_bet_item','lucky5_draw',
+      'lucky5_member','lucky5_amount_record','lucky5_balance_ledger','lucky5_order','lucky5_bet_item','lucky5_draw',
       'lucky5_issue','lucky5_issue_transition','lucky5_preset_order','lucky5_quick_command',
       'lucky5_follow_order','lucky5_operation_log','lucky5_message','lucky5_rebate_record','lucky5_chima_record'
     );

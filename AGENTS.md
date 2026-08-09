@@ -45,6 +45,10 @@
 - `LotteryRoomMessagePolicy` 先识别 `查`/`余额`、`上[分]金额`、`下[分]金额`、`退[码]订单号`和有效下注，其余无法被下注解析器识别的文本按 `CHAT` 保存。`CHAT` 不生成机器人“已处理”回执；带 `externalId` 的房间消息仍按会员归属用户幂等。成功下注回复包含期号尾号、期内编号、注数、金额、余额与“点击退码”。
 - 配置必须为老板模式才能在本地扣款和生成订单，订单固定写入 `LOCAL_ONLY/NOT_REQUIRED`。普通模式的真实盘口写协议尚未验证，必须在扣款前拒绝，不能伪造网盘或盘口成功。
 - 退码只能操作会员自己的未开奖订单，且要求 `openCancel`；事务内恢复余额和总下注并同步消息状态。结算按用户+期号幂等，同开奖结果重复调用直接返回 `alreadySettled`，不同结果拒绝；逐注计算派彩、更新订单/会员/消息，并生成中奖结算消息。
+- 会员余额的每一次实际变动都必须同时写入不可变资金流水 `lucky5_balance_ledger`。简单上/下分和返水统一调用 `LotteryBalanceLedgerService.change` 做余额非负校验与 `version` 乐观锁；下注、退码、派奖已有复合字段更新时，在同一事务内调用 `recordAppliedChange` 留痕。业务类型和业务 ID 组成幂等键，禁止先改余额、后补流水。
+- 待审核上下分必须先用 `status=待审核` 条件更新抢占审核权，再变更余额；并发重复审核只能有一个成功。即时上下分和审核上下分都只接受“上分”“下分”，不能把未知类型默认为入账。后台直接编辑会员余额会记录“人工调整”，新建会员非零余额会记录“初始积分”。
+- 返水只统计已结算订单，且只统计会员 `flowClearedAt` 之后的订单和返水记录；已发放返水按对应普通/龙虎流水基数扣减，不能重复发放。`dragonTigerSeparateRebate=false` 时龙虎按普通返水率计算，开启后才使用龙虎独立返水率。发放返水必须同时生成 `RebateRecordDO`、已通过的“返水”上下分记录和资金流水。
+- 同一老板的手工返水和自动返水通过该老板 `lucky5_system_state` 行锁串行化；自动结算开启返水时要在派奖前取得同一把锁。不要改成 JVM 本地锁，因为多实例部署无法保证幂等。
 - 盘口只读协议已迁移到 `Wa55MarketClient`：使用浏览器 User-Agent 登录 `/Member/DoLogin`，从 `GetMemberPrint`、`GetCurrentPeriodStatus`、`GetDrawNoTable` 读取余额、期号和开奖。盘口返回字段存在多种大小写/旧版别名，特别是 `last_seconds`、`system_db_now` 和五个号码字段；修改解析时要保留前导零并运行 `Wa55MarketClientTest`。
 - 盘口密码沿用旧项目 `v1:iv:tag:ciphertext` AES-256-GCM 格式，由 `MARKET_CREDENTIAL_KEY` 外部注入；保存空密码或 `********` 必须保留现有密文，禁止再写 `externalized` 等占位值。Compose 的默认密钥仅供本地兼容迁移数据，生产环境必须覆盖。
 - `LotteryMarketSyncService` 按 `tenant_id + user_id` 独立同步，每 30 秒刷新盘口、每 5 秒领取最多 10 个已确认期号结算。定时任务没有登录上下文，所有查询和结算都必须显式限定用户并在对应 `TenantUtils.execute(...)` 内运行；禁止把一个用户的期号、订单或余额写到另一个用户。

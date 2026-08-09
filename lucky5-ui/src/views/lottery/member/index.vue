@@ -408,6 +408,27 @@ const avatarColor = (avatar: number) =>
         <el-table-column prop="status" label="状态" />
         <el-table-column prop="createdAt" label="时间" min-width="180" />
       </PaginatedTable>
+      <h3 class="member-detail-title">资金流水</h3>
+      <PaginatedTable
+        :data="details?.balanceLedgers || []"
+        :default-page-size="10"
+        border
+        max-height="260"
+      >
+        <el-table-column prop="type" label="类型" min-width="100" />
+        <el-table-column label="变动" min-width="90">
+          <template #default="{ row }">
+            <span :class="row.direction === 'CREDIT' ? 'ledger-credit' : 'ledger-debit'">
+              {{ row.direction === 'CREDIT' ? '+' : '-' }}{{ row.amount }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="balanceBefore" label="变动前" min-width="90" />
+        <el-table-column prop="balanceAfter" label="变动后" min-width="90" />
+        <el-table-column prop="remark" label="说明" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="actor" label="操作人" min-width="100" />
+        <el-table-column prop="createdAt" label="时间" min-width="180" />
+      </PaginatedTable>
       <h3 class="member-detail-title">订单记录</h3>
       <PaginatedTable :data="details?.orders || []" :default-page-size="10" border max-height="260">
         <el-table-column prop="period" label="期号" min-width="140" />
@@ -423,6 +444,14 @@ const avatarColor = (avatar: number) =>
 <style scoped>
 .lucky-member-total {
   color: #0000ff;
+}
+
+.ledger-credit {
+  color: #16803b;
+}
+
+.ledger-debit {
+  color: #d03050;
 }
 
 .member-identity,
@@ -516,5 +545,3 @@ const avatarColor = (avatar: number) =>
   font-size: 15px;
 }
 </style>
-
-
