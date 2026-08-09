@@ -44,6 +44,16 @@ const remainingRouter: AppRouteRecordRaw[] = [
     }
   },
   {
+    path: '/r/:openId',
+    name: 'LotteryRoomShort',
+    component: () => import('@/views/lottery/room/index.vue'),
+    meta: {
+      hidden: true,
+      noTagsView: true,
+      title: '会员房间'
+    }
+  },
+  {
     path: '/redirect',
     component: Layout,
     name: 'RedirectRoot',

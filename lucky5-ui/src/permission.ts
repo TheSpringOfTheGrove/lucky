@@ -64,7 +64,7 @@ router.beforeEach(async (to, from, next) => {
       }
     }
   } else {
-    if (whiteList.includes(to.path) || to.path.startsWith('/room/')) {
+    if (whiteList.includes(to.path) || to.path.startsWith('/room/') || to.path.startsWith('/r/')) {
       next()
     } else {
       next(`/login?redirect=${encodeURIComponent(to.fullPath)}`) // 否则全部重定向到登录页

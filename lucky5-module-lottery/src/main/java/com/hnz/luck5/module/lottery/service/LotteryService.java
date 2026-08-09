@@ -59,11 +59,11 @@ public interface LotteryService {
 
     void auditAmount(String id, LotteryReqVO.Audit reqVO);
 
-    String placeBet(LotteryReqVO.PlaceBet reqVO);
+    Map<String, Object> placeBet(LotteryReqVO.PlaceBet reqVO);
 
-    void cancelOrder(String id);
+    Map<String, Object> cancelOrder(String id);
 
-    void settlePeriod(String period, LotteryReqVO.Settle reqVO);
+    Map<String, Object> settlePeriod(String period, LotteryReqVO.Settle reqVO);
 
     Map<String, Object> getIssueStatus();
 
@@ -91,13 +91,13 @@ public interface LotteryService {
 
     Map<String, Object> getRoomSession(LotteryRoomReqVO.Credential reqVO);
 
-    String roomPlaceBet(LotteryRoomReqVO.Bet reqVO);
+    Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO);
 
     Map<String, Object> previewRoomBet(LotteryRoomReqVO.Bet reqVO);
 
     Map<String, Object> processRoomMessage(LotteryRoomReqVO.Message reqVO);
 
-    String createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO);
+    Map<String, Object> createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO);
 
-    void cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO);
+    Map<String, Object> cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO);
 }

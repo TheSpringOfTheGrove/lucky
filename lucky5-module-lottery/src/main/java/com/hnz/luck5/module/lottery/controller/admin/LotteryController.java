@@ -206,22 +206,20 @@ public class LotteryController {
 
     @PostMapping("/bets")
     @PreAuthorize("@ss.hasPermission('lottery:order:manage')")
-    public CommonResult<String> placeBet(@Valid @RequestBody LotteryReqVO.PlaceBet reqVO) {
+    public CommonResult<Map<String, Object>> placeBet(@Valid @RequestBody LotteryReqVO.PlaceBet reqVO) {
         return success(lotteryService.placeBet(reqVO));
     }
 
     @PostMapping("/orders/{id}/cancel")
     @PreAuthorize("@ss.hasPermission('lottery:order:manage')")
-    public CommonResult<Boolean> cancelOrder(@PathVariable String id) {
-        lotteryService.cancelOrder(id);
-        return success(true);
+    public CommonResult<Map<String, Object>> cancelOrder(@PathVariable String id) {
+        return success(lotteryService.cancelOrder(id));
     }
 
     @PostMapping("/draws/{period}/settle")
     @PreAuthorize("@ss.hasPermission('lottery:draw:manage')")
-    public CommonResult<Boolean> settlePeriod(@PathVariable String period, @RequestBody LotteryReqVO.Settle reqVO) {
-        lotteryService.settlePeriod(period, reqVO);
-        return success(true);
+    public CommonResult<Map<String, Object>> settlePeriod(@PathVariable String period, @RequestBody LotteryReqVO.Settle reqVO) {
+        return success(lotteryService.settlePeriod(period, reqVO));
     }
 
     @GetMapping("/issues/status")

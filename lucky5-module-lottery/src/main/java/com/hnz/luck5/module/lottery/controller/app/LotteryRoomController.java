@@ -32,7 +32,7 @@ public class LotteryRoomController {
     }
 
     @PostMapping("/bets")
-    public CommonResult<String> placeBet(@Valid @RequestBody LotteryRoomReqVO.Bet reqVO) {
+    public CommonResult<Map<String, Object>> placeBet(@Valid @RequestBody LotteryRoomReqVO.Bet reqVO) {
         return success(lotteryService.roomPlaceBet(reqVO));
     }
 
@@ -47,13 +47,12 @@ public class LotteryRoomController {
     }
 
     @PostMapping("/amount-requests")
-    public CommonResult<String> createAmountRequest(@Valid @RequestBody LotteryRoomReqVO.Amount reqVO) {
+    public CommonResult<Map<String, Object>> createAmountRequest(@Valid @RequestBody LotteryRoomReqVO.Amount reqVO) {
         return success(lotteryService.createRoomAmountRequest(reqVO));
     }
 
     @PostMapping("/orders/{id}/cancel")
-    public CommonResult<Boolean> cancelOrder(@PathVariable String id, @Valid @RequestBody LotteryRoomReqVO.Credential reqVO) {
-        lotteryService.cancelRoomOrder(id, reqVO);
-        return success(true);
+    public CommonResult<Map<String, Object>> cancelOrder(@PathVariable String id, @Valid @RequestBody LotteryRoomReqVO.Credential reqVO) {
+        return success(lotteryService.cancelRoomOrder(id, reqVO));
     }
 }

@@ -21,4 +21,9 @@ public interface ErrorCodeConstants {
     ErrorCode ROOM_CREDENTIAL_INVALID = new ErrorCode(2_001_000_015, "会员房间凭据无效");
     ErrorCode BET_LIMIT_INVALID = new ErrorCode(2_001_000_016, "下注金额不符合玩法限额");
     ErrorCode PASSWORD_INVALID = new ErrorCode(2_001_000_017, "当前登录密码不正确");
+    ErrorCode MARKET_ORDER_UNAVAILABLE = new ErrorCode(2_001_000_018,
+            "普通模式真实盘口下单接口尚未验证，系统已阻止扣款和生成未提交订单");
+    ErrorCode PLAY_TYPE_DISABLED = new ErrorCode(2_001_000_019, "当前配置未开放该玩法");
+    ErrorCode PRIVATE_BET_DISABLED = new ErrorCode(2_001_000_020, "该会员未开启私聊下注");
+    ErrorCode BET_STATE_CHANGED = new ErrorCode(2_001_000_021, "下注状态已变化，请刷新后重试");
 }

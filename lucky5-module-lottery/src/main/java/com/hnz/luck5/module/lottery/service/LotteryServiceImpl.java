@@ -46,6 +46,14 @@ public class LotteryServiceImpl implements LotteryService {
     private static final Long DEFAULT_OWNER_USER_ID = 1L;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private record BetResult(Long messageId, String orderId, String member, String period, BigDecimal amount,
+                             BigDecimal balance, int itemCount, int periodSequence,
+                             List<LotteryBettingService.ParsedBet> items, String status, boolean duplicate) {
+    }
+
+    private record CancelResult(String id, String status, BigDecimal refunded) {
+    }
+
     @Resource private LotteryConfigMapper lotteryConfigMapper;
     @Resource private SystemStateMapper systemStateMapper;
     @Resource private MarketConnectionMapper marketConnectionMapper;
@@ -196,7 +204,8 @@ public class LotteryServiceImpl implements LotteryService {
 
     private Map<String, Object> amountRecordMap(AmountRecordDO item) {
         return map("id", item.getId(), "member", item.getMemberName(), "type", item.getType(), "amount", money(item.getAmount()),
-                "status", item.getStatus(), "createdAt", date(item.getCreateTime()), "remark", value(item.getRemark(), ""));
+                "status", item.getStatus(), "createdAt", date(item.getCreateTime()), "remark", value(item.getRemark(), ""),
+                "auditedAt", item.getAuditedAt() == null ? null : date(item.getAuditedAt()));
     }
 
     private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets) {
@@ -205,7 +214,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "deliveryMode", item.getDeliveryMode(), "marketStatus", item.getMarketStatus(), "marketOrderId", item.getMarketOrderId(),
                 "marketError", item.getMarketError(), "marketAttempts", value(item.getMarketAttempts(), 0),
                 "createdAt", date(item.getCreateTime()), "settledAt", date(item.getSettledAt()),
-                "items", bets.stream().map(this::betItemMap).toList());
+                "itemCount", bets.size(), "items", bets.stream().map(this::betItemMap).toList());
     }
 
     private Map<String, Object> betItemMap(BetItemDO item) {
@@ -268,15 +277,18 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void setSwitch(String key, Boolean value) {
-        SwitchSettingDO setting = switchSettingMapper.selectOne(new LambdaQueryWrapper<SwitchSettingDO>()
-                .eq(SwitchSettingDO::getSettingKey, key));
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        SwitchSettingDO setting = DataPermissionUtils.executeIgnore(() -> switchSettingMapper.selectOne(
+                new LambdaQueryWrapper<SwitchSettingDO>().eq(SwitchSettingDO::getUserId, userId)
+                        .eq(SwitchSettingDO::getSettingKey, key)));
         if (setting == null) throw exception(SWITCH_NOT_FOUND);
         setting.setEnabled(value);
         switchSettingMapper.updateById(setting);
-        if (Boolean.TRUE.equals(value) && ("wangka".equals(key) || "syncEnable".equals(key))) {
-            String otherKey = "wangka".equals(key) ? "syncEnable" : "wangka";
-            SwitchSettingDO other = switchSettingMapper.selectOne(new LambdaQueryWrapper<SwitchSettingDO>()
-                    .eq(SwitchSettingDO::getSettingKey, otherKey));
+        if (Boolean.TRUE.equals(value) && ("wangkaEnable".equals(key) || "syncEnable".equals(key))) {
+            String otherKey = "wangkaEnable".equals(key) ? "syncEnable" : "wangkaEnable";
+            SwitchSettingDO other = DataPermissionUtils.executeIgnore(() -> switchSettingMapper.selectOne(
+                    new LambdaQueryWrapper<SwitchSettingDO>().eq(SwitchSettingDO::getUserId, userId)
+                            .eq(SwitchSettingDO::getSettingKey, otherKey)));
             if (other != null) {
                 other.setEnabled(false);
                 switchSettingMapper.updateById(other);
@@ -704,51 +716,91 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public String placeBet(LotteryReqVO.PlaceBet reqVO) {
-        return placeBetInternal(reqVO, loginName());
+    public Map<String, Object> placeBet(LotteryReqVO.PlaceBet reqVO) {
+        return betResultMap(placeBetInternal(reqVO, loginName()));
     }
 
-    private String placeBetInternal(LotteryReqVO.PlaceBet reqVO, String actor) {
+    private BetResult placeBetInternal(LotteryReqVO.PlaceBet reqVO, String actor) {
         MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
-                : memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getName, reqVO.getMemberName()));
+                : findMemberByName(reqVO.getMemberName());
         if (member == null) throw exception(MEMBER_NOT_FOUND);
         if (StrUtil.isNotBlank(reqVO.getExternalId())) {
             MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
                     new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                             .eq(MessageDO::getExternalId, reqVO.getExternalId())));
             if (existing != null) {
-                if (StrUtil.isNotBlank(existing.getOrderId())) return existing.getOrderId();
+                if (StrUtil.isNotBlank(existing.getOrderId())) return existingBetResult(existing, member);
                 throw exception(EXTERNAL_MESSAGE_EXISTS);
             }
         }
         SystemStateDO state = requireState(member.getUserId());
-        if (!bool(state.getRoomOpen()) || !enabled("start", member.getUserId())) throw exception(ROOM_CLOSED);
+        if (!bool(state.getRoomOpen())) throw exception(ROOM_CLOSED);
+        String channel = StrUtil.blankToDefault(reqVO.getChannel(), "网页群");
+        if ("网页群".equals(channel) && !enabled("pullEnable", member.getUserId())) throw exception(ROOM_CLOSED);
+
+        LotteryConfigDO config = requireConfig(member.getUserId());
+        if (!bool(config.getBossMode())) throw exception(MARKET_ORDER_UNAVAILABLE);
+        if (bool(member.getWebOnly()) && !"网页群".equals(channel)) throw exception(ROOM_CLOSED);
+        if ("私聊".equals(channel) && (!enabled("privateMode", member.getUserId()) || !bool(member.getPrivateChat()))) {
+            throw exception(PRIVATE_BET_DISABLED);
+        }
+        String integrationKey = Map.of("微信", "wechat", "飞鱼", "fish", "蓝鲸", "blueWhale").get(channel);
+        if (integrationKey != null) {
+            IntegrationDO integration = DataPermissionUtils.executeIgnore(() -> integrationMapper.selectOne(
+                    new LambdaQueryWrapper<IntegrationDO>().eq(IntegrationDO::getUserId, member.getUserId())
+                            .eq(IntegrationDO::getIntegrationKey, integrationKey)));
+            if (integration == null || !Set.of("已登录", "已绑定").contains(integration.getStatus())) throw exception(ROOM_CLOSED);
+        }
+
+        DrawDO existingDraw = DataPermissionUtils.executeIgnore(() -> drawMapper.selectOne(new LambdaQueryWrapper<DrawDO>()
+                .eq(DrawDO::getUserId, member.getUserId()).eq(DrawDO::getPeriod, reqVO.getPeriod())));
+        if (existingDraw != null) throw exception(PERIOD_ALREADY_SETTLED);
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getPeriod, reqVO.getPeriod())));
         if (issue == null || !"OPEN".equals(issue.getStatus())) throw exception(ISSUE_NOT_OPEN);
         List<OddDO> odds = getEffectiveOdds(member.getUserId());
         List<LotteryBettingService.ParsedBet> parsed = bettingService.parse(reqVO.getContent(), odds);
+        boolean hasDragonTiger = parsed.stream().anyMatch(item -> "龙虎".equals(item.play()));
+        boolean hasNormal = parsed.stream().anyMatch(item -> !"龙虎".equals(item.play()));
+        int playType = value(config.getPlayType(), 2);
+        if (playType == 0 && hasDragonTiger || playType == 1 && hasNormal) throw exception(PLAY_TYPE_DISABLED);
         BigDecimal total = money(parsed.stream().map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
         if (value(member.getBalance(), ZERO).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
 
-        issue.setOrderSequence(value(issue.getOrderSequence(), 0) + 1);
-        issueMapper.updateById(issue);
+        int oldSequence = value(issue.getOrderSequence(), 0);
+        int periodSequence = oldSequence + 1;
+        int issueUpdated = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, member.getUserId())
+                .eq(IssueDO::getStatus, "OPEN").eq(IssueDO::getOrderSequence, oldSequence)
+                .set(IssueDO::getOrderSequence, periodSequence));
+        if (issueUpdated != 1) throw exception(BET_STATE_CHANGED);
+
+        int oldMemberVersion = value(member.getVersion(), 0);
+        BigDecimal balance = money(value(member.getBalance(), ZERO).subtract(total));
+        BigDecimal totalBet = money(value(member.getTotalBet(), ZERO).add(total));
+        int memberUpdated = memberMapper.update(null, new LambdaUpdateWrapper<MemberDO>()
+                .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, member.getUserId())
+                .eq(MemberDO::getVersion, oldMemberVersion).ge(MemberDO::getBalance, total)
+                .set(MemberDO::getBalance, balance).set(MemberDO::getTotalBet, totalBet)
+                .set(MemberDO::getVersion, oldMemberVersion + 1));
+        if (memberUpdated != 1) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
+
         OrderDO order = new OrderDO();
         order.setId(id());
         order.setMemberId(member.getId());
         order.setMemberName(member.getName());
-        order.setPeriod(reqVO.getPeriod());
-        order.setContent(reqVO.getContent());
+        order.setPeriod(reqVO.getPeriod().trim());
+        order.setContent(reqVO.getContent().trim());
         order.setAmount(total);
         order.setWin(ZERO);
         order.setStatus("未开奖");
-        order.setSource(value(reqVO.getChannel(), "网页群"));
+        order.setSource(channel);
         order.setDeliveryMode("LOCAL_ONLY");
         order.setMarketStatus("NOT_REQUIRED");
         order.setMarketOrderId("");
         order.setMarketError("");
         order.setMarketAttempts(0);
-        order.setPeriodSequence(issue.getOrderSequence());
+        order.setPeriodSequence(periodSequence);
         order.setVersion(0);
         order.setUserId(member.getUserId());
         orderMapper.insert(order);
@@ -764,17 +816,12 @@ public class LotteryServiceImpl implements LotteryService {
             item.setUserId(order.getUserId());
             betItemMapper.insert(item);
         }
-        member.setBalance(money(member.getBalance().subtract(total)));
-        member.setTotalBet(money(value(member.getTotalBet(), ZERO).add(total)));
-        member.setVersion(value(member.getVersion(), 0) + 1);
-        memberMapper.updateById(member);
-
         MessageDO message = new MessageDO();
         message.setChannel(order.getSource());
         message.setMember(member.getName());
         message.setPeriod(order.getPeriod());
         message.setContent(order.getContent());
-        message.setStatus("已受理");
+        message.setStatus("已下单");
         message.setOrderId(order.getId());
         message.setExternalId(reqVO.getExternalId());
         message.setError("");
@@ -784,45 +831,75 @@ public class LotteryServiceImpl implements LotteryService {
         message.setUserId(member.getUserId());
         messageMapper.insert(message);
         logAs(member.getUserId(), actor, member.getName(), "下注 " + total + "，期号 " + order.getPeriod());
-        return order.getId();
+        return new BetResult(message.getId(), order.getId(), member.getName(), order.getPeriod(), total, balance,
+                parsed.size(), periodSequence, parsed, order.getStatus(), false);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void cancelOrder(String id) {
-        cancelOrderInternal(id, null, loginName());
+    public Map<String, Object> cancelOrder(String id) {
+        return cancelResultMap(cancelOrderInternal(id, null, loginName()));
     }
 
-    private void cancelOrderInternal(String id, String expectedMemberId, String actor) {
+    private CancelResult cancelOrderInternal(String id, String expectedMemberId, String actor) {
         OrderDO order = orderMapper.selectById(id);
         if (order == null || expectedMemberId != null && !expectedMemberId.equals(order.getMemberId())) {
             throw exception(ORDER_NOT_FOUND);
         }
         if (!"未开奖".equals(order.getStatus())) throw exception(ORDER_CAN_NOT_CANCEL);
+        if ("MARKET_ADAPTER".equals(order.getDeliveryMode())
+                && Set.of("SUBMITTED", "CONFIRMED").contains(order.getMarketStatus())) throw exception(ORDER_CAN_NOT_CANCEL);
         MemberDO member = requireMember(order.getMemberId());
         if (!enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
         order.setStatus("已退码");
         order.setCancelledAt(LocalDateTime.now());
-        order.setVersion(value(order.getVersion(), 0) + 1);
-        orderMapper.updateById(order);
+        int orderVersion = value(order.getVersion(), 0);
+        order.setVersion(orderVersion + 1);
+        int cancelled = orderMapper.update(order, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, id)
+                .eq(OrderDO::getUserId, order.getUserId()).eq(OrderDO::getStatus, "未开奖")
+                .eq(OrderDO::getVersion, orderVersion));
+        if (cancelled != 1) throw exception(ORDER_CAN_NOT_CANCEL);
+        int memberVersion = value(member.getVersion(), 0);
         member.setBalance(money(value(member.getBalance(), ZERO).add(order.getAmount())));
         member.setTotalBet(money(value(member.getTotalBet(), ZERO).subtract(order.getAmount()).max(ZERO)));
-        member.setVersion(value(member.getVersion(), 0) + 1);
-        memberMapper.updateById(member);
+        member.setVersion(memberVersion + 1);
+        int refunded = memberMapper.update(member, new LambdaUpdateWrapper<MemberDO>()
+                .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, member.getUserId())
+                .eq(MemberDO::getVersion, memberVersion));
+        if (refunded != 1) throw exception(BET_STATE_CHANGED);
+        messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                .eq(MessageDO::getOrderId, id).set(MessageDO::getStatus, "已退码"));
         logAs(member.getUserId(), actor, member.getName(), "退码订单 " + id);
+        return new CancelResult(id, "已退码", money(order.getAmount()));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void settlePeriod(String period, LotteryReqVO.Settle reqVO) {
-        DrawDO oldDraw = drawMapper.selectOne(new LambdaQueryWrapper<DrawDO>().eq(DrawDO::getPeriod, period));
-        if (oldDraw != null) throw exception(PERIOD_ALREADY_SETTLED);
+    public Map<String, Object> settlePeriod(String period, LotteryReqVO.Settle reqVO) {
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        if (reqVO == null || StrUtil.isBlank(reqVO.getResult())) throw exception(BET_CONTENT_INVALID);
         LotteryBettingService.DrawResult draw = bettingService.deriveDraw(reqVO.getResult());
-        List<OrderDO> orders = orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
-                .eq(OrderDO::getPeriod, period).eq(OrderDO::getStatus, "未开奖"));
+        DrawDO oldDraw = DataPermissionUtils.executeIgnore(() -> drawMapper.selectOne(new LambdaQueryWrapper<DrawDO>()
+                .eq(DrawDO::getUserId, userId).eq(DrawDO::getPeriod, period)));
+        if (oldDraw != null && !Objects.equals(oldDraw.getResult(), draw.result())) throw exception(PERIOD_ALREADY_SETTLED);
+        List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, userId).eq(OrderDO::getPeriod, period).eq(OrderDO::getStatus, "未开奖")
+                .orderByAsc(OrderDO::getCreateTime)));
+        if (oldDraw != null && orders.isEmpty()) {
+            return map("period", period, "result", oldDraw.getResult(), "bigSmall", oldDraw.getBigSmall(),
+                    "oddEven", oldDraw.getOddEven(), "dragonTiger", oldDraw.getDragonTiger(), "orders", 0,
+                    "totalBet", ZERO, "totalPayout", ZERO, "alreadySettled", true);
+        }
+        BigDecimal totalAmount = ZERO;
+        BigDecimal totalPayout = ZERO;
+        List<Map<String, Object>> details = new ArrayList<>();
+        Map<String, List<String>> winningLines = new LinkedHashMap<>();
+        Map<String, BigDecimal> winningPayouts = new HashMap<>();
+        Map<String, String> winningMemberIds = new HashMap<>();
         for (OrderDO order : orders) {
-            List<BetItemDO> items = betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>()
-                    .eq(BetItemDO::getOrderId, order.getId()));
+            List<BetItemDO> items = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
+                    new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId)
+                            .eq(BetItemDO::getOrderId, order.getId())));
             BigDecimal payout = ZERO;
             for (BetItemDO item : items) {
                 LotteryBettingService.ParsedBet parsed = new LotteryBettingService.ParsedBet(item.getPlay(), item.getSelection(),
@@ -832,35 +909,99 @@ public class LotteryServiceImpl implements LotteryService {
                 item.setPayout(won ? money(item.getAmount().multiply(item.getOdds())) : ZERO);
                 payout = payout.add(item.getPayout());
                 betItemMapper.updateById(item);
+                if (won) {
+                    winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
+                            .add(item.getSelection() + "，套数" + money(item.getAmount()) + "，房费" + item.getPayout());
+                    winningPayouts.merge(order.getMemberName(), item.getPayout(), BigDecimal::add);
+                    winningMemberIds.put(order.getMemberName(), order.getMemberId());
+                }
             }
-            order.setWin(money(payout));
+            payout = money(payout);
+            int orderVersion = value(order.getVersion(), 0);
+            order.setWin(payout);
             order.setStatus(payout.signum() > 0 ? "已中奖" : "未中奖");
             order.setSettledAt(LocalDateTime.now());
-            order.setVersion(value(order.getVersion(), 0) + 1);
-            orderMapper.updateById(order);
+            order.setVersion(orderVersion + 1);
+            int settled = orderMapper.update(order, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, order.getId())
+                    .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
+                    .eq(OrderDO::getVersion, orderVersion));
+            if (settled != 1) throw exception(BET_STATE_CHANGED);
             MemberDO member = requireMember(order.getMemberId());
+            int memberVersion = value(member.getVersion(), 0);
             member.setBalance(money(value(member.getBalance(), ZERO).add(payout)));
             member.setProfitLoss(money(value(member.getProfitLoss(), ZERO).add(payout.subtract(order.getAmount()))));
-            member.setVersion(value(member.getVersion(), 0) + 1);
-            memberMapper.updateById(member);
+            member.setVersion(memberVersion + 1);
+            int memberUpdated = memberMapper.update(member, new LambdaUpdateWrapper<MemberDO>()
+                    .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, userId)
+                    .eq(MemberDO::getVersion, memberVersion));
+            if (memberUpdated != 1) throw exception(BET_STATE_CHANGED);
+            messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                    .eq(MessageDO::getOrderId, order.getId()).set(MessageDO::getStatus, order.getStatus()));
+            totalAmount = totalAmount.add(order.getAmount());
+            totalPayout = totalPayout.add(payout);
+            details.add(map("orderId", order.getId(), "member", order.getMemberName(), "amount", money(order.getAmount()),
+                    "payout", payout, "status", order.getStatus()));
         }
-        DrawDO record = new DrawDO();
-        record.setPeriod(period);
-        record.setResult(draw.result());
-        record.setBigSmall(StrUtil.blankToDefault(reqVO.getBigSmall(), draw.bigSmall()));
-        record.setOddEven(StrUtil.blankToDefault(reqVO.getOddEven(), draw.oddEven()));
-        record.setDragonTiger(StrUtil.blankToDefault(reqVO.getDragonTiger(), draw.dragonTiger()));
-        record.setStatus("已开奖");
-        record.setSettledAt(LocalDateTime.now());
-        drawMapper.insert(record);
-        IssueDO issue = issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getPeriod, period));
-        if (issue != null) {
+        DrawDO record = oldDraw;
+        if (record == null) {
+            record = new DrawDO();
+            record.setUserId(userId);
+            record.setPeriod(period);
+            record.setResult(draw.result());
+            record.setBigSmall(StrUtil.blankToDefault(reqVO.getBigSmall(), draw.bigSmall()));
+            record.setOddEven(StrUtil.blankToDefault(reqVO.getOddEven(), draw.oddEven()));
+            record.setDragonTiger(StrUtil.blankToDefault(reqVO.getDragonTiger(), draw.dragonTiger()));
+            record.setStatus("已结算");
+            record.setSettledAt(LocalDateTime.now());
+            drawMapper.insert(record);
+        }
+        IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
+                .eq(IssueDO::getUserId, userId).eq(IssueDO::getPeriod, period)));
+        if (issue == null) {
+            issue = new IssueDO();
+            issue.setUserId(userId);
+            issue.setPeriod(period);
+            issue.setStatus("NEW");
+            issue.setRemainingSeconds(0);
+            issue.setNextPeriod("");
+            issue.setResult(draw.result());
+            issue.setSource("手动");
+            issue.setError("");
+            issue.setOrderSequence(0);
+            issueMapper.insert(issue);
+        }
+        if (!"SETTLED".equals(issue.getStatus())) {
             transitionIssue(issue, "SETTLED", "手动结算");
             issue.setResult(draw.result());
             issue.setSettledAt(LocalDateTime.now());
             issueMapper.updateById(issue);
         }
-        log("-", "结算期号 " + period + "，订单 " + orders.size() + " 笔");
+        for (Map.Entry<String, List<String>> entry : winningLines.entrySet()) {
+            MemberDO member = requireMember(winningMemberIds.get(entry.getKey()));
+            BigDecimal payout = money(winningPayouts.get(entry.getKey()));
+            BigDecimal afterBalance = money(member.getBalance());
+            MessageDO message = new MessageDO();
+            message.setChannel("网页群");
+            message.setMember(entry.getKey());
+            message.setPeriod(period);
+            message.setContent("");
+            message.setStatus("已结算");
+            message.setCommandType("SETTLEMENT");
+            message.setReply("【" + entry.getKey() + "】入住：\n" + String.join("\n", entry.getValue())
+                    + "\n合房费：" + payout + "\n【面积】" + money(afterBalance.subtract(payout))
+                    + "\n【中介费】" + afterBalance + "\n\n--------\n【本次总派送】：" + money(totalPayout));
+            message.setProcessedAt(LocalDateTime.now());
+            message.setUserId(userId);
+            messageMapper.insert(message);
+        }
+        logAs(userId, loginName(), "-", "结算期号 " + period + "，订单 " + orders.size() + " 笔，投额 "
+                + money(totalAmount) + "，派彩 " + money(totalPayout));
+        Map<String, Object> result = map("period", period, "result", record.getResult(), "bigSmall", record.getBigSmall(),
+                "oddEven", record.getOddEven(), "dragonTiger", record.getDragonTiger(), "orders", details.size(),
+                "totalBet", money(totalAmount), "totalPayout", money(totalPayout), "details", details,
+                "alreadySettled", false);
+        if (enabled("autoDiscount", userId)) result.put("rebate", applyRebates());
+        return result;
     }
 
     @Override
@@ -909,31 +1050,84 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> processIncomingMessage(LotteryReqVO.IncomingMessage reqVO) {
+        return processIncomingMessageInternal(reqVO, loginName());
+    }
+
+    private Map<String, Object> processIncomingMessageInternal(LotteryReqVO.IncomingMessage reqVO, String actor) {
         MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
-                : memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getName, reqVO.getMemberName()));
+                : findMemberByName(reqVO.getMemberName());
         if (member == null) throw exception(MEMBER_NOT_FOUND);
         String content = reqVO.getContent().trim();
+        if (StrUtil.isNotBlank(reqVO.getExternalId())) {
+            MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                    new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                            .eq(MessageDO::getExternalId, reqVO.getExternalId())));
+            if (existing != null) return map("duplicate", true, "messageId", existing.getId(),
+                    "orderId", existing.getOrderId(), "status", existing.getStatus(), "reply", existing.getReply(),
+                    "commandType", existing.getCommandType());
+        }
         if (Set.of("查", "余额").contains(content)) {
-            MessageDO message = saveCommandMessage(member, reqVO, "BALANCE", "当前积分:" + money(member.getBalance()));
-            return map("messageId", message.getId(), "reply", message.getReply());
+            List<OrderDO> activeOrders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
+                    new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, member.getUserId())
+                            .eq(OrderDO::getMemberId, member.getId()).eq(OrderDO::getStatus, "未开奖")
+                            .orderByAsc(OrderDO::getCreateTime)));
+            String current = activeOrders.isEmpty() ? "目前无房源" : activeOrders.stream()
+                    .map(order -> "[" + periodSuffix(order.getPeriod()) + "-" + value(order.getPeriodSequence(), 0) + "]" + order.getContent())
+                    .collect(Collectors.joining("\n"));
+            String reply = "@" + member.getName() + "\n【目前房源】：\n" + current + "\n\n【您目前】：\n" + money(member.getBalance());
+            MessageDO message = saveCommandMessage(member, reqVO, "BALANCE", reply);
+            return map("messageId", message.getId(), "reply", reply, "commandType", "BALANCE");
         }
         java.util.regex.Matcher amount = java.util.regex.Pattern.compile("^(上|下)(?:分)?(\\d+(?:\\.\\d+)?)$").matcher(content);
         if (amount.matches()) {
             LotteryReqVO.Transfer transfer = new LotteryReqVO.Transfer();
             transfer.setType("上".equals(amount.group(1)) ? "上分" : "下分");
             transfer.setAmount(new BigDecimal(amount.group(2)));
+            transfer.setRemark(StrUtil.blankToDefault(reqVO.getChannel(), "消息") + "消息申请");
             String recordId = createAmountRequest(member.getId(), transfer);
-            MessageDO message = saveCommandMessage(member, reqVO, "AMOUNT_REQUEST", "申请已提交:" + recordId);
-            return map("messageId", message.getId(), "reply", message.getReply(), "recordId", recordId);
+            String commandType = "上分".equals(transfer.getType()) ? "DEPOSIT_REQUEST" : "WITHDRAW_REQUEST";
+            String reply = "@" + member.getName() + "\n请稍后";
+            MessageDO message = saveCommandMessage(member, reqVO, commandType, reply);
+            return map("messageId", message.getId(), "reply", reply, "recordId", recordId, "commandType", commandType);
+        }
+        java.util.regex.Matcher cancel = java.util.regex.Pattern.compile("^退(?:码)?\\s*([A-Za-z0-9_-]+)$").matcher(content);
+        if (cancel.matches()) {
+            String orderId = cancel.group(1);
+            CancelResult result = cancelOrderInternal(orderId, member.getId(), actor);
+            String reply = "退码成功：" + result.id() + "，退回 " + result.refunded();
+            MessageDO message = saveCommandMessage(member, reqVO, "CANCEL", reply);
+            message.setOrderId(orderId);
+            messageMapper.updateById(message);
+            return map("messageId", message.getId(), "orderId", orderId, "reply", reply, "commandType", "CANCEL",
+                    "refunded", result.refunded());
+        }
+        String period = StrUtil.trim(reqVO.getPeriod());
+        if (StrUtil.isBlank(period)) {
+            IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
+                    .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getStatus, "OPEN")
+                    .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+            if (issue == null) throw exception(ISSUE_NOT_OPEN);
+            period = issue.getPeriod();
         }
         LotteryReqVO.PlaceBet bet = new LotteryReqVO.PlaceBet();
         bet.setMemberId(member.getId());
-        bet.setPeriod(reqVO.getPeriod());
+        bet.setPeriod(period);
         bet.setContent(reqVO.getContent());
         bet.setChannel(reqVO.getChannel());
         bet.setExternalId(reqVO.getExternalId());
-        String orderId = placeBetInternal(bet, loginName());
-        return map("orderId", orderId, "reply", "下注成功");
+        BetResult result = placeBetInternal(bet, actor);
+        String reply = formatBetReceipt(result, content);
+        MessageDO message = messageMapper.selectById(result.messageId());
+        if (message != null) {
+            message.setCommandType("BET");
+            message.setReply(reply);
+            message.setProcessedAt(LocalDateTime.now());
+            messageMapper.updateById(message);
+        }
+        Map<String, Object> response = betResultMap(result);
+        response.put("reply", reply);
+        response.put("commandType", "BET");
+        return response;
     }
 
     @Override
@@ -1119,7 +1313,8 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
-    public String roomPlaceBet(LotteryRoomReqVO.Bet reqVO) {
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
             LotteryReqVO.PlaceBet bet = new LotteryReqVO.PlaceBet();
@@ -1128,7 +1323,7 @@ public class LotteryServiceImpl implements LotteryService {
             bet.setContent(reqVO.getContent());
             bet.setChannel("网页群");
             bet.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null : "room:" + member.getId() + ":" + reqVO.getExternalId());
-            return placeBetInternal(bet, member.getName());
+            return betResultMap(placeBetInternal(bet, member.getName()));
         });
     }
 
@@ -1144,6 +1339,7 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> processRoomMessage(LotteryRoomReqVO.Message reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
@@ -1154,27 +1350,29 @@ public class LotteryServiceImpl implements LotteryService {
             message.setContent(reqVO.getContent());
             message.setChannel("网页群");
             message.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null : "room:" + member.getId() + ":" + reqVO.getExternalId());
-            return processIncomingMessage(message);
+            return processIncomingMessageInternal(message, member.getName());
         });
     }
 
     @Override
-    public String createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO) {
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
             LotteryReqVO.Transfer transfer = new LotteryReqVO.Transfer();
             transfer.setType(reqVO.getType());
             transfer.setAmount(reqVO.getAmount());
             transfer.setRemark(reqVO.getRemark());
-            return createAmountRequest(member.getId(), transfer);
+            return map("id", createAmountRequest(member.getId(), transfer));
         });
     }
 
     @Override
-    public void cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO) {
-        TenantUtils.execute(reqVO.getTenantId(), () -> {
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO) {
+        return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
-            cancelOrderInternal(orderId, member.getId(), member.getName());
+            return cancelResultMap(cancelOrderInternal(orderId, member.getId(), member.getName()));
         });
     }
 
@@ -1242,6 +1440,54 @@ public class LotteryServiceImpl implements LotteryService {
         message.setUserId(member.getUserId());
         messageMapper.insert(message);
         return message;
+    }
+
+    private MemberDO findMemberByName(String name) {
+        if (StrUtil.isBlank(name)) return null;
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        return DataPermissionUtils.executeIgnore(() -> memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>()
+                .eq(MemberDO::getUserId, userId)
+                .and(wrapper -> wrapper.eq(MemberDO::getName, name).or().eq(MemberDO::getExternalNickname, name))
+                .last("LIMIT 1")));
+    }
+
+    private BetResult existingBetResult(MessageDO message, MemberDO member) {
+        OrderDO order = DataPermissionUtils.executeIgnore(() -> orderMapper.selectOne(new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, member.getUserId()).eq(OrderDO::getId, message.getOrderId())));
+        if (order == null) throw exception(EXTERNAL_MESSAGE_EXISTS);
+        List<BetItemDO> items = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
+                new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, member.getUserId())
+                        .eq(BetItemDO::getOrderId, order.getId())));
+        List<LotteryBettingService.ParsedBet> parsed = items.stream().map(item -> new LotteryBettingService.ParsedBet(
+                item.getPlay(), item.getSelection(), item.getAmount(), item.getOdds())).toList();
+        return new BetResult(message.getId(), order.getId(), member.getName(), order.getPeriod(), money(order.getAmount()),
+                money(member.getBalance()), parsed.size(), value(order.getPeriodSequence(), 0), parsed,
+                order.getStatus(), true);
+    }
+
+    private Map<String, Object> betResultMap(BetResult result) {
+        return map("duplicate", result.duplicate(), "messageId", result.messageId(), "orderId", result.orderId(),
+                "member", result.member(), "period", result.period(), "amount", result.amount(), "balance", result.balance(),
+                "itemCount", result.itemCount(), "periodSequence", result.periodSequence(), "status", result.status(),
+                "deliveryMode", "LOCAL_ONLY", "marketStatus", "NOT_REQUIRED",
+                "items", result.items().stream().limit(20).map(item -> map("play", item.play(),
+                        "selection", item.selection(), "amount", item.amount(), "odds", item.odds())).toList());
+    }
+
+    private Map<String, Object> cancelResultMap(CancelResult result) {
+        return map("id", result.id(), "status", result.status(), "refunded", result.refunded());
+    }
+
+    private String formatBetReceipt(BetResult result, String content) {
+        return "@" + result.member() + "\n[挂牌时间]" + periodSuffix(result.period()) + "\n" + content
+                + "\n【户型审核成功】√√\n【编号】：" + result.periodSequence()
+                + "\n【套内】：" + result.itemCount() + "\n【套外】：" + result.amount()
+                + "\n【面积】：" + result.balance() + "\n点击退码";
+    }
+
+    private String periodSuffix(String period) {
+        if (period == null) return "";
+        return period.length() <= 3 ? period : period.substring(period.length() - 3);
     }
 
     private Map<String, BigDecimal[]> calculateBetBases(List<OrderDO> orders, Map<String, List<BetItemDO>> itemsByOrder) {
@@ -1405,8 +1651,14 @@ public class LotteryServiceImpl implements LotteryService {
 
     private Map<String, String> linkPayload(MemberDO member, String origin) {
         String base = StrUtil.removeSuffix(StrUtil.blankToDefault(origin, "http://localhost:8080"), "/");
-        String url = base + "/#/room?tenantId=" + TenantContextHolder.getRequiredTenantId() + "&openId=" + member.getOpenId();
-        return Map.of("longUrl", url, "shortUrl", url, "qrText", url, "openId", member.getOpenId());
+        String tenantId = String.valueOf(TenantContextHolder.getRequiredTenantId());
+        String roomUrl = base + "/room?tenantId=" + tenantId + "&openId=" + member.getOpenId();
+        LinkConfigDO links = DataPermissionUtils.executeIgnore(() -> linkConfigMapper.selectOne(
+                new LambdaQueryWrapper<LinkConfigDO>().eq(LinkConfigDO::getUserId, member.getUserId()).last("LIMIT 1")));
+        int shortUrlMode = links == null ? 2 : value(links.getShortUrlMode(), 2);
+        String shortUrl = shortUrlMode == 0 ? "" : base + "/r/" + member.getOpenId() + "?tenantId=" + tenantId;
+        return Map.of("roomUrl", roomUrl, "longUrl", roomUrl, "shortUrl", shortUrl,
+                "qrText", roomUrl, "openId", member.getOpenId());
     }
 
     private void log(String member, String action) {
