@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [long]$TenantId = 1,
+    [long]$OwnerUserId = 1,
     [string]$OldCompose = 'D:\Projects\lucky5\docker-compose.yml',
     [string]$CurrentCompose = (Join-Path (Split-Path $PSScriptRoot -Parent) 'compose.yaml'),
     [string]$OldDatabase = 'lucky5',
@@ -62,6 +63,7 @@ function New-MigrationSpec {
         [string]$CreatedAt = 'createdAt',
         [string]$UpdatedAt = 'updatedAt'
     )
+    $Columns['user_id'] = { $OwnerUserId }
     $Columns['creator'] = { 'migration' }
     $Columns['create_time'] = $CreatedAt
     $Columns['updater'] = { 'migration' }

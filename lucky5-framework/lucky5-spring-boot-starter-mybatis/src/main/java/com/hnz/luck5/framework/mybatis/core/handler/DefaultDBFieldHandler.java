@@ -1,6 +1,7 @@
 package com.hnz.luck5.framework.mybatis.core.handler;
 
 import com.hnz.luck5.framework.mybatis.core.dataobject.BaseDO;
+import com.hnz.luck5.framework.mybatis.core.dataobject.UserScopedDO;
 import com.hnz.luck5.framework.security.core.util.SecurityFrameworkUtils;
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import org.apache.ibatis.reflection.MetaObject;
@@ -34,6 +35,10 @@ public class DefaultDBFieldHandler implements MetaObjectHandler {
             }
 
             Long userId = SecurityFrameworkUtils.getLoginUserId();
+            if (baseDO instanceof UserScopedDO userScopedDO && Objects.isNull(userScopedDO.getUserId())
+                    && Objects.nonNull(userId)) {
+                userScopedDO.setUserId(userId);
+            }
             // 当前登录用户不为空，创建人为空，则当前登录用户为创建人
             if (Objects.nonNull(userId) && Objects.isNull(baseDO.getCreator())) {
                 baseDO.setCreator(userId.toString());

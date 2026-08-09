@@ -1,7 +1,7 @@
 SET NAMES utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `lucky5_config` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `room_name` varchar(100) NOT NULL DEFAULT '幸运5',
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `room_name` varchar(100) NOT NULL DEFAULT '幸运5',
   `close_time` varchar(20) NOT NULL DEFAULT '', `settle_delay` int NOT NULL DEFAULT 0,
   `min_deposit` decimal(18,2) NOT NULL DEFAULT 0, `max_deposit` decimal(18,2) NOT NULL DEFAULT 0,
   `announcement` varchar(1000) NOT NULL DEFAULT '', `service_url` varchar(500) NOT NULL DEFAULT '',
@@ -12,43 +12,91 @@ CREATE TABLE IF NOT EXISTS `lucky5_config` (
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_config_tenant` (`tenant_id`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_config_user` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 配置';
 
 CREATE TABLE IF NOT EXISTS `lucky5_system_state` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `operator_username` varchar(100) NOT NULL DEFAULT '',
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `operator_username` varchar(100) NOT NULL DEFAULT '',
   `expire_at` datetime NULL, `room_open` bit(1) NOT NULL DEFAULT b'0', `online` int NOT NULL DEFAULT 0,
   `chima_cleared_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_state_tenant` (`tenant_id`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_state_tenant` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 运行状态';
 
 CREATE TABLE IF NOT EXISTS `lucky5_market_connection` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `status` varchar(30) NOT NULL DEFAULT '未配置',
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `status` varchar(30) NOT NULL DEFAULT '未配置',
   `line_url` varchar(500) NOT NULL DEFAULT '', `display_account` varchar(100) NOT NULL DEFAULT '',
   `balance` decimal(18,2) NULL, `error` varchar(1000) NOT NULL DEFAULT '',
   `last_login_at` datetime NULL, `last_sync_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_market_tenant` (`tenant_id`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_market_user` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 盘口连接';
 
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_config' AND column_name='user_id')=0,
+  'ALTER TABLE `lucky5_config` ADD COLUMN `user_id` bigint NULL AFTER `id`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+UPDATE `lucky5_config` SET `user_id`=1 WHERE `user_id` IS NULL;
+ALTER TABLE `lucky5_config` MODIFY COLUMN `user_id` bigint NOT NULL;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_config' AND index_name='uk_lucky5_config_tenant')>0,
+  'ALTER TABLE `lucky5_config` DROP INDEX `uk_lucky5_config_tenant`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_config' AND index_name='uk_lucky5_config_user')=0,
+  'ALTER TABLE `lucky5_config` ADD UNIQUE KEY `uk_lucky5_config_user` (`tenant_id`,`user_id`,`deleted`)',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_connection' AND column_name='user_id')=0,
+  'ALTER TABLE `lucky5_market_connection` ADD COLUMN `user_id` bigint NULL AFTER `id`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+UPDATE `lucky5_market_connection` SET `user_id`=1 WHERE `user_id` IS NULL;
+ALTER TABLE `lucky5_market_connection` MODIFY COLUMN `user_id` bigint NOT NULL;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_connection' AND index_name='uk_lucky5_market_tenant')>0,
+  'ALTER TABLE `lucky5_market_connection` DROP INDEX `uk_lucky5_market_tenant`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_connection' AND index_name='uk_lucky5_market_user')=0,
+  'ALTER TABLE `lucky5_market_connection` ADD UNIQUE KEY `uk_lucky5_market_user` (`tenant_id`,`user_id`,`deleted`)',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
 CREATE TABLE IF NOT EXISTS `lucky5_link_config` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `device_id` varchar(100) NOT NULL DEFAULT '',
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `device_id` varchar(100) NOT NULL DEFAULT '',
   `dealer_url` varchar(500) NOT NULL DEFAULT '', `room_url` varchar(500) NOT NULL DEFAULT '',
   `short_url` varchar(500) NOT NULL DEFAULT '', `qr_mode` varchar(50) NOT NULL DEFAULT '',
   `short_url_mode` tinyint NOT NULL DEFAULT 2,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_link_tenant` (`tenant_id`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_link_tenant` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 链接配置';
 
 CREATE TABLE IF NOT EXISTS `lucky5_chima_config` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `si_zi_xian` decimal(18,2) NOT NULL DEFAULT 0,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `si_zi_xian` decimal(18,2) NOT NULL DEFAULT 0,
   `san_zi_xian` decimal(18,2) NOT NULL DEFAULT 0, `er_zi_xian` decimal(18,2) NOT NULL DEFAULT 0,
   `dan_zi_xian` decimal(18,2) NOT NULL DEFAULT 0, `si_ding_wei` decimal(18,2) NOT NULL DEFAULT 0,
   `san_ding_wei` decimal(18,2) NOT NULL DEFAULT 0, `er_ding_wei` decimal(18,2) NOT NULL DEFAULT 0,
@@ -57,41 +105,41 @@ CREATE TABLE IF NOT EXISTS `lucky5_chima_config` (
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_chima_config_tenant` (`tenant_id`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_chima_config_tenant` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 吃码配置';
 
 CREATE TABLE IF NOT EXISTS `lucky5_switch_setting` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `setting_key` varchar(80) NOT NULL, `label` varchar(100) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `setting_key` varchar(80) NOT NULL, `label` varchar(100) NOT NULL,
   `enabled` bit(1) NOT NULL DEFAULT b'0',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_switch` (`tenant_id`,`setting_key`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_switch` (`tenant_id`,`user_id`,`setting_key`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 开关';
 
 CREATE TABLE IF NOT EXISTS `lucky5_integration` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `integration_key` varchar(50) NOT NULL, `name` varchar(100) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `integration_key` varchar(50) NOT NULL, `name` varchar(100) NOT NULL,
   `account` varchar(100) NOT NULL DEFAULT '', `group_name` varchar(100) NOT NULL DEFAULT '',
   `status` varchar(30) NOT NULL DEFAULT '未登录',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_integration` (`tenant_id`,`integration_key`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_integration` (`tenant_id`,`user_id`,`integration_key`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 第三方接入';
 
 CREATE TABLE IF NOT EXISTS `lucky5_odd` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `code` varchar(64) NOT NULL, `play` varchar(100) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `code` varchar(64) NOT NULL, `play` varchar(100) NOT NULL,
   `item` varchar(100) NOT NULL, `rate` decimal(12,4) NOT NULL DEFAULT 0,
   `secondary_rate` decimal(12,4) NULL, `min_limit` decimal(18,2) NULL, `max_limit` decimal(18,2) NULL,
   `status` varchar(20) NOT NULL DEFAULT '启用',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_odd` (`tenant_id`,`code`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_odd` (`tenant_id`,`user_id`,`code`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 赔率';
 
 CREATE TABLE IF NOT EXISTS `lucky5_member` (
-  `id` varchar(64) NOT NULL, `name` varchar(100) NOT NULL, `balance` decimal(18,2) NOT NULL DEFAULT 0,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `name` varchar(100) NOT NULL, `balance` decimal(18,2) NOT NULL DEFAULT 0,
   `status` varchar(20) NOT NULL DEFAULT '离线', `partner` varchar(100) NOT NULL DEFAULT '无',
   `normal_rate` decimal(8,4) NOT NULL DEFAULT 0, `lhh_rate` decimal(8,4) NOT NULL DEFAULT 0,
   `tag` varchar(50) NOT NULL DEFAULT '普通', `external_nickname` varchar(100) NOT NULL DEFAULT '',
@@ -104,23 +152,23 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_member_name` (`tenant_id`,`name`,`deleted`),
-  UNIQUE KEY `uk_lucky5_member_open_id` (`tenant_id`,`open_id`), KEY `idx_lucky5_member_tenant` (`tenant_id`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_member_name` (`tenant_id`,`user_id`,`name`,`deleted`),
+  UNIQUE KEY `uk_lucky5_member_open_id` (`tenant_id`,`user_id`,`open_id`), KEY `idx_lucky5_member_tenant` (`tenant_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 会员';
 
 CREATE TABLE IF NOT EXISTS `lucky5_amount_record` (
-  `id` varchar(64) NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
   `type` varchar(20) NOT NULL, `amount` decimal(18,2) NOT NULL, `status` varchar(20) NOT NULL,
   `remark` varchar(500) NOT NULL DEFAULT '', `audited_at` datetime NULL, `audited_by` varchar(100) NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), KEY `idx_lucky5_amount_status` (`tenant_id`,`status`,`create_time`),
-  KEY `idx_lucky5_amount_member` (`tenant_id`,`member_id`)
+  PRIMARY KEY (`id`), KEY `idx_lucky5_amount_status` (`tenant_id`,`user_id`,`status`,`create_time`),
+  KEY `idx_lucky5_amount_member` (`tenant_id`,`user_id`,`member_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 上下分记录';
 
 CREATE TABLE IF NOT EXISTS `lucky5_order` (
-  `id` varchar(64) NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
   `period` varchar(40) NOT NULL, `content` varchar(2000) NOT NULL, `amount` decimal(18,2) NOT NULL,
   `win` decimal(18,2) NOT NULL DEFAULT 0, `status` varchar(30) NOT NULL, `source` varchar(30) NOT NULL DEFAULT '网页群',
   `delivery_mode` varchar(30) NOT NULL DEFAULT 'LOCAL_ONLY', `market_status` varchar(30) NOT NULL DEFAULT 'NOT_REQUIRED',
@@ -130,33 +178,33 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_order_sequence` (`tenant_id`,`period`,`period_sequence`),
-  KEY `idx_lucky5_order_period` (`tenant_id`,`period`,`status`), KEY `idx_lucky5_order_member` (`tenant_id`,`member_id`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_order_sequence` (`tenant_id`,`user_id`,`period`,`period_sequence`),
+  KEY `idx_lucky5_order_period` (`tenant_id`,`user_id`,`period`,`status`), KEY `idx_lucky5_order_member` (`tenant_id`,`user_id`,`member_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 订单';
 
 CREATE TABLE IF NOT EXISTS `lucky5_bet_item` (
-  `id` varchar(64) NOT NULL, `order_id` varchar(64) NOT NULL, `play` varchar(100) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `order_id` varchar(64) NOT NULL, `play` varchar(100) NOT NULL,
   `selection` varchar(100) NOT NULL, `amount` decimal(18,2) NOT NULL, `odds` decimal(12,4) NOT NULL,
   `won` bit(1) NULL, `payout` decimal(18,2) NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), KEY `idx_lucky5_bet_order` (`tenant_id`,`order_id`),
-  KEY `idx_lucky5_bet_selection` (`tenant_id`,`play`,`selection`)
+  PRIMARY KEY (`id`), KEY `idx_lucky5_bet_order` (`tenant_id`,`user_id`,`order_id`),
+  KEY `idx_lucky5_bet_selection` (`tenant_id`,`user_id`,`play`,`selection`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 拆分注项';
 
 CREATE TABLE IF NOT EXISTS `lucky5_draw` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `period` varchar(40) NOT NULL, `result` varchar(100) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `period` varchar(40) NOT NULL, `result` varchar(100) NOT NULL,
   `big_small` varchar(20) NOT NULL DEFAULT '', `odd_even` varchar(20) NOT NULL DEFAULT '',
   `dragon_tiger` varchar(20) NOT NULL DEFAULT '', `status` varchar(30) NOT NULL DEFAULT '已开奖', `settled_at` datetime NOT NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_draw_period` (`tenant_id`,`period`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_draw_period` (`tenant_id`,`user_id`,`period`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 开奖记录';
 
 CREATE TABLE IF NOT EXISTS `lucky5_issue` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `period` varchar(40) NOT NULL, `status` varchar(30) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `period` varchar(40) NOT NULL, `status` varchar(30) NOT NULL,
   `market_status` int NULL, `remaining_seconds` int NOT NULL DEFAULT 0, `server_time` datetime NULL,
   `next_period` varchar(40) NOT NULL DEFAULT '', `opened_at` datetime NULL, `closed_at` datetime NULL,
   `draw_time` datetime NULL, `draw_updated_at` datetime NULL, `result` varchar(100) NOT NULL DEFAULT '',
@@ -165,60 +213,60 @@ CREATE TABLE IF NOT EXISTS `lucky5_issue` (
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_period` (`tenant_id`,`period`,`deleted`),
-  KEY `idx_lucky5_issue_status` (`tenant_id`,`status`,`update_time`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_period` (`tenant_id`,`user_id`,`period`,`deleted`),
+  KEY `idx_lucky5_issue_status` (`tenant_id`,`user_id`,`status`,`update_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 期号';
 
 CREATE TABLE IF NOT EXISTS `lucky5_issue_transition` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `legacy_id` bigint NULL, `period` varchar(40) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `period` varchar(40) NOT NULL,
   `from_status` varchar(30) NOT NULL, `to_status` varchar(30) NOT NULL, `source` varchar(50) NOT NULL,
   `detail` json NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_transition_legacy` (`tenant_id`,`legacy_id`),
-  KEY `idx_lucky5_issue_transition` (`tenant_id`,`period`,`create_time`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_transition_legacy` (`tenant_id`,`user_id`,`legacy_id`),
+  KEY `idx_lucky5_issue_transition` (`tenant_id`,`user_id`,`period`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 期号流转';
 
 CREATE TABLE IF NOT EXISTS `lucky5_preset_order` (
-  `id` varchar(64) NOT NULL, `member` varchar(100) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member` varchar(100) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
   `enabled` bit(1) NOT NULL DEFAULT b'1',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), KEY `idx_lucky5_preset_enabled` (`tenant_id`,`enabled`)
+  PRIMARY KEY (`id`), KEY `idx_lucky5_preset_enabled` (`tenant_id`,`user_id`,`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 预设订单';
 
 CREATE TABLE IF NOT EXISTS `lucky5_quick_command` (
-  `id` varchar(64) NOT NULL, `label` varchar(100) NOT NULL, `content` varchar(1000) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `label` varchar(100) NOT NULL, `content` varchar(1000) NOT NULL,
   `sort` int NOT NULL DEFAULT 0, `enabled` bit(1) NOT NULL DEFAULT b'1',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), KEY `idx_lucky5_quick_sort` (`tenant_id`,`enabled`,`sort`)
+  PRIMARY KEY (`id`), KEY `idx_lucky5_quick_sort` (`tenant_id`,`user_id`,`enabled`,`sort`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 快捷指令';
 
 CREATE TABLE IF NOT EXISTS `lucky5_follow_order` (
-  `id` varchar(64) NOT NULL, `source` varchar(100) NOT NULL, `target` varchar(100) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `source` varchar(100) NOT NULL, `target` varchar(100) NOT NULL,
   `ratio` decimal(8,4) NOT NULL, `enabled` bit(1) NOT NULL DEFAULT b'1',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), KEY `idx_lucky5_follow_enabled` (`tenant_id`,`enabled`)
+  PRIMARY KEY (`id`), KEY `idx_lucky5_follow_enabled` (`tenant_id`,`user_id`,`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 跟单';
 
 CREATE TABLE IF NOT EXISTS `lucky5_operation_log` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `legacy_id` bigint NULL, `legacy_user_id` varchar(64) NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `legacy_user_id` varchar(64) NULL,
   `operator` varchar(100) NOT NULL, `member` varchar(100) NOT NULL DEFAULT '', `action` varchar(1000) NOT NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_operation_legacy` (`tenant_id`,`legacy_id`),
-  KEY `idx_lucky5_operation_time` (`tenant_id`,`create_time`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_operation_legacy` (`tenant_id`,`user_id`,`legacy_id`),
+  KEY `idx_lucky5_operation_time` (`tenant_id`,`user_id`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 会员操作日志';
 
 CREATE TABLE IF NOT EXISTS `lucky5_message` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `legacy_id` bigint NULL, `channel` varchar(50) NOT NULL,
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `channel` varchar(50) NOT NULL,
   `member` varchar(100) NOT NULL DEFAULT '', `period` varchar(40) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
   `status` varchar(30) NOT NULL, `order_id` varchar(64) NULL, `external_id` varchar(100) NULL,
   `error` varchar(1000) NOT NULL DEFAULT '', `command_type` varchar(50) NOT NULL DEFAULT '', `reply` varchar(2000) NOT NULL DEFAULT '',
@@ -226,53 +274,150 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_message_legacy` (`tenant_id`,`legacy_id`),
-  UNIQUE KEY `uk_lucky5_message_external` (`tenant_id`,`external_id`), KEY `idx_lucky5_message_time` (`tenant_id`,`channel`,`create_time`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_message_legacy` (`tenant_id`,`user_id`,`legacy_id`),
+  UNIQUE KEY `uk_lucky5_message_external` (`tenant_id`,`user_id`,`external_id`), KEY `idx_lucky5_message_time` (`tenant_id`,`user_id`,`channel`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 消息';
 
 CREATE TABLE IF NOT EXISTS `lucky5_rebate_record` (
-  `id` varchar(64) NOT NULL, `member_id` varchar(64) NOT NULL, `normal_bet` decimal(18,2) NOT NULL DEFAULT 0,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `normal_bet` decimal(18,2) NOT NULL DEFAULT 0,
   `dragon_bet` decimal(18,2) NOT NULL DEFAULT 0, `normal_amount` decimal(18,2) NOT NULL DEFAULT 0,
   `dragon_amount` decimal(18,2) NOT NULL DEFAULT 0, `total_amount` decimal(18,2) NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), KEY `idx_lucky5_rebate_member` (`tenant_id`,`member_id`,`create_time`)
+  PRIMARY KEY (`id`), KEY `idx_lucky5_rebate_member` (`tenant_id`,`user_id`,`member_id`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 返水记录';
 
 CREATE TABLE IF NOT EXISTS `lucky5_chima_record` (
-  `id` varchar(64) NOT NULL, `member_id` varchar(64) NOT NULL, `fake_amount` decimal(18,2) NOT NULL DEFAULT 0,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `fake_amount` decimal(18,2) NOT NULL DEFAULT 0,
   `total_win` decimal(18,2) NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_chima_member` (`tenant_id`,`member_id`,`deleted`)
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_chima_member` (`tenant_id`,`user_id`,`member_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 吃码记录';
 
-INSERT IGNORE INTO `lucky5_config` (`tenant_id`,`creator`,`updater`) VALUES (1,'1','1');
-INSERT IGNORE INTO `lucky5_system_state` (`tenant_id`,`operator_username`,`expire_at`,`creator`,`updater`) VALUES (1,'admin','2099-12-31 23:59:59','1','1');
-INSERT IGNORE INTO `lucky5_market_connection` (`tenant_id`,`creator`,`updater`) VALUES (1,'1','1');
-INSERT IGNORE INTO `lucky5_link_config` (`tenant_id`,`creator`,`updater`) VALUES (1,'1','1');
-INSERT IGNORE INTO `lucky5_chima_config` (`tenant_id`,`creator`,`updater`) VALUES (1,'1','1');
+-- 所有存量业务数据归超级管理员（默认 user_id=1）；新数据由 MyBatis 自动填充当前登录用户。
+-- 本段兼容已经初始化过的数据库，可重复执行。
+DELIMITER $$
+DROP PROCEDURE IF EXISTS `lucky5_add_user_scope`$$
+CREATE PROCEDURE `lucky5_add_user_scope`()
+BEGIN
+  DECLARE finished int DEFAULT 0;
+  DECLARE target_table varchar(64);
+  DECLARE table_cursor CURSOR FOR
+    SELECT `table_name` FROM `information_schema`.`tables`
+    WHERE `table_schema`=DATABASE() AND `table_name` IN (
+      'lucky5_config','lucky5_system_state','lucky5_market_connection','lucky5_link_config',
+      'lucky5_chima_config','lucky5_switch_setting','lucky5_integration','lucky5_odd',
+      'lucky5_member','lucky5_amount_record','lucky5_order','lucky5_bet_item','lucky5_draw',
+      'lucky5_issue','lucky5_issue_transition','lucky5_preset_order','lucky5_quick_command',
+      'lucky5_follow_order','lucky5_operation_log','lucky5_message','lucky5_rebate_record','lucky5_chima_record'
+    );
+  DECLARE CONTINUE HANDLER FOR NOT FOUND SET finished=1;
 
-INSERT IGNORE INTO `lucky5_switch_setting` (`tenant_id`,`setting_key`,`label`,`enabled`) VALUES
-(1,'openCancel','开启退码',b'1'),(1,'groupImage','群发图',b'0'),
-(1,'privateImage','私发图',b'0'),(1,'privateMode','开启私聊',b'0'),(1,'pullEnable','网页群',b'1'),
-(1,'dailyClear','每天自动清理流水',b'0'),(1,'wangkaEnable','网咔模式',b'0'),(1,'delayOrder','延迟跟单',b'0'),
-(1,'enableFingerCheck','校验指纹',b'0'),(1,'syncEnable','同步网盘',b'0'),
-(1,'dragonTigerSeparateRebate','龙虎分开返水',b'0'),(1,'urlEncode','网址加密',b'0'),
-(1,'delayOpen','延迟开',b'0'),(1,'linkToCode','拉发二维码',b'0'),(1,'prizeCard','刮刮卡',b'0'),
-(1,'imageBold','图加粗',b'0'),(1,'autoDiscount','关盘后自动返水',b'0');
+  OPEN table_cursor;
+  scope_loop: LOOP
+    FETCH table_cursor INTO target_table;
+    IF finished=1 THEN
+      LEAVE scope_loop;
+    END IF;
 
-INSERT IGNORE INTO `lucky5_integration` (`tenant_id`,`integration_key`,`name`) VALUES
-(1,'blueWhale','蓝鲸'),(1,'fish','飞鱼'),(1,'wechat','微信');
+    IF NOT EXISTS (
+      SELECT 1 FROM `information_schema`.`columns`
+      WHERE `table_schema`=DATABASE() AND `table_name`=target_table AND `column_name`='user_id'
+    ) THEN
+      SET @lucky5_ddl=CONCAT('ALTER TABLE `',target_table,'` ADD COLUMN `user_id` bigint NULL AFTER `id`');
+      PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+    END IF;
 
-INSERT IGNORE INTO `lucky5_odd` (`tenant_id`,`code`,`play`,`item`,`rate`,`status`) VALUES
-(1,'regex4x','四字现','',360,'启用'),(1,'regex3x','三字现','',45,'启用'),
-(1,'regex2x','二字现','',9,'启用'),(1,'regex4d','四定位','',9600,'启用'),
-(1,'regex4d4','四条','',7000,'启用'),(1,'regex3d','三定位','',960,'启用'),
-(1,'regex2d','二定位','',96,'启用'),(1,'regex1d','一定位','',9,'启用'),
-(1,'regexlh','龙虎','',0,'启用'),(1,'regexh','和','',0,'启用');
+    SET @lucky5_ddl=CONCAT('UPDATE `',target_table,'` SET `user_id`=1 WHERE `user_id` IS NULL');
+    PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+    SET @lucky5_ddl=CONCAT('ALTER TABLE `',target_table,'` MODIFY COLUMN `user_id` bigint NOT NULL');
+    PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM `information_schema`.`statistics`
+      WHERE `table_schema`=DATABASE() AND `table_name`=target_table AND `index_name`='idx_lucky5_user_scope'
+    ) THEN
+      SET @lucky5_ddl=CONCAT('ALTER TABLE `',target_table,'` ADD KEY `idx_lucky5_user_scope` (`tenant_id`,`user_id`)');
+      PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+    END IF;
+  END LOOP;
+  CLOSE table_cursor;
+END$$
+CALL `lucky5_add_user_scope`()$$
+DROP PROCEDURE `lucky5_add_user_scope`$$
+
+DROP PROCEDURE IF EXISTS `lucky5_rebuild_unique`$$
+CREATE PROCEDURE `lucky5_rebuild_unique`(
+  IN target_table varchar(64), IN target_index varchar(64), IN target_columns varchar(500)
+)
+BEGIN
+  DECLARE current_columns varchar(500);
+  DECLARE expected_columns varchar(500);
+  DECLARE should_rebuild bit DEFAULT b'0';
+
+  SET expected_columns=REPLACE(target_columns,'`','');
+  SELECT GROUP_CONCAT(`column_name` ORDER BY `seq_in_index`) INTO current_columns
+  FROM `information_schema`.`statistics`
+  WHERE `table_schema`=DATABASE() AND `table_name`=target_table AND `index_name`=target_index;
+  SET should_rebuild=(current_columns IS NULL OR current_columns<>expected_columns);
+
+  IF should_rebuild AND current_columns IS NOT NULL THEN
+    SET @lucky5_ddl=CONCAT('ALTER TABLE `',target_table,'` DROP INDEX `',target_index,'`');
+    PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+  END IF;
+  IF should_rebuild THEN
+    SET @lucky5_ddl=CONCAT('ALTER TABLE `',target_table,'` ADD UNIQUE KEY `',target_index,'` (',target_columns,')');
+    PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+  END IF;
+END$$
+CALL `lucky5_rebuild_unique`('lucky5_config','uk_lucky5_config_user','`tenant_id`,`user_id`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_system_state','uk_lucky5_state_tenant','`tenant_id`,`user_id`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_market_connection','uk_lucky5_market_user','`tenant_id`,`user_id`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_link_config','uk_lucky5_link_tenant','`tenant_id`,`user_id`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_chima_config','uk_lucky5_chima_config_tenant','`tenant_id`,`user_id`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_switch_setting','uk_lucky5_switch','`tenant_id`,`user_id`,`setting_key`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_integration','uk_lucky5_integration','`tenant_id`,`user_id`,`integration_key`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_odd','uk_lucky5_odd','`tenant_id`,`user_id`,`code`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_member','uk_lucky5_member_name','`tenant_id`,`user_id`,`name`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_member','uk_lucky5_member_open_id','`tenant_id`,`user_id`,`open_id`')$$
+CALL `lucky5_rebuild_unique`('lucky5_order','uk_lucky5_order_sequence','`tenant_id`,`user_id`,`period`,`period_sequence`')$$
+CALL `lucky5_rebuild_unique`('lucky5_draw','uk_lucky5_draw_period','`tenant_id`,`user_id`,`period`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_issue','uk_lucky5_issue_period','`tenant_id`,`user_id`,`period`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_issue_transition','uk_lucky5_issue_transition_legacy','`tenant_id`,`user_id`,`legacy_id`')$$
+CALL `lucky5_rebuild_unique`('lucky5_operation_log','uk_lucky5_operation_legacy','`tenant_id`,`user_id`,`legacy_id`')$$
+CALL `lucky5_rebuild_unique`('lucky5_message','uk_lucky5_message_legacy','`tenant_id`,`user_id`,`legacy_id`')$$
+CALL `lucky5_rebuild_unique`('lucky5_message','uk_lucky5_message_external','`tenant_id`,`user_id`,`external_id`')$$
+CALL `lucky5_rebuild_unique`('lucky5_chima_record','uk_lucky5_chima_member','`tenant_id`,`user_id`,`member_id`,`deleted`')$$
+DROP PROCEDURE `lucky5_rebuild_unique`$$
+DELIMITER ;
+
+INSERT IGNORE INTO `lucky5_config` (`tenant_id`,`user_id`,`creator`,`updater`) VALUES (1,1,'1','1');
+INSERT IGNORE INTO `lucky5_system_state` (`tenant_id`,`user_id`,`operator_username`,`expire_at`,`creator`,`updater`) VALUES (1,1,'admin','2099-12-31 23:59:59','1','1');
+INSERT IGNORE INTO `lucky5_market_connection` (`tenant_id`,`user_id`,`creator`,`updater`) VALUES (1,1,'1','1');
+INSERT IGNORE INTO `lucky5_link_config` (`tenant_id`,`user_id`,`creator`,`updater`) VALUES (1,1,'1','1');
+INSERT IGNORE INTO `lucky5_chima_config` (`tenant_id`,`user_id`,`creator`,`updater`) VALUES (1,1,'1','1');
+
+INSERT IGNORE INTO `lucky5_switch_setting` (`tenant_id`,`user_id`,`setting_key`,`label`,`enabled`) VALUES
+(1,1,'openCancel','开启退码',b'1'),(1,1,'groupImage','群发图',b'0'),
+(1,1,'privateImage','私发图',b'0'),(1,1,'privateMode','开启私聊',b'0'),(1,1,'pullEnable','网页群',b'1'),
+(1,1,'dailyClear','每天自动清理流水',b'0'),(1,1,'wangkaEnable','网咔模式',b'0'),(1,1,'delayOrder','延迟跟单',b'0'),
+(1,1,'enableFingerCheck','校验指纹',b'0'),(1,1,'syncEnable','同步网盘',b'0'),
+(1,1,'dragonTigerSeparateRebate','龙虎分开返水',b'0'),(1,1,'urlEncode','网址加密',b'0'),
+(1,1,'delayOpen','延迟开',b'0'),(1,1,'linkToCode','拉发二维码',b'0'),(1,1,'prizeCard','刮刮卡',b'0'),
+(1,1,'imageBold','图加粗',b'0'),(1,1,'autoDiscount','关盘后自动返水',b'0');
+
+INSERT IGNORE INTO `lucky5_integration` (`tenant_id`,`user_id`,`integration_key`,`name`) VALUES
+(1,1,'blueWhale','蓝鲸'),(1,1,'fish','飞鱼'),(1,1,'wechat','微信');
+
+INSERT IGNORE INTO `lucky5_odd` (`tenant_id`,`user_id`,`code`,`play`,`item`,`rate`,`status`) VALUES
+(1,1,'regex4x','四字现','',360,'启用'),(1,1,'regex3x','三字现','',45,'启用'),
+(1,1,'regex2x','二字现','',9,'启用'),(1,1,'regex4d','四定位','',9600,'启用'),
+(1,1,'regex4d4','四条','',7000,'启用'),(1,1,'regex3d','三定位','',960,'启用'),
+(1,1,'regex2d','二定位','',96,'启用'),(1,1,'regex1d','一定位','',9,'启用'),
+(1,1,'regexlh','龙虎','',0,'启用'),(1,1,'regexh','和','',0,'启用');
 
 INSERT INTO `system_menu` (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`path`,`icon`,`component`,`component_name`,`status`,`visible`,`keep_alive`,`always_show`,`creator`,`updater`,`deleted`) VALUES
 (7000,'首页','lottery:dashboard:query',2,10,0,'/lucky5/dashboard','ep:data-board','lottery/dashboard/index','LotteryDashboard',0,b'0',b'1',b'1','1','1',b'0'),

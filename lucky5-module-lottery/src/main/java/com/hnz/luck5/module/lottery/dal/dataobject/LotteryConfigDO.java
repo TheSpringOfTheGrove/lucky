@@ -1,7 +1,6 @@
 package com.hnz.luck5.module.lottery.dal.dataobject;
 
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.hnz.luck5.framework.tenant.core.db.TenantBaseDO;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -10,7 +9,7 @@ import java.math.BigDecimal;
 @TableName("lucky5_config")
 @Data
 @EqualsAndHashCode(callSuper = true)
-public class LotteryConfigDO extends TenantBaseDO {
+public class LotteryConfigDO extends LotteryUserBaseDO {
 
     private Long id;
     private String roomName;

@@ -3,7 +3,6 @@ package com.hnz.luck5.module.lottery.dal.dataobject;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.hnz.luck5.framework.tenant.core.db.TenantBaseDO;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -13,7 +12,7 @@ import java.time.LocalDateTime;
 @TableName("lucky5_chima_config")
 @Data
 @EqualsAndHashCode(callSuper = true)
-public class ChimaConfigDO extends TenantBaseDO {
+public class ChimaConfigDO extends LotteryUserBaseDO {
 
     private Long id;
     private BigDecimal siZiXian;
@@ -28,4 +27,3 @@ public class ChimaConfigDO extends TenantBaseDO {
     private BigDecimal yinKuiMin;
 
 }
-

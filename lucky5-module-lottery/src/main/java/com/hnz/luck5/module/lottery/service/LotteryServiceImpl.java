@@ -4,6 +4,7 @@ import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.security.core.service.SecurityFrameworkService;
 import com.hnz.luck5.framework.security.core.util.SecurityFrameworkUtils;
 import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
@@ -42,6 +43,7 @@ import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.*;
 public class LotteryServiceImpl implements LotteryService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final Long DEFAULT_OWNER_USER_ID = 1L;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Resource private LotteryConfigMapper lotteryConfigMapper;
@@ -72,16 +74,17 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public Map<String, Object> getBootstrap() {
-        LotteryConfigDO config = first(lotteryConfigMapper.selectList(null));
+        Long loginUserId = SecurityFrameworkUtils.getLoginUserId();
+        LotteryConfigDO config = findUserConfig(loginUserId);
         SystemStateDO state = first(systemStateMapper.selectList(null));
-        MarketConnectionDO market = first(marketConnectionMapper.selectList(null));
+        MarketConnectionDO market = findUserMarket(loginUserId);
         LinkConfigDO links = first(linkConfigMapper.selectList(null));
         ChimaConfigDO chimaConfig = first(chimaConfigMapper.selectList(null));
         List<SwitchSettingDO> switches = switchSettingMapper.selectList(new LambdaQueryWrapper<SwitchSettingDO>()
                 .orderByAsc(SwitchSettingDO::getSettingKey));
         List<IntegrationDO> integrations = integrationMapper.selectList(new LambdaQueryWrapper<IntegrationDO>()
                 .orderByAsc(IntegrationDO::getIntegrationKey));
-        List<OddDO> odds = oddMapper.selectList(new LambdaQueryWrapper<OddDO>().orderByAsc(OddDO::getId));
+        List<OddDO> odds = getEffectiveOdds(loginUserId);
         List<MemberDO> members = memberMapper.selectList(new LambdaQueryWrapper<MemberDO>().orderByAsc(MemberDO::getId));
         List<AmountRecordDO> amountRecords = amountRecordMapper.selectList(new LambdaQueryWrapper<AmountRecordDO>()
                 .orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 500"));
@@ -95,8 +98,7 @@ public class LotteryServiceImpl implements LotteryService {
                 .orderByDesc(DrawDO::getSettledAt).last("LIMIT 500"));
         List<PresetOrderDO> presets = presetOrderMapper.selectList(new LambdaQueryWrapper<PresetOrderDO>()
                 .orderByAsc(PresetOrderDO::getId));
-        List<QuickCommandDO> commands = quickCommandMapper.selectList(new LambdaQueryWrapper<QuickCommandDO>()
-                .orderByAsc(QuickCommandDO::getSort).orderByAsc(QuickCommandDO::getId));
+        List<QuickCommandDO> commands = getEffectiveQuickCommands(loginUserId, false);
         List<FollowOrderDO> follows = followOrderMapper.selectList(new LambdaQueryWrapper<FollowOrderDO>()
                 .orderByDesc(FollowOrderDO::getCreateTime));
         List<OperationLogDO> operators = operationLogMapper.selectList(new LambdaQueryWrapper<OperationLogDO>()
@@ -316,7 +318,7 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public Map<String, Object> syncMarket() {
-        MarketConnectionDO market = first(marketConnectionMapper.selectList(null));
+        MarketConnectionDO market = findUserMarket(SecurityFrameworkUtils.getLoginUserId());
         return marketMap(market);
     }
 
@@ -454,6 +456,7 @@ public class LotteryServiceImpl implements LotteryService {
         record.setRemark(value(reqVO.getRemark(), "后台即时操作"));
         record.setAuditedAt(LocalDateTime.now());
         record.setAuditedBy(loginName());
+        record.setUserId(member.getUserId());
         amountRecordMapper.insert(record);
         log(member.getName(), reqVO.getType() + " " + reqVO.getAmount());
     }
@@ -470,8 +473,9 @@ public class LotteryServiceImpl implements LotteryService {
         record.setAmount(reqVO.getAmount());
         record.setStatus("待审核");
         record.setRemark(value(reqVO.getRemark(), ""));
+        record.setUserId(member.getUserId());
         amountRecordMapper.insert(record);
-        log(member.getName(), "提交" + reqVO.getType() + "申请 " + reqVO.getAmount());
+        log(member.getUserId(), member.getName(), "提交" + reqVO.getType() + "申请 " + reqVO.getAmount());
         return record.getId();
     }
 
@@ -643,6 +647,7 @@ public class LotteryServiceImpl implements LotteryService {
             record.setNormalAmount(normalAmount);
             record.setDragonAmount(dragonAmount);
             record.setTotalAmount(amount);
+            record.setUserId(member.getUserId());
             rebateRecordMapper.insert(record);
             member.setBalance(money(value(member.getBalance(), ZERO).add(amount)));
             member.setVersion(value(member.getVersion(), 0) + 1);
@@ -704,22 +709,24 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private String placeBetInternal(LotteryReqVO.PlaceBet reqVO, String actor) {
+        MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
+                : memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getName, reqVO.getMemberName()));
+        if (member == null) throw exception(MEMBER_NOT_FOUND);
         if (StrUtil.isNotBlank(reqVO.getExternalId())) {
-            MessageDO existing = messageMapper.selectOne(new LambdaQueryWrapper<MessageDO>()
-                    .eq(MessageDO::getExternalId, reqVO.getExternalId()));
+            MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                    new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                            .eq(MessageDO::getExternalId, reqVO.getExternalId())));
             if (existing != null) {
                 if (StrUtil.isNotBlank(existing.getOrderId())) return existing.getOrderId();
                 throw exception(EXTERNAL_MESSAGE_EXISTS);
             }
         }
-        SystemStateDO state = requireState();
-        if (!bool(state.getRoomOpen()) || !enabled("start")) throw exception(ROOM_CLOSED);
-        IssueDO issue = issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getPeriod, reqVO.getPeriod()));
+        SystemStateDO state = requireState(member.getUserId());
+        if (!bool(state.getRoomOpen()) || !enabled("start", member.getUserId())) throw exception(ROOM_CLOSED);
+        IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
+                .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getPeriod, reqVO.getPeriod())));
         if (issue == null || !"OPEN".equals(issue.getStatus())) throw exception(ISSUE_NOT_OPEN);
-        MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
-                : memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getName, reqVO.getMemberName()));
-        if (member == null) throw exception(MEMBER_NOT_FOUND);
-        List<OddDO> odds = oddMapper.selectList(new LambdaQueryWrapper<OddDO>().orderByAsc(OddDO::getId));
+        List<OddDO> odds = getEffectiveOdds(member.getUserId());
         List<LotteryBettingService.ParsedBet> parsed = bettingService.parse(reqVO.getContent(), odds);
         BigDecimal total = money(parsed.stream().map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
         if (value(member.getBalance(), ZERO).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
@@ -743,6 +750,7 @@ public class LotteryServiceImpl implements LotteryService {
         order.setMarketAttempts(0);
         order.setPeriodSequence(issue.getOrderSequence());
         order.setVersion(0);
+        order.setUserId(member.getUserId());
         orderMapper.insert(order);
         for (LotteryBettingService.ParsedBet value : parsed) {
             BetItemDO item = new BetItemDO();
@@ -753,6 +761,7 @@ public class LotteryServiceImpl implements LotteryService {
             item.setAmount(value.amount());
             item.setOdds(value.odds());
             item.setPayout(ZERO);
+            item.setUserId(order.getUserId());
             betItemMapper.insert(item);
         }
         member.setBalance(money(member.getBalance().subtract(total)));
@@ -772,8 +781,9 @@ public class LotteryServiceImpl implements LotteryService {
         message.setCommandType("BET");
         message.setReply("下注成功，订单号 " + order.getId());
         message.setProcessedAt(LocalDateTime.now());
+        message.setUserId(member.getUserId());
         messageMapper.insert(message);
-        logAs(actor, member.getName(), "下注 " + total + "，期号 " + order.getPeriod());
+        logAs(member.getUserId(), actor, member.getName(), "下注 " + total + "，期号 " + order.getPeriod());
         return order.getId();
     }
 
@@ -789,8 +799,8 @@ public class LotteryServiceImpl implements LotteryService {
             throw exception(ORDER_NOT_FOUND);
         }
         if (!"未开奖".equals(order.getStatus())) throw exception(ORDER_CAN_NOT_CANCEL);
-        if (!enabled("openCancel")) throw exception(ORDER_CAN_NOT_CANCEL);
         MemberDO member = requireMember(order.getMemberId());
+        if (!enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
         order.setStatus("已退码");
         order.setCancelledAt(LocalDateTime.now());
         order.setVersion(value(order.getVersion(), 0) + 1);
@@ -799,7 +809,7 @@ public class LotteryServiceImpl implements LotteryService {
         member.setTotalBet(money(value(member.getTotalBet(), ZERO).subtract(order.getAmount()).max(ZERO)));
         member.setVersion(value(member.getVersion(), 0) + 1);
         memberMapper.updateById(member);
-        logAs(actor, member.getName(), "退码订单 " + id);
+        logAs(member.getUserId(), actor, member.getName(), "退码订单 " + id);
     }
 
     @Override
@@ -887,7 +897,7 @@ public class LotteryServiceImpl implements LotteryService {
         state.setRoomOpen("OPEN".equals(target));
         systemStateMapper.updateById(state);
         log("-", ("OPEN".equals(target) ? "开盘 " : "封盘 ") + period);
-        if ("OPEN".equals(target)) runAutoProxy(period);
+        if ("OPEN".equals(target)) runAutoProxy(period, issue.getUserId());
     }
 
     @Override
@@ -1048,29 +1058,35 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> getRoomSessionInternal(MemberDO member) {
-        LotteryConfigDO config = requireConfig();
-        SystemStateDO state = requireState();
-        List<OrderDO> orders = orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
-                .eq(OrderDO::getMemberId, member.getId()).orderByDesc(OrderDO::getCreateTime).last("LIMIT 30"));
+        LotteryConfigDO config = requireConfig(member.getUserId());
+        SystemStateDO state = requireState(member.getUserId());
+        List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, member.getUserId()).eq(OrderDO::getMemberId, member.getId())
+                .orderByDesc(OrderDO::getCreateTime).last("LIMIT 30")));
         List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
-        Map<String, List<BetItemDO>> items = orderIds.isEmpty() ? Map.of() : betItemMapper.selectList(
-                new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds)).stream()
-                .collect(Collectors.groupingBy(BetItemDO::getOrderId));
-        List<AmountRecordDO> amounts = amountRecordMapper.selectList(new LambdaQueryWrapper<AmountRecordDO>()
-                .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20"));
-        List<MessageDO> messages = messageMapper.selectList(new LambdaQueryWrapper<MessageDO>()
-                .eq(MessageDO::getMember, member.getName()).orderByDesc(MessageDO::getCreateTime).last("LIMIT 60"));
-        List<DrawDO> draws = drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
-                .orderByDesc(DrawDO::getSettledAt).last("LIMIT 20"));
-        IssueDO current = issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
-                .in(IssueDO::getStatus, "OPEN", "CLOSED", "PENDING").orderByDesc(IssueDO::getPeriod).last("LIMIT 1"));
-        List<IssueTransitionDO> transitions = current == null ? List.of() : issueTransitionMapper.selectList(
-                new LambdaQueryWrapper<IssueTransitionDO>().eq(IssueTransitionDO::getPeriod, current.getPeriod())
-                        .orderByDesc(IssueTransitionDO::getCreateTime).last("LIMIT 20"));
-        Map<String, Boolean> switches = switchSettingMapper.selectList(null).stream().collect(Collectors.toMap(
-                SwitchSettingDO::getSettingKey, item -> bool(item.getEnabled()), (a, b) -> b));
-        List<QuickCommandDO> commands = quickCommandMapper.selectList(new LambdaQueryWrapper<QuickCommandDO>()
-                .eq(QuickCommandDO::getEnabled, true).orderByAsc(QuickCommandDO::getSort));
+        Map<String, List<BetItemDO>> items = orderIds.isEmpty() ? Map.of() : DataPermissionUtils.executeIgnore(() ->
+                betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, member.getUserId())
+                        .in(BetItemDO::getOrderId, orderIds))).stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        List<AmountRecordDO> amounts = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
+                new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
+                        .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20")));
+        List<MessageDO> messages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                        .eq(MessageDO::getMember, member.getName()).orderByDesc(MessageDO::getCreateTime).last("LIMIT 60")));
+        List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
+                .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getSettledAt).last("LIMIT 20")));
+        IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
+                .eq(IssueDO::getUserId, member.getUserId()).in(IssueDO::getStatus, "OPEN", "CLOSED", "PENDING")
+                .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        List<IssueTransitionDO> transitions = current == null ? List.of() : DataPermissionUtils.executeIgnore(() ->
+                issueTransitionMapper.selectList(new LambdaQueryWrapper<IssueTransitionDO>()
+                        .eq(IssueTransitionDO::getUserId, member.getUserId()).eq(IssueTransitionDO::getPeriod, current.getPeriod())
+                        .orderByDesc(IssueTransitionDO::getCreateTime).last("LIMIT 20")));
+        Map<String, Boolean> switches = DataPermissionUtils.executeIgnore(() -> switchSettingMapper.selectList(
+                new LambdaQueryWrapper<SwitchSettingDO>().eq(SwitchSettingDO::getUserId, member.getUserId())))
+                .stream().collect(Collectors.toMap(SwitchSettingDO::getSettingKey,
+                        item -> bool(item.getEnabled()), (a, b) -> b));
+        List<QuickCommandDO> commands = getEffectiveQuickCommands(member.getUserId(), true);
         return map("member", map("id", member.getId(), "name", member.getName(), "balance", money(member.getBalance()),
                         "totalBet", money(member.getTotalBet()), "profitLoss", money(member.getProfitLoss()), "avatar", member.getAvatar()),
                 "room", map("name", value(config.getRoomName(), "幸运5"), "announcement", value(config.getAnnouncement(), ""),
@@ -1119,8 +1135,9 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     public Map<String, Object> previewRoomBet(LotteryRoomReqVO.Bet reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
-            requireRoomMember(reqVO);
-            List<LotteryBettingService.ParsedBet> items = bettingService.parse(reqVO.getContent(), oddMapper.selectList(null));
+            MemberDO member = requireRoomMember(reqVO);
+            List<LotteryBettingService.ParsedBet> items = bettingService.parse(reqVO.getContent(),
+                    getEffectiveOdds(member.getUserId()));
             return map("count", items.size(), "total", money(items.stream().map(LotteryBettingService.ParsedBet::amount)
                     .reduce(ZERO, BigDecimal::add)), "selections", items.stream().map(LotteryBettingService.ParsedBet::selection).toList());
         });
@@ -1161,11 +1178,13 @@ public class LotteryServiceImpl implements LotteryService {
         });
     }
 
-    private void runAutoProxy(String period) {
-        List<PresetOrderDO> presets = presetOrderMapper.selectList(new LambdaQueryWrapper<PresetOrderDO>()
-                .eq(PresetOrderDO::getEnabled, true));
+    private void runAutoProxy(String period, Long userId) {
+        List<PresetOrderDO> presets = DataPermissionUtils.executeIgnore(() -> presetOrderMapper.selectList(
+                new LambdaQueryWrapper<PresetOrderDO>().eq(PresetOrderDO::getUserId, userId)
+                        .eq(PresetOrderDO::getEnabled, true)));
         if (presets.isEmpty()) return;
-        List<MemberDO> members = memberMapper.selectList(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getAutoProxy, true));
+        List<MemberDO> members = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
+                new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId).eq(MemberDO::getAutoProxy, true)));
         for (MemberDO member : members) {
             String externalId = "auto-proxy:" + member.getId() + ":" + period;
             if (messageMapper.selectOne(new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getExternalId, externalId)) != null) continue;
@@ -1190,6 +1209,7 @@ public class LotteryServiceImpl implements LotteryService {
                 message.setCommandType("AUTO_PROXY");
                 message.setReply("自动托下注失败");
                 message.setProcessedAt(LocalDateTime.now());
+                message.setUserId(member.getUserId());
                 messageMapper.insert(message);
             }
         }
@@ -1198,9 +1218,9 @@ public class LotteryServiceImpl implements LotteryService {
     private MemberDO requireRoomMember(LotteryRoomReqVO.Credential reqVO) {
         MemberDO member = memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getOpenId, reqVO.getOpenId()));
         if (member == null) throw exception(ROOM_CREDENTIAL_INVALID);
-        if (enabled("enableFingerCheck") && StrUtil.isNotBlank(member.getFingerprint())
+        if (enabled("enableFingerCheck", member.getUserId()) && StrUtil.isNotBlank(member.getFingerprint())
                 && !Objects.equals(member.getFingerprint(), reqVO.getFp())) throw exception(ROOM_CREDENTIAL_INVALID);
-        if (enabled("enableFingerCheck") && StrUtil.isBlank(member.getFingerprint()) && StrUtil.isNotBlank(reqVO.getFp())) {
+        if (enabled("enableFingerCheck", member.getUserId()) && StrUtil.isBlank(member.getFingerprint()) && StrUtil.isNotBlank(reqVO.getFp())) {
             member.setFingerprint(reqVO.getFp());
             memberMapper.updateById(member);
         }
@@ -1219,6 +1239,7 @@ public class LotteryServiceImpl implements LotteryService {
         message.setCommandType(type);
         message.setReply(reply);
         message.setProcessedAt(LocalDateTime.now());
+        message.setUserId(member.getUserId());
         messageMapper.insert(message);
         return message;
     }
@@ -1263,11 +1284,52 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private LotteryConfigDO requireConfig() {
-        LotteryConfigDO item = first(lotteryConfigMapper.selectList(null));
+        return requireConfig(Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID));
+    }
+
+    private LotteryConfigDO requireConfig(Long userId) {
+        LotteryConfigDO item = findUserConfig(userId);
         if (item != null) return item;
         item = new LotteryConfigDO();
+        item.setUserId(userId);
         lotteryConfigMapper.insert(item);
         return lotteryConfigMapper.selectById(item.getId());
+    }
+
+    private LotteryConfigDO findUserConfig(Long userId) {
+        if (userId == null) return null;
+        return lotteryConfigMapper.selectOne(new LambdaQueryWrapper<LotteryConfigDO>()
+                .eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1"));
+    }
+
+    private MarketConnectionDO findUserMarket(Long userId) {
+        if (userId == null) return null;
+        return marketConnectionMapper.selectOne(new LambdaQueryWrapper<MarketConnectionDO>()
+                .eq(MarketConnectionDO::getUserId, userId).last("LIMIT 1"));
+    }
+
+    private List<OddDO> getEffectiveOdds(Long userId) {
+        Long ownerUserId = Objects.requireNonNullElse(userId, DEFAULT_OWNER_USER_ID);
+        List<OddDO> result = DataPermissionUtils.executeIgnore(() -> oddMapper.selectList(
+                new LambdaQueryWrapper<OddDO>().eq(OddDO::getUserId, ownerUserId).orderByAsc(OddDO::getId)));
+        if (!result.isEmpty() || Objects.equals(ownerUserId, DEFAULT_OWNER_USER_ID)) return result;
+        return DataPermissionUtils.executeIgnore(() -> oddMapper.selectList(
+                new LambdaQueryWrapper<OddDO>().eq(OddDO::getUserId, DEFAULT_OWNER_USER_ID)
+                        .orderByAsc(OddDO::getId)));
+    }
+
+    private List<QuickCommandDO> getEffectiveQuickCommands(Long userId, boolean enabledOnly) {
+        Long ownerUserId = Objects.requireNonNullElse(userId, DEFAULT_OWNER_USER_ID);
+        List<QuickCommandDO> result = findQuickCommands(ownerUserId, enabledOnly);
+        if (!result.isEmpty() || Objects.equals(ownerUserId, DEFAULT_OWNER_USER_ID)) return result;
+        return findQuickCommands(DEFAULT_OWNER_USER_ID, enabledOnly);
+    }
+
+    private List<QuickCommandDO> findQuickCommands(Long userId, boolean enabledOnly) {
+        return DataPermissionUtils.executeIgnore(() -> quickCommandMapper.selectList(
+                new LambdaQueryWrapper<QuickCommandDO>().eq(QuickCommandDO::getUserId, userId)
+                        .eq(enabledOnly, QuickCommandDO::getEnabled, true)
+                        .orderByAsc(QuickCommandDO::getSort).orderByAsc(QuickCommandDO::getId)));
     }
 
     private SystemStateDO requireState() {
@@ -1275,6 +1337,20 @@ public class LotteryServiceImpl implements LotteryService {
         if (item != null) return item;
         item = new SystemStateDO();
         item.setOperatorUsername(loginName());
+        item.setExpireAt(LocalDateTime.of(2099, 12, 31, 23, 59, 59));
+        item.setRoomOpen(false);
+        item.setOnline(0);
+        systemStateMapper.insert(item);
+        return item;
+    }
+
+    private SystemStateDO requireState(Long userId) {
+        SystemStateDO item = DataPermissionUtils.executeIgnore(() -> systemStateMapper.selectOne(
+                new LambdaQueryWrapper<SystemStateDO>().eq(SystemStateDO::getUserId, userId).last("LIMIT 1")));
+        if (item != null) return item;
+        item = new SystemStateDO();
+        item.setUserId(userId);
+        item.setOperatorUsername(String.valueOf(userId));
         item.setExpireAt(LocalDateTime.of(2099, 12, 31, 23, 59, 59));
         item.setRoomOpen(false);
         item.setOnline(0);
@@ -1294,6 +1370,13 @@ public class LotteryServiceImpl implements LotteryService {
         return setting != null && bool(setting.getEnabled());
     }
 
+    private boolean enabled(String key, Long userId) {
+        SwitchSettingDO setting = DataPermissionUtils.executeIgnore(() -> switchSettingMapper.selectOne(
+                new LambdaQueryWrapper<SwitchSettingDO>().eq(SwitchSettingDO::getUserId, userId)
+                        .eq(SwitchSettingDO::getSettingKey, key)));
+        return setting != null && bool(setting.getEnabled());
+    }
+
     private void transitionIssue(IssueDO issue, String target, String source) {
         String old = issue.getStatus();
         if (Objects.equals(old, target)) return;
@@ -1302,6 +1385,7 @@ public class LotteryServiceImpl implements LotteryService {
         transition.setFromStatus(value(old, ""));
         transition.setToStatus(target);
         transition.setSource(source);
+        transition.setUserId(issue.getUserId());
         issueTransitionMapper.insert(transition);
         issue.setStatus(target);
     }
@@ -1329,8 +1413,17 @@ public class LotteryServiceImpl implements LotteryService {
         logAs(loginName(), member, action);
     }
 
+    private void log(Long userId, String member, String action) {
+        logAs(userId, loginName(), member, action);
+    }
+
     private void logAs(String operator, String member, String action) {
+        logAs(SecurityFrameworkUtils.getLoginUserId(), operator, member, action);
+    }
+
+    private void logAs(Long userId, String operator, String member, String action) {
         OperationLogDO item = new OperationLogDO();
+        item.setUserId(Objects.requireNonNullElse(userId, DEFAULT_OWNER_USER_ID));
         item.setOperator(value(operator, "system"));
         item.setMember(value(member, "-"));
         item.setAction(action);

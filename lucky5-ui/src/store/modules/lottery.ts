@@ -43,6 +43,7 @@ import {
   unbindIntegrationApi
 } from '@/api/lottery'
 import type { IntegrationKey } from '@/api/lottery'
+import { useUserStoreWithOut } from '@/store/modules/user'
 
 export type SwitchKey =
   | 'autoDiscount'
@@ -86,6 +87,7 @@ const defaultSwitchLabels: Record<SwitchKey, string> = {
 const useLucky5StoreBase = defineStore('lucky5', {
   state: () => ({
     loaded: false,
+    loadedUserId: 0,
     loading: false,
     saving: false,
     operator: { username: '', expireAt: '' },
@@ -164,7 +166,9 @@ const useLucky5StoreBase = defineStore('lucky5', {
   },
   actions: {
     async initialize(force = false) {
-      if (this.loading || (this.loaded && !force)) return
+      const userId = useUserStoreWithOut().getUser.id
+      if (this.loadedUserId !== 0 && this.loadedUserId !== userId) this.$reset()
+      if (this.loading || (this.loaded && this.loadedUserId === userId && !force)) return
       this.loading = true
       try {
         const data = await getLucky5Bootstrap()
@@ -175,7 +179,10 @@ const useLucky5StoreBase = defineStore('lucky5', {
         this.switchLabels = data.switchLabels
         this.integrations = data.integrations
         this.config = data.config
-        this.market = data.market || this.market
+        this.market = {
+          ...this.market,
+          connection: data.market || this.market.connection
+        }
         this.links = data.links
         this.odds = data.odds
         this.members = data.members
@@ -189,6 +196,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
         this.messages = data.messages
         this.chimaConfig = data.chimaConfig
         this.chimaRecords = data.chimaRecords
+        this.loadedUserId = userId
         this.loaded = true
         this.connectRealtime()
       } catch (error: any) {
@@ -376,6 +384,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
 
 export const useLucky5Store = (...args: Parameters<typeof useLucky5StoreBase>) => {
   const store = useLucky5StoreBase(...args)
-  if (!store.loaded && !store.loading) void store.initialize()
+  const userId = useUserStoreWithOut().getUser.id
+  if ((!store.loaded || store.loadedUserId !== userId) && !store.loading) void store.initialize()
   return store
 }
