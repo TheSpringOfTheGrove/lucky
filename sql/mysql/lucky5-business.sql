@@ -291,7 +291,7 @@ INSERT INTO `system_menu` (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`p
 (7130,'吃码额度设定','lottery:chima-config:manage',2,140,0,'/lucky5/chima-config','ep:setting','lottery/chimaConfig/index','LotteryChimaConfig',0,b'1',b'1',b'1','1','1',b'0'),
 (7140,'吃码盈亏','lottery:chima-record:manage',2,150,0,'/lucky5/chima-records','ep:money','lottery/chimaRecord/index','LotteryChimaRecord',0,b'1',b'1',b'1','1','1',b'0'),
 (7150,'消息记录','lottery:message:manage',2,160,0,'/lucky5/messages','ep:chat-dot-round','lottery/messages/index','LotteryMessages',0,b'1',b'1',b'1','1','1',b'0'),
-(7190,'快捷指令','lottery:quick-command:manage',2,99,1,'quick-command','ep:promotion','lottery/quickCommand/index','LotteryQuickCommand',0,b'1',b'1',b'1','1','1',b'0')
+(7190,'快捷指令','lottery:quick-command:manage',2,890,0,'/lucky5/quick-command','ep:promotion','lottery/quickCommand/index','LotteryQuickCommand',0,b'1',b'1',b'1','1','1',b'0')
 ON DUPLICATE KEY UPDATE `name`=VALUES(`name`),`permission`=VALUES(`permission`),`type`=VALUES(`type`),`sort`=VALUES(`sort`),
 `parent_id`=VALUES(`parent_id`),`path`=VALUES(`path`),`icon`=VALUES(`icon`),`component`=VALUES(`component`),
 `component_name`=VALUES(`component_name`),`status`=0,`visible`=VALUES(`visible`),`deleted`=b'0';
