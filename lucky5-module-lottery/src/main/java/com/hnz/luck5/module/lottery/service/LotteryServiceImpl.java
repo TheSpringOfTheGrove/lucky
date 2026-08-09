@@ -78,6 +78,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private RebateRecordMapper rebateRecordMapper;
     @Resource private ChimaRecordMapper chimaRecordMapper;
     @Resource private LotteryBettingService bettingService;
+    @Resource private LotteryRoomMessagePolicy roomMessagePolicy;
     @Resource private MarketCredentialService marketCredentialService;
     @Resource private LotteryMarketSyncService marketSyncService;
     @Resource private SecurityFrameworkService securityFrameworkService;
@@ -1160,6 +1161,13 @@ public class LotteryServiceImpl implements LotteryService {
                     "orderId", existing.getOrderId(), "status", existing.getStatus(), "reply", existing.getReply(),
                     "commandType", existing.getCommandType());
         }
+        LotteryRoomMessagePolicy.MessageType messageType = roomMessagePolicy.classify(content,
+                getEffectiveOdds(member.getUserId()));
+        if (messageType == LotteryRoomMessagePolicy.MessageType.CHAT) {
+            MessageDO message = saveCommandMessage(member, reqVO, "CHAT", "");
+            return map("messageId", message.getId(), "reply", "", "commandType", "CHAT");
+        }
+        requireRoomOperation(member.getUserId(), reqVO.getChannel());
         if (Set.of("查", "余额").contains(content)) {
             List<OrderDO> activeOrders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
                     new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, member.getUserId())
@@ -1425,6 +1433,7 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> previewRoomBet(LotteryRoomReqVO.Bet reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
+            requireRoomOperation(member.getUserId(), "网页群");
             List<LotteryBettingService.ParsedBet> items = bettingService.parse(reqVO.getContent(),
                     getEffectiveOdds(member.getUserId()));
             return map("count", items.size(), "total", money(items.stream().map(LotteryBettingService.ParsedBet::amount)
@@ -1453,6 +1462,7 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
+            requireRoomOperation(member.getUserId(), "网页群");
             LotteryReqVO.Transfer transfer = new LotteryReqVO.Transfer();
             transfer.setType(reqVO.getType());
             transfer.setAmount(reqVO.getAmount());
@@ -1466,6 +1476,7 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomMember(reqVO);
+            requireRoomOperation(member.getUserId(), "网页群");
             return cancelResultMap(cancelOrderInternal(orderId, member.getId(), member.getName()));
         });
     }
@@ -1520,6 +1531,15 @@ public class LotteryServiceImpl implements LotteryService {
             memberMapper.updateById(member);
         }
         return member;
+    }
+
+    private void requireRoomOperation(Long userId, String channel) {
+        if (!bool(requireState(userId).getRoomOpen())) {
+            throw exception(ROOM_CLOSED);
+        }
+        if ("网页群".equals(StrUtil.blankToDefault(channel, "网页群")) && !enabled("pullEnable", userId)) {
+            throw exception(ROOM_CLOSED);
+        }
     }
 
     private MessageDO saveCommandMessage(MemberDO member, LotteryReqVO.IncomingMessage reqVO, String type, String reply) {

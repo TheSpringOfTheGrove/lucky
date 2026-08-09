@@ -68,6 +68,9 @@ const orderById = computed(() =>
   Object.fromEntries((session.value?.orders || []).map((order) => [order.id, order]))
 )
 const latestDraw = computed(() => session.value?.draws[0] || null)
+const roomOperational = computed(() =>
+  Boolean(session.value?.room.open && session.value?.room.bettingEnabled)
+)
 
 const chatMessages = computed<ChatItem[]>(() => {
   if (!session.value) return localMessages.value
@@ -85,7 +88,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       content: `${session.value.room.name}\n会员：${session.value.member.name}\n可用积分：${money(
         session.value.member.balance
       )}\n当前期号：${session.value.suggestedPeriod || '等待开盘'}\n${
-        session.value.room.open && session.value.room.bettingEnabled ? '房间运行中' : '当前已停盘'
+        roomOperational.value ? '房间运行中' : '当前已停盘，仅可聊天'
       }`,
       createdAt: dayjs(firstDate).subtract(2, 'second').toISOString()
     }
@@ -142,18 +145,20 @@ const chatMessages = computed<ChatItem[]>(() => {
         createdAt: message.createdAt
       })
     }
-    messages.push({
-      id: `robot-message-${message.id}`,
-      kind: 'robot',
-      type: order ? 'order' : 'text',
-      content: order
-        ? message.reply || '下注成功'
-        : message.reply ||
-          message.error ||
-          (message.status === '处理中' ? '正在处理' : message.status),
-      createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
-      order
-    })
+    if (message.commandType !== 'CHAT') {
+      messages.push({
+        id: `robot-message-${message.id}`,
+        kind: 'robot',
+        type: order ? 'order' : 'text',
+        content: order
+          ? message.reply || '下注成功'
+          : message.reply ||
+            message.error ||
+            (message.status === '处理中' ? '正在处理' : message.status),
+        createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
+        order
+      })
+    }
   }
 
   for (const amountRecord of session.value.amountRecords) {
@@ -312,6 +317,7 @@ const appendKey = (key: string) => {
 }
 
 const togglePanel = async (panel: 'keyboard' | 'commands') => {
+  if (!roomOperational.value) return
   bottomPanel.value = bottomPanel.value === panel ? '' : panel
   if (bottomPanel.value === 'commands') await loadSession(true)
   if (bottomPanel.value === '') composerRef.value?.focus()
@@ -319,12 +325,14 @@ const togglePanel = async (panel: 'keyboard' | 'commands') => {
 }
 
 const useHistory = (content: string) => {
+  if (!roomOperational.value) return
   composer.value = content
   bottomPanel.value = ''
   composerRef.value?.focus()
 }
 
 const openQuickPicker = () => {
+  if (!roomOperational.value) return
   bottomPanel.value = ''
   quickPickerVisible.value = true
 }
@@ -336,6 +344,7 @@ const useQuickGenerated = (content: string) => {
 }
 
 const submitQuickGenerated = async (content: string) => {
+  if (!roomOperational.value) return
   composer.value = content
   quickPickerVisible.value = false
   await submitChat()
@@ -358,6 +367,12 @@ const cancelOrder = async (order: RoomOrder) => {
     saving.value = false
   }
 }
+
+watch(roomOperational, (operational) => {
+  if (operational) return
+  bottomPanel.value = ''
+  quickPickerVisible.value = false
+})
 
 watch(
   () => {
@@ -432,12 +447,7 @@ onBeforeUnmount(() => {
         @update:auto-popup="updateAutoScratch"
       />
 
-      <main
-        ref="chatRef"
-        class="chat-stream"
-        aria-live="polite"
-        @scroll.passive="handleChatScroll"
-      >
+      <main ref="chatRef" class="chat-stream" aria-live="polite" @scroll.passive="handleChatScroll">
         <article
           v-for="message in chatMessages"
           :key="message.id"
@@ -506,7 +516,10 @@ onBeforeUnmount(() => {
                   </div>
                   <button
                     v-if="
-                      message.order.status === '未开奖' && session.room.cancelEnabled && !saving
+                      message.order.status === '未开奖' &&
+                      roomOperational &&
+                      session.room.cancelEnabled &&
+                      !saving
                     "
                     class="cancel-link"
                     type="button"
@@ -534,7 +547,10 @@ onBeforeUnmount(() => {
       </main>
 
       <form class="chat-composer" @submit.prevent="submitChat">
-        <div v-if="bottomPanel === 'keyboard'" class="composer-panel virtual-keyboard">
+        <div
+          v-if="roomOperational && bottomPanel === 'keyboard'"
+          class="composer-panel virtual-keyboard"
+        >
           <div v-for="(row, rowIndex) in keyboardRows" :key="rowIndex" class="keyboard-row">
             <button
               v-for="key in row"
@@ -549,7 +565,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div
-          v-else-if="bottomPanel === 'commands'"
+          v-else-if="roomOperational && bottomPanel === 'commands'"
           class="composer-panel history-panel command-panel"
         >
           <button
@@ -564,8 +580,9 @@ onBeforeUnmount(() => {
           <div v-if="!session.quickCommands.length" class="history-empty">暂无快捷指令</div>
         </div>
 
-        <div class="composer-row">
+        <div :class="['composer-row', { 'is-chat-only': !roomOperational }]">
           <button
+            v-if="roomOperational"
             class="keyboard-toggle"
             :class="{ 'is-active': bottomPanel === 'keyboard' }"
             type="button"
@@ -580,14 +597,18 @@ onBeforeUnmount(() => {
             rows="1"
             autocomplete="off"
             aria-label="聊天输入"
+            :placeholder="roomOperational ? '输入聊天或下注指令' : '当前未开盘，仅可聊天'"
             @focus="bottomPanel = ''"
             @keydown.enter.exact.prevent="submitChat"
           ></textarea>
-          <button class="fast-select" type="button" @click="openQuickPicker">快选</button>
+          <button v-if="roomOperational" class="fast-select" type="button" @click="openQuickPicker"
+            >快选</button
+          >
           <button class="send-button" type="submit" :disabled="saving || !composer.trim()">
             {{ saving ? '处理中' : '发送' }}
           </button>
           <button
+            v-if="roomOperational"
             class="history-toggle"
             :class="{ 'is-active': bottomPanel === 'commands' }"
             type="button"
@@ -597,7 +618,7 @@ onBeforeUnmount(() => {
         </div>
       </form>
       <QuickPickDialog
-        :visible="quickPickerVisible"
+        :visible="quickPickerVisible && roomOperational"
         :period="session.suggestedPeriod"
         :balance="session.member.balance"
         :credential="credential"
@@ -937,6 +958,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 7px 10px;
   box-sizing: border-box;
+}
+
+.composer-row.is-chat-only {
+  grid-template-columns: minmax(80px, 1fr) 50px;
 }
 
 .composer-row textarea {
