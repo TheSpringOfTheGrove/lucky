@@ -30,4 +30,6 @@ public interface ErrorCodeConstants {
     ErrorCode DRAW_RESULT_ABNORMAL = new ErrorCode(2_001_000_023, "00000 属于异常开奖号码，禁止结算和派奖");
     ErrorCode DRAW_RESULT_NOT_VERIFIED = new ErrorCode(2_001_000_024, "开奖号码尚未通过开奖API二次确认");
     ErrorCode DRAW_REASON_REQUIRED = new ErrorCode(2_001_000_025, "人工开奖必须填写原因");
+    ErrorCode PRESET_BET_TOO_MANY = new ErrorCode(2_001_000_026, "预设订单最多展开 10000 注");
+    ErrorCode INTEGRATION_NOT_READY = new ErrorCode(2_001_000_027, "第三方机器人尚未完成真实连接验证");
 }

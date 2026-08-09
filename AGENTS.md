@@ -49,6 +49,10 @@
 - 待审核上下分必须先用 `status=待审核` 条件更新抢占审核权，再变更余额；并发重复审核只能有一个成功。即时上下分和审核上下分都只接受“上分”“下分”，不能把未知类型默认为入账。后台直接编辑会员余额会记录“人工调整”，新建会员非零余额会记录“初始积分”。
 - 返水只统计已结算订单，且只统计会员 `flowClearedAt` 之后的订单和返水记录；已发放返水按对应普通/龙虎流水基数扣减，不能重复发放。`dragonTigerSeparateRebate=false` 时龙虎按普通返水率计算，开启后才使用龙虎独立返水率。发放返水必须同时生成 `RebateRecordDO`、已通过的“返水”上下分记录和资金流水。
 - 同一老板的手工返水和自动返水通过该老板 `lucky5_system_state` 行锁串行化；自动结算开启返水时要在派奖前取得同一把锁。不要改成 JVM 本地锁，因为多实例部署无法保证幂等。
+- 启用的预设订单保存时必须通过当前有效赔率解析，展开后最多 10000 注；停用模板允许暂存无效文本，便于修正迁移数据，但绝不能进入自动托候选。期号提交为 `OPEN` 后才异步触发自动托；每个自动托会员按稳定轮换顺序尝试启用模板，每次下注使用独立新事务，失败模板不能污染下一次尝试。会员+期号共用同一个长度不超过 100 的幂等键，同期并发事件最多形成一笔订单；余额、房间、拉单开关、赔率、限额和老板模式仍统一经过 `placeBetInternal` 校验。
+- `channel=跟` 当前表示跟单来源历史：成功下注后写入 `lucky5_follow_order`，不是玩家之间的连续自动复制规则。`跟`/`停止` 的持续期数、金额缩放和 `delayOrder` 延迟规则没有可靠协议前不得猜测实现；跟单历史的订单文本字段为 2000 字，避免长指令使下注事务回滚。
+- 吃码当前是报表边界，不执行资金分流：只统计 `eatEnabled=true` 会员在全局 `chimaClearedAt` 和个人 `flowClearedAt` 之后、且未退码的本地订单，按期汇总投额、中奖和净盈亏。吃码额度及盈亏上下限继续保存，但没有确认拆单/转网盘顺序前不得据此自动扣款、截断订单或提交盘口。
+- 第三方机器人只允许 `blueWhale`、`fish`、`wechat` 三个适配器键。后台绑定配置只能进入“待验证”，不能伪造“已登录”；微信、飞鱼、蓝鲸来源下注仅在真实适配器完成连接并写入“已登录”后放行，否则返回 `INTEGRATION_NOT_READY`。
 - 盘口只读协议已迁移到 `Wa55MarketClient`：使用浏览器 User-Agent 登录 `/Member/DoLogin`，从 `GetMemberPrint`、`GetCurrentPeriodStatus`、`GetDrawNoTable` 读取余额、期号和开奖。盘口返回字段存在多种大小写/旧版别名，特别是 `last_seconds`、`system_db_now` 和五个号码字段；修改解析时要保留前导零并运行 `Wa55MarketClientTest`。
 - 盘口密码沿用旧项目 `v1:iv:tag:ciphertext` AES-256-GCM 格式，由 `MARKET_CREDENTIAL_KEY` 外部注入；保存空密码或 `********` 必须保留现有密文，禁止再写 `externalized` 等占位值。Compose 的默认密钥仅供本地兼容迁移数据，生产环境必须覆盖。
 - `LotteryMarketSyncService` 按 `tenant_id + user_id` 独立同步，每 30 秒刷新盘口、每 5 秒领取最多 10 个已确认期号结算。定时任务没有登录上下文，所有查询和结算都必须显式限定用户并在对应 `TenantUtils.execute(...)` 内运行；禁止把一个用户的期号、订单或余额写到另一个用户。
@@ -123,7 +127,7 @@ docker compose down
 - 演示登录：租户“芋道源码”，账号 `admin`，密码 `admin123`；只用于本地初始化数据。
 - MySQL 和 Redis 默认不映射宿主机端口，避免与本地服务冲突。需要排查时使用 `docker compose exec mysql mysql ...` 或 `docker compose exec redis redis-cli`。
 - SQL 初始化只在空的 `mysql-data` volume 上执行。修改基线 SQL 不会自动迁移已有 volume；正式演进应添加版本化迁移，不能依赖删库重建。
-- 已有 volume 需要补建/升级 Lucky5 结构时，可安全重复执行：`Get-Content -Raw sql/mysql/lucky5-business.sql | docker compose exec -T mysql mysql -uroot -p123456 ruoyi-vue-pro`。若 `.env` 修改了库名或口令，命令也要同步修改。
+- 已有 volume 需要补建/升级 Lucky5 结构时，可安全重复执行：`docker compose exec -T mysql sh -lc 'mysql --default-character-set=utf8mb4 -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE" < /docker-entrypoint-initdb.d/02-lucky5-business.sql'`。必须从容器内按二进制 UTF-8 读取挂载文件；禁止用 Windows PowerShell 的 `Get-Content | mysql` 管道重放含中文 SQL，否则菜单名会被写成问号。
 - `docker compose down -v` 会永久删除本项目的 MySQL/Redis volume。除非用户明确要求重置数据，否则禁止执行。
 - 若修改前端环境变量，必须重建 `frontend`；若修改 Java 源码或 Maven 依赖，必须重建 `server`。
 

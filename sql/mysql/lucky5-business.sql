@@ -281,13 +281,15 @@ CREATE TABLE IF NOT EXISTS `lucky5_quick_command` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 快捷指令';
 
 CREATE TABLE IF NOT EXISTS `lucky5_follow_order` (
-  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `source` varchar(100) NOT NULL, `target` varchar(100) NOT NULL,
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `source` varchar(100) NOT NULL, `target` varchar(2000) NOT NULL,
   `ratio` decimal(8,4) NOT NULL, `enabled` bit(1) NOT NULL DEFAULT b'1',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), KEY `idx_lucky5_follow_enabled` (`tenant_id`,`user_id`,`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 跟单';
+
+ALTER TABLE `lucky5_follow_order` MODIFY COLUMN `target` varchar(2000) NOT NULL;
 
 CREATE TABLE IF NOT EXISTS `lucky5_operation_log` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `legacy_user_id` varchar(64) NULL,

@@ -257,7 +257,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
       return this.perform(() => saveChimaConfigApi(payload), '吃码配置已保存')
     },
     bindIntegration(key: IntegrationKey, payload: Record<string, string>) {
-      return this.perform(() => bindIntegrationApi(key, payload), '绑定成功')
+      return this.perform(() => bindIntegrationApi(key, payload), '配置已保存，等待连接验证')
     },
     unbindIntegration(key: IntegrationKey) {
       return this.perform(() => unbindIntegrationApi(key), '已解绑')

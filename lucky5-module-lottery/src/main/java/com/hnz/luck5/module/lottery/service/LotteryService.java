@@ -61,6 +61,8 @@ public interface LotteryService {
 
     Map<String, Object> placeBet(LotteryReqVO.PlaceBet reqVO);
 
+    Map<String, Object> placeAutoBet(Long userId, LotteryReqVO.PlaceBet reqVO, String actor);
+
     Map<String, Object> cancelOrder(String id);
 
     Map<String, Object> settlePeriod(String period, LotteryReqVO.Settle reqVO);

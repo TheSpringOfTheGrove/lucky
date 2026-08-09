@@ -70,7 +70,9 @@ public final class LotteryReqVO {
 
     @Data
     public static class Integration {
+        @Size(max = 100)
         private String account;
+        @Size(max = 100)
         private String group;
     }
 
@@ -183,8 +185,10 @@ public final class LotteryReqVO {
     public static class FollowOrder {
         private String id;
         @NotBlank
+        @Size(max = 100)
         private String source;
         @NotBlank
+        @Size(max = 2000)
         private String target;
         @NotNull
         @DecimalMin("0.1")
