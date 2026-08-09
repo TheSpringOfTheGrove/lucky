@@ -8,7 +8,7 @@ const router = useRouter()
 
 <template>
   <div class="lucky-page lucky-dashboard-page">
-    <h1 class="lucky-page__heading">Dashboard <small>Version 2.0</small></h1>
+    <h1 class="lucky-page__heading">仪表盘 <small>版本 2.0</small></h1>
     <div class="dashboard-layout">
       <div class="dashboard-card-grid">
         <button
@@ -314,5 +314,4 @@ const router = useRouter()
   }
 }
 </style>
-
 

@@ -31,6 +31,13 @@ public class LotteryController {
         return success(lotteryService.getBootstrap());
     }
 
+    @PostMapping("/owners/{userId}/initialize")
+    @Operation(summary = "手动初始化老板账号基础配置")
+    @PreAuthorize("@ss.hasRole('super_admin')")
+    public CommonResult<Map<String, Object>> initializeOwner(@PathVariable Long userId) {
+        return success(lotteryService.initializeOwner(userId));
+    }
+
     @PatchMapping("/switches/{key}")
     @PreAuthorize("@ss.hasPermission('lottery:dashboard:query')")
     public CommonResult<Boolean> setSwitch(@PathVariable String key, @Valid @RequestBody LotteryReqVO.BooleanValue reqVO) {

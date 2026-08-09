@@ -7,6 +7,7 @@ import com.hnz.luck5.module.lottery.dal.dataobject.LinkConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.LotteryConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketConnectionDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OddDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.OwnerInitializationDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.QuickCommandDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.SwitchSettingDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.SystemStateDO;
@@ -16,6 +17,7 @@ import com.hnz.luck5.module.lottery.dal.mysql.LinkConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.LotteryConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketConnectionMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OddMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.OwnerInitializationMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.QuickCommandMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.SwitchSettingMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.SystemStateMapper;
@@ -51,6 +53,7 @@ class LotteryOwnerInitializationServiceTest {
     @Mock private IntegrationMapper integrationMapper;
     @Mock private OddMapper oddMapper;
     @Mock private QuickCommandMapper quickCommandMapper;
+    @Mock private OwnerInitializationMapper ownerInitializationMapper;
     @Mock private RoleService roleService;
     @Mock private PermissionService permissionService;
 
@@ -152,6 +155,70 @@ class LotteryOwnerInitializationServiceTest {
         verify(integrationMapper, never()).insert(any(IntegrationDO.class));
         verify(oddMapper, never()).insert(any(OddDO.class));
         verify(quickCommandMapper, never()).insert(any(QuickCommandDO.class));
+    }
+
+    @Test
+    void automaticInitializationSkipsAccountWhenAnyInitializationMarkerAlreadyExists() {
+        when(ownerInitializationMapper.insertIfAbsent(1L, 202L, "AUTO", 202L)).thenReturn(0);
+
+        boolean initialized = service.initializeAutomaticallyCurrentTenant(1L, 202L, "existing-owner");
+
+        assertThat(initialized).isFalse();
+        verify(lotteryConfigMapper, never()).selectOne(any());
+        verify(lotteryConfigMapper, never()).insert(any(LotteryConfigDO.class));
+    }
+
+    @Test
+    void manualInitializationCreatesMarkerAndPreventsLaterAutomaticInitialization() {
+        Long ownerId = 203L;
+        OwnerInitializationDO marker = new OwnerInitializationDO();
+        marker.setUserId(ownerId);
+        marker.setInitializationCount(1);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "MANUAL", 1L)).thenReturn(1);
+        when(ownerInitializationMapper.selectOne(any())).thenReturn(marker);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId)).thenReturn(0);
+        when(roleService.getRoleList()).thenReturn(List.of());
+        when(lotteryConfigMapper.selectOne(any())).thenReturn(new LotteryConfigDO());
+        when(systemStateMapper.selectOne(any())).thenReturn(new SystemStateDO());
+        when(marketConnectionMapper.selectOne(any())).thenReturn(new MarketConnectionDO());
+        when(linkConfigMapper.selectOne(any())).thenReturn(new LinkConfigDO());
+        when(chimaConfigMapper.selectOne(any())).thenReturn(new ChimaConfigDO());
+        when(switchSettingMapper.selectList(any())).thenReturn(List.of());
+        when(integrationMapper.selectList(any())).thenReturn(List.of());
+        when(oddMapper.selectList(any())).thenReturn(List.of());
+        when(quickCommandMapper.selectList(any())).thenReturn(List.of());
+
+        LotteryOwnerInitializationService.InitializationResult result = service.initializeManuallyCurrentTenant(
+                1L, ownerId, "manual-owner", 1L);
+        boolean automatic = service.initializeAutomaticallyCurrentTenant(1L, ownerId, "manual-owner");
+
+        assertThat(result.initializationCount()).isEqualTo(1);
+        assertThat(result.source()).isEqualTo("MANUAL");
+        assertThat(automatic).isFalse();
+    }
+
+    @Test
+    void initializationBackfillsOnlyMissingSwitchKeys() {
+        Long ownerId = 204L;
+        when(roleService.getRoleList()).thenReturn(List.of());
+        when(lotteryConfigMapper.selectOne(any())).thenReturn(new LotteryConfigDO());
+        when(systemStateMapper.selectOne(any())).thenReturn(new SystemStateDO());
+        when(marketConnectionMapper.selectOne(any())).thenReturn(new MarketConnectionDO());
+        when(linkConfigMapper.selectOne(any())).thenReturn(new LinkConfigDO());
+        when(chimaConfigMapper.selectOne(any())).thenReturn(new ChimaConfigDO());
+        SwitchSettingDO existing = new SwitchSettingDO().setSettingKey("pullEnable").setLabel("网页群").setEnabled(true);
+        SwitchSettingDO missing = new SwitchSettingDO().setSettingKey("openCancel").setLabel("开启退码").setEnabled(true);
+        when(switchSettingMapper.selectList(any())).thenReturn(List.of(existing), List.of(existing, missing));
+        when(integrationMapper.selectList(any())).thenReturn(List.of(), List.of());
+        when(oddMapper.selectList(any())).thenReturn(List.of(), List.of());
+        when(quickCommandMapper.selectList(any())).thenReturn(List.of(), List.of());
+
+        service.initializeCurrentTenant(1L, ownerId, "partial-owner");
+
+        ArgumentCaptor<SwitchSettingDO> captor = ArgumentCaptor.forClass(SwitchSettingDO.class);
+        verify(switchSettingMapper).insert(captor.capture());
+        assertThat(captor.getValue().getSettingKey()).isEqualTo("openCancel");
+        assertThat(captor.getValue().getUserId()).isEqualTo(ownerId);
     }
 
 }

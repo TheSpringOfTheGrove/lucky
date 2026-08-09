@@ -32,4 +32,5 @@ public interface ErrorCodeConstants {
     ErrorCode DRAW_REASON_REQUIRED = new ErrorCode(2_001_000_025, "人工开奖必须填写原因");
     ErrorCode PRESET_BET_TOO_MANY = new ErrorCode(2_001_000_026, "预设订单最多展开 10000 注");
     ErrorCode INTEGRATION_NOT_READY = new ErrorCode(2_001_000_027, "第三方机器人尚未完成真实连接验证");
+    ErrorCode OWNER_INITIALIZATION_NOT_ALLOWED = new ErrorCode(2_001_000_028, "超级管理员账号不能初始化为老板账号");
 }

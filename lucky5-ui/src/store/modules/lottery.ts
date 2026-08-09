@@ -176,8 +176,14 @@ const useLucky5StoreBase = defineStore('lucky5', {
         Object.assign(this.operator, data.operator)
         Object.assign(this.room, data.room)
         Object.assign(this.dashboardStats, data.dashboardStats)
-        this.switches = data.switches
-        this.switchLabels = data.switchLabels
+        this.switches = {
+          ...Object.fromEntries(Object.keys(defaultSwitchLabels).map((key) => [key, false])),
+          ...(data.switches || {})
+        } as Record<SwitchKey, boolean>
+        this.switchLabels = {
+          ...defaultSwitchLabels,
+          ...(data.switchLabels || {})
+        } as Record<SwitchKey, string>
         this.integrations = data.integrations
         this.config = data.config
         this.market = {

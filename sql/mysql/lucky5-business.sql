@@ -15,6 +15,18 @@ CREATE TABLE IF NOT EXISTS `lucky5_config` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_config_user` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 配置';
 
+CREATE TABLE IF NOT EXISTS `lucky5_owner_initialization` (
+  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL,
+  `first_source` varchar(20) NOT NULL, `last_source` varchar(20) NOT NULL,
+  `initialization_count` int NOT NULL DEFAULT 1,
+  `first_initialized_at` datetime(6) NOT NULL, `last_initialized_at` datetime(6) NOT NULL,
+  `last_operator_user_id` bigint NOT NULL,
+  `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updater` varchar(64) DEFAULT '', `update_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
+  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_owner_initialization` (`tenant_id`,`user_id`,`deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 老板账号初始化标记';
+
 CREATE TABLE IF NOT EXISTS `lucky5_system_state` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `operator_username` varchar(100) NOT NULL DEFAULT '',
   `expire_at` datetime NULL, `room_open` bit(1) NOT NULL DEFAULT b'0', `online` int NOT NULL DEFAULT 0,
@@ -344,7 +356,7 @@ BEGIN
   DECLARE table_cursor CURSOR FOR
     SELECT `table_name` FROM `information_schema`.`tables`
     WHERE `table_schema`=DATABASE() AND `table_name` IN (
-      'lucky5_config','lucky5_system_state','lucky5_market_connection','lucky5_link_config',
+      'lucky5_config','lucky5_owner_initialization','lucky5_system_state','lucky5_market_connection','lucky5_link_config',
       'lucky5_chima_config','lucky5_switch_setting','lucky5_integration','lucky5_odd',
       'lucky5_member','lucky5_amount_record','lucky5_balance_ledger','lucky5_order','lucky5_bet_item','lucky5_draw',
       'lucky5_issue','lucky5_issue_transition','lucky5_preset_order','lucky5_quick_command',
@@ -410,6 +422,7 @@ BEGIN
   END IF;
 END$$
 CALL `lucky5_rebuild_unique`('lucky5_config','uk_lucky5_config_user','`tenant_id`,`user_id`,`deleted`')$$
+CALL `lucky5_rebuild_unique`('lucky5_owner_initialization','uk_lucky5_owner_initialization','`tenant_id`,`user_id`,`deleted`')$$
 CALL `lucky5_rebuild_unique`('lucky5_system_state','uk_lucky5_state_tenant','`tenant_id`,`user_id`,`deleted`')$$
 CALL `lucky5_rebuild_unique`('lucky5_market_connection','uk_lucky5_market_user','`tenant_id`,`user_id`,`deleted`')$$
 CALL `lucky5_rebuild_unique`('lucky5_link_config','uk_lucky5_link_tenant','`tenant_id`,`user_id`,`deleted`')$$

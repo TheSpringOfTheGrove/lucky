@@ -185,6 +185,12 @@
                       >
                         <Icon icon="ep:circle-check" />分配角色
                       </el-dropdown-item>
+                      <el-dropdown-item
+                        command="handleLotteryInitialize"
+                        v-if="checkRole(['super_admin']) && scope.row.id !== userStore.getUser.id"
+                      >
+                        <Icon icon="ep:setting" />初始化老板配置
+                      </el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
@@ -211,11 +217,13 @@
 </template>
 <script lang="ts" setup>
 import { DICT_TYPE, getIntDictOptions } from '@/utils/dict'
-import { checkPermi } from '@/utils/permission'
+import { checkPermi, checkRole } from '@/utils/permission'
 import { dateFormatter } from '@/utils/formatTime'
 import download from '@/utils/download'
 import { CommonStatusEnum } from '@/utils/constants'
 import * as UserApi from '@/api/system/user'
+import { initializeLotteryOwnerApi } from '@/api/lottery'
+import { useUserStore } from '@/store/modules/user'
 import UserForm from './UserForm.vue'
 import UserImportForm from './UserImportForm.vue'
 import UserAssignRoleForm from './UserAssignRoleForm.vue'
@@ -225,6 +233,7 @@ defineOptions({ name: 'SystemUser' })
 
 const message = useMessage() // 消息弹窗
 const { t } = useI18n() // 国际化
+const userStore = useUserStore()
 
 const loading = ref(true) // 列表的加载中
 const total = ref(0) // 列表的总页数
@@ -327,6 +336,9 @@ const handleCommand = (command: string, row: UserApi.UserVO) => {
     case 'handleRole':
       handleRole(row)
       break
+    case 'handleLotteryInitialize':
+      handleLotteryInitialize(row)
+      break
     default:
       break
   }
@@ -383,6 +395,17 @@ const handleResetPwd = async (row: UserApi.UserVO) => {
 const assignRoleFormRef = ref()
 const handleRole = (row: UserApi.UserVO) => {
   assignRoleFormRef.value.open(row)
+}
+
+/** 手动初始化老板配置 */
+const handleLotteryInitialize = async (row: UserApi.UserVO) => {
+  try {
+    await message.confirm(
+      `确认初始化“${row.username}”的老板基础配置吗？本操作只补齐缺失数据，不会覆盖已有会员、订单和配置。`
+    )
+    const result = await initializeLotteryOwnerApi(row.id)
+    message.success(`初始化完成，累计执行 ${result.initializationCount} 次`)
+  } catch {}
 }
 
 /** 初始化 */

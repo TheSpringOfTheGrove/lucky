@@ -10,6 +10,7 @@ import com.hnz.luck5.module.lottery.dal.dataobject.LinkConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.LotteryConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketConnectionDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OddDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.OwnerInitializationDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.QuickCommandDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.SwitchSettingDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.SystemStateDO;
@@ -19,6 +20,7 @@ import com.hnz.luck5.module.lottery.dal.mysql.LinkConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.LotteryConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketConnectionMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OddMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.OwnerInitializationMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.QuickCommandMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.SwitchSettingMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.SystemStateMapper;
@@ -35,6 +37,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
+import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.OWNER_INITIALIZATION_NOT_ALLOWED;
 
 /**
  * 为一个新老板账号初始化独立的 Lucky5 盘口数据。
@@ -48,6 +54,8 @@ public class LotteryOwnerInitializationService {
 
     private static final Long SUPER_ADMIN_USER_ID = 1L;
     private static final BigDecimal ZERO = BigDecimal.ZERO;
+    private static final String SOURCE_AUTO = "AUTO";
+    private static final String SOURCE_MANUAL = "MANUAL";
     private static final LocalDateTime DEFAULT_EXPIRE_AT = LocalDateTime.of(2099, 12, 31, 23, 59, 59);
 
     private final LotteryConfigMapper lotteryConfigMapper;
@@ -59,13 +67,63 @@ public class LotteryOwnerInitializationService {
     private final IntegrationMapper integrationMapper;
     private final OddMapper oddMapper;
     private final QuickCommandMapper quickCommandMapper;
+    private final OwnerInitializationMapper ownerInitializationMapper;
     private final RoleService roleService;
     private final PermissionService permissionService;
 
     @Transactional(rollbackFor = Exception.class)
     public void initialize(Long tenantId, Long userId, String username) {
-        TenantUtils.execute(tenantId, () -> DataPermissionUtils.executeIgnore(
-                () -> initializeCurrentTenant(tenantId, userId, username)));
+        initializeAutomatically(tenantId, userId, username);
+    }
+
+    /**
+     * 自动初始化只允许抢占一次。自动或手动初始化留下标记后，后续登录不会再次执行。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean initializeAutomatically(Long tenantId, Long userId, String username) {
+        return TenantUtils.execute(tenantId, () -> DataPermissionUtils.executeIgnore(
+                () -> initializeAutomaticallyCurrentTenant(tenantId, userId, username)));
+    }
+
+    boolean initializeAutomaticallyCurrentTenant(Long tenantId, Long userId, String username) {
+        int inserted = ownerInitializationMapper.insertIfAbsent(tenantId, userId, SOURCE_AUTO, userId);
+        if (inserted == 0) {
+            return false;
+        }
+        initializeCurrentTenant(tenantId, userId, username);
+        return true;
+    }
+
+    /**
+     * 超级管理员手动初始化可重复执行，但仍然只补缺失数据，不覆盖已有数据。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public InitializationResult initializeManually(Long tenantId, Long userId, String username, Long operatorUserId) {
+        return TenantUtils.execute(tenantId, () -> DataPermissionUtils.executeIgnore(
+                () -> {
+                    if (permissionService.hasAnyRoles(userId, "super_admin")) {
+                        throw exception(OWNER_INITIALIZATION_NOT_ALLOWED);
+                    }
+                    return initializeManuallyCurrentTenant(tenantId, userId, username, operatorUserId);
+                }));
+    }
+
+    InitializationResult initializeManuallyCurrentTenant(Long tenantId, Long userId, String username,
+                                                           Long operatorUserId) {
+        int inserted = ownerInitializationMapper.insertIfAbsent(tenantId, userId, SOURCE_MANUAL, operatorUserId);
+        OwnerInitializationDO marker = ownerInitializationMapper.selectOne(
+                new LambdaQueryWrapper<OwnerInitializationDO>().eq(OwnerInitializationDO::getUserId, userId)
+                        .last("LIMIT 1 FOR UPDATE"));
+        initializeCurrentTenant(tenantId, userId, username);
+        if (inserted == 0) {
+            marker.setLastSource(SOURCE_MANUAL);
+            marker.setInitializationCount(value(marker.getInitializationCount(), 1) + 1);
+            marker.setLastInitializedAt(LocalDateTime.now());
+            marker.setLastOperatorUserId(operatorUserId);
+            ownerInitializationMapper.updateById(marker);
+        }
+        int count = inserted == 1 ? 1 : marker.getInitializationCount();
+        return new InitializationResult(userId, count, SOURCE_MANUAL);
     }
 
     void initializeCurrentTenant(Long tenantId, Long userId, String username) {
@@ -182,16 +240,14 @@ public class LotteryOwnerInitializationService {
 
     private void initializeSwitches(Long userId) {
         List<SwitchSettingDO> existing = findSwitches(userId);
-        if (!existing.isEmpty()) {
-            return;
-        }
+        Set<String> existingKeys = existing.stream().map(SwitchSettingDO::getSettingKey).collect(Collectors.toSet());
         List<SwitchTemplate> templates = findSwitches(SUPER_ADMIN_USER_ID).stream()
                 .map(item -> new SwitchTemplate(item.getSettingKey(), item.getLabel(), item.getEnabled()))
                 .toList();
         if (templates.isEmpty()) {
             templates = defaultSwitches();
         }
-        templates.forEach(template -> {
+        templates.stream().filter(template -> !existingKeys.contains(template.key())).forEach(template -> {
             SwitchSettingDO setting = new SwitchSettingDO().setSettingKey(template.key())
                     .setLabel(template.label()).setEnabled(Boolean.TRUE.equals(template.enabled()));
             setting.setUserId(userId);
@@ -201,9 +257,7 @@ public class LotteryOwnerInitializationService {
 
     private void initializeIntegrations(Long userId) {
         List<IntegrationDO> existing = findIntegrations(userId);
-        if (!existing.isEmpty()) {
-            return;
-        }
+        Set<String> existingKeys = existing.stream().map(IntegrationDO::getIntegrationKey).collect(Collectors.toSet());
         List<IntegrationTemplate> templates = findIntegrations(SUPER_ADMIN_USER_ID).stream()
                 .map(item -> new IntegrationTemplate(item.getIntegrationKey(), item.getName()))
                 .toList();
@@ -212,7 +266,7 @@ public class LotteryOwnerInitializationService {
                     new IntegrationTemplate("fish", "飞鱼"),
                     new IntegrationTemplate("wechat", "微信"));
         }
-        templates.forEach(template -> {
+        templates.stream().filter(template -> !existingKeys.contains(template.key())).forEach(template -> {
             IntegrationDO integration = new IntegrationDO().setIntegrationKey(template.key())
                     .setName(template.name()).setAccount("").setGroupName("").setStatus("未登录");
             integration.setUserId(userId);
@@ -221,9 +275,7 @@ public class LotteryOwnerInitializationService {
     }
 
     private void initializeOdds(Long userId) {
-        if (!findOdds(userId).isEmpty()) {
-            return;
-        }
+        Set<String> existingCodes = findOdds(userId).stream().map(OddDO::getCode).collect(Collectors.toSet());
         List<OddTemplate> templates = findOdds(SUPER_ADMIN_USER_ID).stream()
                 .map(item -> new OddTemplate(item.getCode(), item.getPlay(), item.getItem(), item.getRate(),
                         item.getSecondaryRate(), item.getMinLimit(), item.getMaxLimit(), item.getStatus()))
@@ -231,7 +283,7 @@ public class LotteryOwnerInitializationService {
         if (templates.isEmpty()) {
             templates = defaultOdds();
         }
-        templates.forEach(template -> {
+        templates.stream().filter(template -> !existingCodes.contains(template.code())).forEach(template -> {
             OddDO odd = new OddDO().setCode(template.code()).setPlay(template.play())
                     .setItem(value(template.item(), "")).setRate(value(template.rate(), ZERO))
                     .setSecondaryRate(template.secondaryRate()).setMinLimit(template.minLimit())
@@ -242,9 +294,8 @@ public class LotteryOwnerInitializationService {
     }
 
     private void initializeQuickCommands(Long tenantId, Long userId) {
-        if (!findQuickCommands(userId).isEmpty()) {
-            return;
-        }
+        Set<String> existingCommands = findQuickCommands(userId).stream().map(this::commandKey)
+                .collect(Collectors.toSet());
         List<QuickCommandTemplate> templates = findQuickCommands(SUPER_ADMIN_USER_ID).stream()
                 .map(item -> new QuickCommandTemplate(item.getId(), item.getLabel(), item.getContent(),
                         item.getSort(), item.getEnabled()))
@@ -252,7 +303,7 @@ public class LotteryOwnerInitializationService {
         if (templates.isEmpty()) {
             templates = defaultQuickCommands();
         }
-        templates.forEach(template -> {
+        templates.stream().filter(template -> !existingCommands.contains(commandKey(template))).forEach(template -> {
             QuickCommandDO command = new QuickCommandDO()
                     .setId(stableCommandId(tenantId, userId, template.sourceId()))
                     .setLabel(template.label()).setContent(template.content())
@@ -291,6 +342,14 @@ public class LotteryOwnerInitializationService {
     private String stableCommandId(Long tenantId, Long userId, String sourceId) {
         String seed = tenantId + ":" + userId + ":" + sourceId;
         return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private String commandKey(QuickCommandDO command) {
+        return value(command.getLabel(), "") + "\u0000" + value(command.getContent(), "");
+    }
+
+    private String commandKey(QuickCommandTemplate command) {
+        return value(command.label(), "") + "\u0000" + value(command.content(), "");
     }
 
     private BigDecimal chimaValue(BigDecimal value) {
@@ -364,6 +423,9 @@ public class LotteryOwnerInitializationService {
     }
 
     private record QuickCommandTemplate(String sourceId, String label, String content, Integer sort, Boolean enabled) {
+    }
+
+    public record InitializationResult(Long userId, int initializationCount, String source) {
     }
 
 }

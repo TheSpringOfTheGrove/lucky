@@ -85,6 +85,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryRoomMessagePolicy roomMessagePolicy;
     @Resource private LotteryRebateCalculator rebateCalculator;
     @Resource private LotteryChimaCalculator chimaCalculator;
+    @Resource private LotteryOwnerInitializationService ownerInitializationService;
     @Resource private LotteryBalanceLedgerService balanceLedgerService;
     @Resource private MarketCredentialService marketCredentialService;
     @Resource private LotteryMarketSyncService marketSyncService;
@@ -95,6 +96,13 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     public Map<String, Object> getBootstrap() {
         Long loginUserId = SecurityFrameworkUtils.getLoginUserId();
+        if (loginUserId != null && !securityFrameworkService.hasRole("super_admin")) {
+            AdminUserDO loginUser = adminUserService.getUser(loginUserId);
+            if (loginUser != null) {
+                ownerInitializationService.initializeAutomatically(TenantContextHolder.getRequiredTenantId(),
+                        loginUserId, loginUser.getUsername());
+            }
+        }
         LotteryConfigDO config = findUserConfig(loginUserId);
         SystemStateDO state = first(systemStateMapper.selectList(null));
         MarketConnectionDO market = findUserMarket(loginUserId);
@@ -218,6 +226,19 @@ public class LotteryServiceImpl implements LotteryService {
                 "normalBet", rebate.normalBet(), "dragonBet", rebate.dragonBet(),
                 "normalRebate", rebate.normalAmount(), "dragonRebate", rebate.dragonAmount());
         return result;
+    }
+
+    @Override
+    public Map<String, Object> initializeOwner(Long userId) {
+        AdminUserDO user = adminUserService.getUser(userId);
+        if (user == null) {
+            throw exception(RECORD_NOT_FOUND);
+        }
+        LotteryOwnerInitializationService.InitializationResult result = ownerInitializationService.initializeManually(
+                TenantContextHolder.getRequiredTenantId(), userId, user.getUsername(),
+                SecurityFrameworkUtils.getLoginUserId());
+        return map("userId", result.userId(), "username", user.getUsername(),
+                "initializationCount", result.initializationCount(), "source", result.source());
     }
 
     private Map<String, Object> amountRecordMap(AmountRecordDO item) {

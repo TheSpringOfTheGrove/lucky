@@ -7,6 +7,9 @@ export type IntegrationKey = 'blueWhale' | 'fish' | 'wechat'
 export const getLucky5Bootstrap = () =>
   request.get<Record<string, any>>({ url: `${base}/bootstrap` })
 
+export const initializeLotteryOwnerApi = (userId: number) =>
+  request.post<Record<string, any>>({ url: `${base}/owners/${userId}/initialize` })
+
 export const setSwitchApi = (key: string, value: boolean) =>
   request.patch({ url: `${base}/switches/${key}`, data: { value } })
 
@@ -126,4 +129,3 @@ export const deleteFollowOrderApi = (id: string) =>
 
 export const markMessageApi = (id: number, status: string) =>
   request.patch({ url: `${base}/messages/${id}`, data: { status } })
-
