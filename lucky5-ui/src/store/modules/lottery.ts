@@ -227,7 +227,10 @@ const useLucky5StoreBase = defineStore('lucky5', {
         ElMessage.success(successMessage)
         return response
       } catch (error: any) {
-        ElMessage.error(error?.message || '操作失败')
+        // 业务异常已经由 Axios 统一展示，避免随后再弹出一条笼统的“操作失败”。
+        if (error !== 'error') {
+          ElMessage.error(error?.message || '操作失败')
+        }
         await this.initialize(true)
         return false
       } finally {

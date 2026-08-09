@@ -348,6 +348,15 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void setRoom(Boolean open) {
+        if (Boolean.TRUE.equals(open)) {
+            LotteryConfigDO config = requireConfig();
+            if (!Boolean.TRUE.equals(config.getBossMode())
+                    && (StrUtil.isBlank(config.getUpstreamUrl())
+                        || StrUtil.isBlank(config.getUpstreamAccount())
+                        || StrUtil.isBlank(config.getMarketPasswordEncrypted()))) {
+                throw exception(MARKET_CONFIG_REQUIRED);
+            }
+        }
         SystemStateDO state = requireState();
         state.setRoomOpen(open);
         systemStateMapper.updateById(state);
@@ -363,9 +372,6 @@ public class LotteryServiceImpl implements LotteryService {
         boolean hasNewPassword = StrUtil.isNotBlank(reqVO.getPassword()) && !"********".equals(reqVO.getPassword());
         String encrypted = hasNewPassword ? marketCredentialService.encrypt(reqVO.getPassword().trim())
                 : value(config.getMarketPasswordEncrypted(), "");
-        if (!Boolean.TRUE.equals(reqVO.getBossMode()) && (url.isEmpty() || account.isEmpty() || encrypted.isEmpty())) {
-            throw new IllegalStateException("非老板模式必须配置完整的盘口网址、账号和密码");
-        }
         config.setUpstreamUrl(url);
         config.setUpstreamAccount(account);
         config.setMarketPasswordEncrypted(encrypted);
