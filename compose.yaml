@@ -45,6 +45,7 @@ services:
     environment:
       TZ: Asia/Shanghai
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--Xms512m -Xmx1024m -Djava.security.egd=file:/dev/./urandom}
+      MARKET_CREDENTIAL_KEY: ${MARKET_CREDENTIAL_KEY:-lucky5-local-market-credential-key-change-me}
     command:
       - --spring.profiles.active=local
       - --spring.datasource.dynamic.datasource.master.url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-ruoyi-vue-pro}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true

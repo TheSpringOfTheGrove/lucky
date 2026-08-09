@@ -213,6 +213,26 @@ foreach ($spec in $specs) {
     Write-Host ("{0,-28} {1,6} rows" -f $spec.Source, $rows.Count)
 }
 
+# The legacy Draw table can contain the placeholder 00000 even though Issue already has the real five-digit result.
+# Reconcile only exact placeholder rows with a validated result from the same tenant/user/period.
+$sql.Add(@"
+UPDATE lucky5_draw d
+JOIN lucky5_issue i ON i.tenant_id=d.tenant_id AND i.user_id=d.user_id
+  AND i.period=d.period AND i.deleted=b'0'
+SET d.result=CONCAT(SUBSTRING(i.result,1,1),',',SUBSTRING(i.result,2,1),',',SUBSTRING(i.result,3,1),',',
+                    SUBSTRING(i.result,4,1),',',SUBSTRING(i.result,5,1)),
+    d.big_small=IF((CAST(SUBSTRING(i.result,1,1) AS UNSIGNED)+CAST(SUBSTRING(i.result,2,1) AS UNSIGNED)
+      +CAST(SUBSTRING(i.result,3,1) AS UNSIGNED)+CAST(SUBSTRING(i.result,4,1) AS UNSIGNED)
+      +CAST(SUBSTRING(i.result,5,1) AS UNSIGNED))>=23,'大','小'),
+    d.odd_even=IF(MOD((CAST(SUBSTRING(i.result,1,1) AS UNSIGNED)+CAST(SUBSTRING(i.result,2,1) AS UNSIGNED)
+      +CAST(SUBSTRING(i.result,3,1) AS UNSIGNED)+CAST(SUBSTRING(i.result,4,1) AS UNSIGNED)
+      +CAST(SUBSTRING(i.result,5,1) AS UNSIGNED)),2)=1,'单','双'),
+    d.dragon_tiger=IF(CAST(SUBSTRING(i.result,1,1) AS UNSIGNED)>CAST(SUBSTRING(i.result,5,1) AS UNSIGNED),'龙',
+      IF(CAST(SUBSTRING(i.result,1,1) AS UNSIGNED)<CAST(SUBSTRING(i.result,5,1) AS UNSIGNED),'虎','和'))
+WHERE d.tenant_id=$TenantId AND d.user_id=$OwnerUserId AND d.deleted=b'0'
+  AND REPLACE(d.result,',','')='00000' AND i.result REGEXP '^[0-9]{5}$';
+"@)
+
 Write-Host 'Writing migrated rows to MySQL...'
 ($sql -join "`n") | docker compose -f $CurrentCompose exec -T mysql mysql "-u$CurrentDatabaseUser" "-p$CurrentDatabasePassword" $CurrentDatabase
 if ($LASTEXITCODE -ne 0) { throw 'MySQL data migration failed.' }

@@ -181,7 +181,8 @@ const useLucky5StoreBase = defineStore('lucky5', {
         this.config = data.config
         this.market = {
           ...this.market,
-          connection: data.market || this.market.connection
+          connection: data.market || this.market.connection,
+          issue: data.issue || null
         }
         this.links = data.links
         this.odds = data.odds

@@ -65,6 +65,10 @@ public interface LotteryService {
 
     Map<String, Object> settlePeriod(String period, LotteryReqVO.Settle reqVO);
 
+    Map<String, Object> settlePeriodForUser(Long userId, String period, String result, String actor);
+
+    void handleMarketIssueOpened(Long userId, String period);
+
     Map<String, Object> getIssueStatus();
 
     void setIssueStatus(String period, String status);
