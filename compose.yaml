@@ -1,0 +1,91 @@
+name: lucky5-local
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ruoyi-vue-pro}
+      MYSQL_USER: ${MYSQL_USER:-lucky5}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-lucky5}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/mysql/ruoyi-vue-pro.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: .
+      dockerfile: lucky5-server/Dockerfile
+    image: lucky5-server:local
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--Xms512m -Xmx1024m -Djava.security.egd=file:/dev/./urandom}
+    command:
+      - --spring.profiles.active=local
+      - --spring.datasource.dynamic.datasource.master.url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-ruoyi-vue-pro}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true
+      - --spring.datasource.dynamic.datasource.master.username=${MYSQL_USER:-lucky5}
+      - --spring.datasource.dynamic.datasource.master.password=${MYSQL_PASSWORD:-lucky5}
+      - --spring.datasource.dynamic.datasource.slave.url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-ruoyi-vue-pro}?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true
+      - --spring.datasource.dynamic.datasource.slave.username=${MYSQL_USER:-lucky5}
+      - --spring.datasource.dynamic.datasource.slave.password=${MYSQL_PASSWORD:-lucky5}
+      - --spring.data.redis.host=redis
+    ports:
+      - "${BACKEND_PORT:-48080}:48080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:48080/v3/api-docs | grep --quiet '\"openapi\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 90s
+
+  frontend:
+    build:
+      context: ./lucky5-ui
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_URL: http://localhost:${FRONTEND_PORT:-8080}
+    image: lucky5-ui:local
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql-data:
+  redis-data:

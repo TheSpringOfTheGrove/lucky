@@ -1,0 +1,2 @@
+com.hnz.luck5.framework.quartz.config.Lucky5QuartzAutoConfiguration
+com.hnz.luck5.framework.quartz.config.Lucky5AsyncAutoConfiguration

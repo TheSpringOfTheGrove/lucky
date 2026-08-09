@@ -1,0 +1,4 @@
+com.hnz.luck5.framework.idempotent.config.Lucky5IdempotentConfiguration
+com.hnz.luck5.framework.lock4j.config.Lucky5Lock4jConfiguration
+com.hnz.luck5.framework.ratelimiter.config.Lucky5RateLimiterConfiguration
+com.hnz.luck5.framework.signature.config.Lucky5ApiSignatureAutoConfiguration

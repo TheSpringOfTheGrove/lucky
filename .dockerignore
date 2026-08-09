@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.image
+**/target
+**/node_modules
+**/dist
+**/dist-*
+**/*.log
+lucky5-ui
+script
+sql

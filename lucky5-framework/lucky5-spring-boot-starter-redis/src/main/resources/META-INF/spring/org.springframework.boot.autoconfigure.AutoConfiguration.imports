@@ -1,0 +1,2 @@
+com.hnz.luck5.framework.redis.config.Lucky5RedisAutoConfiguration
+com.hnz.luck5.framework.redis.config.Lucky5CacheAutoConfiguration

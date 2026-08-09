@@ -1,0 +1,7 @@
+com.hnz.luck5.framework.apilog.config.Lucky5ApiLogAutoConfiguration
+com.hnz.luck5.framework.jackson.config.Lucky5JacksonAutoConfiguration
+com.hnz.luck5.framework.swagger.config.Lucky5SwaggerAutoConfiguration
+com.hnz.luck5.framework.web.config.Lucky5WebAutoConfiguration
+com.hnz.luck5.framework.xss.config.Lucky5XssAutoConfiguration
+com.hnz.luck5.framework.banner.config.Lucky5BannerAutoConfiguration
+com.hnz.luck5.framework.encrypt.config.Lucky5ApiEncryptAutoConfiguration

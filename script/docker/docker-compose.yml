@@ -1,0 +1,3 @@
+# 兼容旧入口；实际服务定义统一维护在仓库根目录 compose.yaml。
+include:
+  - path: ../../compose.yaml

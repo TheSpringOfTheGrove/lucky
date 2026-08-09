@@ -1,0 +1,3 @@
+com.hnz.luck5.framework.security.config.Lucky5SecurityAutoConfiguration
+com.hnz.luck5.framework.security.config.Lucky5WebSecurityConfigurerAdapter
+com.hnz.luck5.framework.operatelog.config.Lucky5OperateLogConfiguration

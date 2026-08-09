@@ -1,0 +1,3 @@
+com.hnz.luck5.framework.datasource.config.Lucky5DataSourceAutoConfiguration
+com.hnz.luck5.framework.mybatis.config.Lucky5MybatisAutoConfiguration
+com.hnz.luck5.framework.translate.config.Lucky5TranslateAutoConfiguration

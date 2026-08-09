@@ -1,0 +1,2 @@
+com.hnz.luck5.framework.tracer.config.Lucky5TracerAutoConfiguration
+com.hnz.luck5.framework.tracer.config.Lucky5MetricsAutoConfiguration

@@ -1,0 +1,3 @@
+com.hnz.luck5.framework.mq.redis.config.Lucky5RedisMQProducerAutoConfiguration
+com.hnz.luck5.framework.mq.redis.config.Lucky5RedisMQConsumerAutoConfiguration
+com.hnz.luck5.framework.mq.rabbitmq.config.Lucky5RabbitMQAutoConfiguration
