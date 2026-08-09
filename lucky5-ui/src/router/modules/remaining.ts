@@ -34,6 +34,16 @@ const { t } = useI18n()
  **/
 const remainingRouter: AppRouteRecordRaw[] = [
   {
+    path: '/room/:openId?',
+    name: 'LotteryRoom',
+    component: () => import('@/views/lottery/room/index.vue'),
+    meta: {
+      hidden: true,
+      noTagsView: true,
+      title: '会员房间'
+    }
+  },
+  {
     path: '/redirect',
     component: Layout,
     name: 'RedirectRoot',
@@ -59,7 +69,7 @@ const remainingRouter: AppRouteRecordRaw[] = [
     children: [
       {
         path: 'index',
-        component: () => import('@/views/Home/Index.vue'),
+        component: () => import('@/views/lottery/dashboard/index.vue'),
         name: 'Index',
         meta: {
           title: t('router.home'),

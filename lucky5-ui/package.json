@@ -112,6 +112,7 @@
     "consola": "^3.4.2",
     "eslint": "^10.3.0",
     "eslint-plugin-vue": "^10.9.1",
+    "less": "^4.2.2",
     "lint-staged": "^16.4.0",
     "postcss": "^8.5.14",
     "postcss-html": "^1.8.1",

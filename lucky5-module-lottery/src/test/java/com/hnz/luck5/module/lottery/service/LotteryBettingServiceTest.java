@@ -1,0 +1,95 @@
+package com.hnz.luck5.module.lottery.service;
+
+import com.hnz.luck5.module.lottery.dal.dataobject.OddDO;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.math.BigDecimal;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class LotteryBettingServiceTest {
+
+    private final LotteryBettingService service = new LotteryBettingService();
+    private List<OddDO> odds;
+
+    @BeforeEach
+    void setUp() {
+        odds = List.of(
+                odd("regex1d", "一定位", "9"), odd("regex2d", "二定位", "96"),
+                odd("regex3d", "三定位", "960"), odd("regex4d", "四定位", "9600"),
+                odd("regex2x", "二字现", "9"), odd("regex3x", "三字现", "45"),
+                odd("regex4x", "四字现", "360"), odd("regex4d4", "四条", "7000"),
+                odd("regexlh", "龙虎", "0"), odd("regexh", "和", "0"));
+    }
+
+    @Test
+    void parsesBasicConfiguredAndPositionBets() {
+        assertThat(service.parse("大100 单50", odds)).hasSize(2);
+        assertThat(service.parse("大单各100", odds)).hasSize(2);
+        assertThat(service.parse("123/10", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection)
+                .containsExactly("三字现", "123");
+        assertThat(service.parse("123定/10", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection)
+                .containsExactly("三定位", "123");
+        assertThat(service.parse("千12百34二定各10", odds)).hasSize(4);
+        assertThat(service.parse("12配34配二定各10", odds)).hasSize(48);
+    }
+
+    @Test
+    void matchesOriginalReferenceFilters() {
+        assertThat(service.parse("二现含12各3", odds)).hasSize(19);
+        assertThat(service.parse("三现取三兄弟各1", odds)).hasSize(10);
+        assertThat(service.parse("四现取双双重各2", odds)).hasSize(55);
+        assertThat(service.parse("四定取千百合5十个合6各1", odds)).hasSize(100);
+        assertThat(service.parse("千1二定上奖12各1", odds)).extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("11XX", "12XX", "1X1X", "1X2X", "1XX1", "1XX2");
+        assertThat(service.parse("三现全倒112各1", odds)).hasSize(1);
+        assertThat(service.parse("五位二定千12五34各1", odds)).hasSize(4);
+        assertThat(service.parse("千12五34五位二定各1", odds)).hasSize(4);
+        assertThat(service.parse("千12五位二定五34各1", odds)).hasSize(20);
+        assertThatThrownBy(() -> service.parse("除12配34配二定各1", odds)).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void parsesMigratedQuickCommandCorpus() {
+        List<String> commands = List.of(
+                "11335566778899倒四定各0.5",
+                "2456789百0245689个各20",
+                "123456780头123467890百234567890十0123456789个。两数合012345除三重除三兄弟各0.5",
+                "6789千13579百0123457十各5",
+                "头13579百24680十1245789各0.5",
+                "百13579十1245798尾02468各0.5",
+                "023456789千023456789百012345679十012345679个。含016789千十合01234579千个合23456789百十合01245679除三重除两双重各0.5",
+                "1243790头1234567百1234789尾各2",
+                "0123456789千百十个。含347两数合024取两兄弟各0.5",
+                "百02468十1245789尾13579各0.5");
+        commands.forEach(command -> assertThat(service.parse(command, odds)).as(command).isNotEmpty());
+    }
+
+    @Test
+    void derivesAndSettlesDraws() {
+        LotteryBettingService.DrawResult draw = service.deriveDraw("1379");
+        assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
+                "二定位", "13XX", BigDecimal.ONE, BigDecimal.ONE), draw)).isTrue();
+        assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
+                "二定位", "14XX", BigDecimal.ONE, BigDecimal.ONE), draw)).isFalse();
+        assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
+                "三字现", "139", BigDecimal.ONE, BigDecimal.ONE), draw)).isTrue();
+    }
+
+    private OddDO odd(String code, String play, String rate) {
+        OddDO odd = new OddDO();
+        odd.setCode(code);
+        odd.setPlay(play);
+        odd.setItem("");
+        odd.setRate(new BigDecimal(rate));
+        odd.setMinLimit(new BigDecimal("0.1"));
+        odd.setMaxLimit(new BigDecimal("10000"));
+        odd.setStatus("启用");
+        return odd;
+    }
+}

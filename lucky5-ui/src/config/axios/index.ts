@@ -35,6 +35,10 @@ export default {
     const res = await request({ method: 'PUT', ...option })
     return res.data as unknown as T
   },
+  patch: async <T = any>(option: any) => {
+    const res = await request({ method: 'PATCH', ...option })
+    return res.data as unknown as T
+  },
   download: async <T = any>(option: any) => {
     const res = await request({ method: 'GET', responseType: 'blob', ...option })
     return res as unknown as Promise<T>

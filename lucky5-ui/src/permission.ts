@@ -21,6 +21,7 @@ const whiteList = [
   '/auth-redirect',
   '/bind',
   '/register',
+  '/room',
   '/oauthLogin/gitee'
 ]
 
@@ -63,7 +64,7 @@ router.beforeEach(async (to, from, next) => {
       }
     }
   } else {
-    if (whiteList.indexOf(to.path) !== -1) {
+    if (whiteList.includes(to.path) || to.path.startsWith('/room/')) {
       next()
     } else {
       next(`/login?redirect=${encodeURIComponent(to.fullPath)}`) // 否则全部重定向到登录页
