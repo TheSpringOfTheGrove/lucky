@@ -248,7 +248,9 @@ public class LotteryServiceImpl implements LotteryService {
     private Map<String, Object> memberMap(MemberDO item, LotteryRebateCalculator.RebateResult rebate) {
         Map<String, Object> result = map("id", item.getId(), "name", item.getName(), "balance", money(item.getBalance()),
                 "status", item.getStatus(), "partner", item.getPartner(), "normalRate", money(item.getNormalRate()),
-                "lhhRate", money(item.getLhhRate()), "tag", item.getTag(), "externalNickname", item.getExternalNickname(),
+                "lhhRate", money(item.getLhhRate()), "partnerNormalRate", money(item.getPartnerNormalRate()),
+                "partnerLhhRate", money(item.getPartnerLhhRate()), "tag", item.getTag(),
+                "isPuller", "拉手".equals(item.getTag()), "externalNickname", item.getExternalNickname(),
                 "totalBet", money(item.getTotalBet()), "profitLoss", money(item.getProfitLoss()),
                 "memberType", memberType(item), "autoProxy", isAutoProxy(item),
                 "autoBetEnabled", isAutoProxy(item) && bool(item.getAutoBetEnabled()),
@@ -258,7 +260,8 @@ public class LotteryServiceImpl implements LotteryService {
                 "privateChat", bool(item.getPrivateChat()), "webOnly", bool(item.getWebOnly()),
                 "blueWhalePassword", value(item.getBlueWhalePassword(), ""), "avatar", value(item.getAvatar(), 1),
                 "normalBet", rebate.normalBet(), "dragonBet", rebate.dragonBet(),
-                "normalRebate", rebate.normalAmount(), "dragonRebate", rebate.dragonAmount());
+                "normalRebate", rebate.normalAmount(), "dragonRebate", rebate.dragonAmount(),
+                "partnerRebate", rebate.partnerTotalAmount(), "totalRebate", rebate.combinedAmount());
         return result;
     }
 
@@ -566,6 +569,8 @@ public class LotteryServiceImpl implements LotteryService {
         item.setPartner(value(reqVO.getPartner(), "无"));
         item.setNormalRate(value(reqVO.getNormalRate(), ZERO));
         item.setLhhRate(value(reqVO.getLhhRate(), ZERO));
+        item.setPartnerNormalRate(value(reqVO.getPartnerNormalRate(), value(item.getPartnerNormalRate(), ZERO)));
+        item.setPartnerLhhRate(value(reqVO.getPartnerLhhRate(), value(item.getPartnerLhhRate(), ZERO)));
         item.setTag(value(reqVO.getTag(), "普通"));
         item.setExternalNickname(value(reqVO.getExternalNickname(), ""));
         item.setTotalBet(value(reqVO.getTotalBet(), value(item.getTotalBet(), ZERO)));
@@ -592,6 +597,7 @@ public class LotteryServiceImpl implements LotteryService {
         item.setPrivateChat(value(reqVO.getPrivateChat(), false));
         item.setWebOnly(value(reqVO.getWebOnly(), false));
         item.setBlueWhalePassword(value(reqVO.getBlueWhalePassword(), ""));
+        normalizeSelfPartner(item);
         if (create) {
             memberMapper.insert(item);
             if (requestedBalance.signum() > 0) {
@@ -827,11 +833,45 @@ public class LotteryServiceImpl implements LotteryService {
         reqVO.getMembers().forEach(item -> {
             MemberDO member = requireMember(item.getId());
             if (isAutoProxy(member)) return;
-            member.setNormalRate(item.getNormalRate());
-            member.setLhhRate(item.getLhhRate());
+            if (item.getNormalRate() != null) member.setNormalRate(item.getNormalRate());
+            if (item.getLhhRate() != null) member.setLhhRate(item.getLhhRate());
+            if (item.getPartnerNormalRate() != null) member.setPartnerNormalRate(item.getPartnerNormalRate());
+            if (item.getPartnerLhhRate() != null) member.setPartnerLhhRate(item.getPartnerLhhRate());
+            if (item.getPartner() != null) member.setPartner(StrUtil.blankToDefault(item.getPartner().trim(), "无"));
+            if (item.getPuller() != null) member.setTag(Boolean.TRUE.equals(item.getPuller()) ? "拉手" : "普通");
+            normalizeSelfPartner(member);
             memberMapper.updateById(member);
         });
-        log("-", "批量保存会员返水比例");
+        normalizePullerRelations();
+        log("-", "保存会员返水及拉手设置");
+    }
+
+    private void normalizeSelfPartner(MemberDO member) {
+        if (StrUtil.isBlank(member.getPartner()) || "无".equals(member.getPartner())
+                || Objects.equals(member.getName(), member.getPartner())) {
+            member.setPartner("无");
+            member.setPartnerNormalRate(ZERO);
+            member.setPartnerLhhRate(ZERO);
+        }
+    }
+
+    private void normalizePullerRelations() {
+        List<MemberDO> members = memberMapper.selectList(new LambdaQueryWrapper<MemberDO>()
+                .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false));
+        Set<String> pullerNames = members.stream().filter(member -> "拉手".equals(member.getTag()))
+                .map(MemberDO::getName).collect(Collectors.toSet());
+        for (MemberDO member : members) {
+            String partner = value(member.getPartner(), "无");
+            if (!pullerNames.contains(partner) || Objects.equals(member.getName(), partner)) {
+                if (!"无".equals(partner) || money(member.getPartnerNormalRate()).signum() != 0
+                        || money(member.getPartnerLhhRate()).signum() != 0) {
+                    member.setPartner("无");
+                    member.setPartnerNormalRate(ZERO);
+                    member.setPartnerLhhRate(ZERO);
+                    memberMapper.updateById(member);
+                }
+            }
+        }
     }
 
     @Override
@@ -858,11 +898,17 @@ public class LotteryServiceImpl implements LotteryService {
         List<MemberDO> members = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
                 new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
                         .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)));
+        Map<String, MemberDO> pullersByName = members.stream().filter(member -> "拉手".equals(member.getTag()))
+                .collect(Collectors.toMap(MemberDO::getName, Function.identity(), (first, ignored) -> first));
         boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         for (MemberDO member : members) {
             LotteryRebateCalculator.RebateResult rebate = rebateCalculator.calculate(member, orders, itemsByOrder,
                     rebateRecords, separateDragonRebate);
-            BigDecimal amount = rebate.totalAmount();
+            BigDecimal ownAmount = rebate.totalAmount();
+            MemberDO puller = pullersByName.get(member.getPartner());
+            BigDecimal pullerAmount = puller == null || Objects.equals(puller.getId(), member.getId())
+                    ? ZERO : rebate.partnerTotalAmount();
+            BigDecimal amount = ownAmount.add(pullerAmount);
             if (amount.signum() <= 0) continue;
             RebateRecordDO record = new RebateRecordDO();
             record.setId(id());
@@ -871,30 +917,53 @@ public class LotteryServiceImpl implements LotteryService {
             record.setDragonBet(rebate.pendingDragonBet());
             record.setNormalAmount(rebate.normalAmount());
             record.setDragonAmount(rebate.dragonAmount());
+            record.setPartnerMemberId(pullerAmount.signum() > 0 ? puller.getId() : null);
+            record.setPartnerNormalAmount(pullerAmount.signum() > 0 ? rebate.partnerNormalAmount() : ZERO);
+            record.setPartnerDragonAmount(pullerAmount.signum() > 0 ? rebate.partnerDragonAmount() : ZERO);
+            record.setPartnerTotalAmount(pullerAmount);
             record.setTotalAmount(amount);
             record.setUserId(member.getUserId());
-            balanceLedgerService.change(member, amount, LotteryBalanceLedgerService.REBATE,
-                    record.getId(), actor, "普通 " + rebate.normalAmount() + " / 龙虎 " + rebate.dragonAmount());
             rebateRecordMapper.insert(record);
-            AmountRecordDO amountRecord = new AmountRecordDO();
-            amountRecord.setId(record.getId());
-            amountRecord.setMemberId(member.getId());
-            amountRecord.setMemberName(member.getName());
-            amountRecord.setType("返水");
-            amountRecord.setAmount(amount);
-            amountRecord.setStatus("已通过");
-            amountRecord.setRecordSource("REBATE");
-            amountRecord.setRemark("普通 " + rebate.normalAmount() + " / 龙虎 " + rebate.dragonAmount());
-            amountRecord.setAuditedAt(LocalDateTime.now());
-            amountRecord.setAuditedBy(actor);
-            amountRecord.setUserId(member.getUserId());
-            amountRecordMapper.insert(amountRecord);
+            if (ownAmount.signum() > 0) {
+                String remark = "普通 " + rebate.normalAmount() + " / 龙虎 " + rebate.dragonAmount();
+                balanceLedgerService.change(member, ownAmount, LotteryBalanceLedgerService.REBATE,
+                        record.getId(), actor, remark);
+                insertRebateAmountRecord(record.getId(), member, ownAmount, remark, actor);
+                count++;
+                paidMembers.add(map("id", member.getId(), "name", member.getName(), "amount", ownAmount,
+                        "role", "玩家"));
+            }
+            if (pullerAmount.signum() > 0) {
+                String remark = "拉手返水，来源 " + member.getName() + "：普通 " + rebate.partnerNormalAmount()
+                        + " / 龙虎 " + rebate.partnerDragonAmount();
+                String amountRecordId = id();
+                balanceLedgerService.change(puller, pullerAmount, LotteryBalanceLedgerService.REBATE,
+                        amountRecordId, actor, remark);
+                insertRebateAmountRecord(amountRecordId, puller, pullerAmount, remark, actor);
+                count++;
+                paidMembers.add(map("id", puller.getId(), "name", puller.getName(), "amount", pullerAmount,
+                        "role", "拉手", "sourceMember", member.getName()));
+            }
             total = total.add(amount);
-            count++;
-            paidMembers.add(map("id", member.getId(), "name", member.getName(), "amount", amount));
         }
         logAs(userId, actor, "-", "发放返水 " + count + " 人，合计 " + money(total));
         return map("count", count, "amount", money(total), "totalAmount", money(total), "members", paidMembers);
+    }
+
+    private void insertRebateAmountRecord(String id, MemberDO member, BigDecimal amount, String remark, String actor) {
+        AmountRecordDO amountRecord = new AmountRecordDO();
+        amountRecord.setId(id);
+        amountRecord.setMemberId(member.getId());
+        amountRecord.setMemberName(member.getName());
+        amountRecord.setType("返水");
+        amountRecord.setAmount(amount);
+        amountRecord.setStatus("已通过");
+        amountRecord.setRecordSource("REBATE");
+        amountRecord.setRemark(remark);
+        amountRecord.setAuditedAt(LocalDateTime.now());
+        amountRecord.setAuditedBy(actor);
+        amountRecord.setUserId(member.getUserId());
+        amountRecordMapper.insert(amountRecord);
     }
 
     @Override

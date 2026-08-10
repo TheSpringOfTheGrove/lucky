@@ -22,6 +22,8 @@ public class MemberDO extends LotteryUserBaseDO {
     private String partner;
     private BigDecimal normalRate;
     private BigDecimal lhhRate;
+    private BigDecimal partnerNormalRate;
+    private BigDecimal partnerLhhRate;
     private String tag;
     private String externalNickname;
     private BigDecimal totalBet;

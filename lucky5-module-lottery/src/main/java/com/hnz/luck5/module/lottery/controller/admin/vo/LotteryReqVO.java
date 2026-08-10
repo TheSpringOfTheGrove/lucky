@@ -94,6 +94,10 @@ public final class LotteryReqVO {
         private BigDecimal normalRate;
         @DecimalMin("0")
         private BigDecimal lhhRate;
+        @DecimalMin("0")
+        private BigDecimal partnerNormalRate;
+        @DecimalMin("0")
+        private BigDecimal partnerLhhRate;
         private String tag;
         private String externalNickname;
         private BigDecimal totalBet;
@@ -250,12 +254,17 @@ public final class LotteryReqVO {
     public static class DiscountItem {
         @NotBlank
         private String id;
-        @NotNull
         @DecimalMin("0")
         private BigDecimal normalRate;
-        @NotNull
         @DecimalMin("0")
         private BigDecimal lhhRate;
+        @Size(max = 100)
+        private String partner;
+        @DecimalMin("0")
+        private BigDecimal partnerNormalRate;
+        @DecimalMin("0")
+        private BigDecimal partnerLhhRate;
+        private Boolean puller;
     }
 
     @Data

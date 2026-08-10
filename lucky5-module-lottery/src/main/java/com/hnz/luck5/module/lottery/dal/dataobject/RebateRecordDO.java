@@ -21,6 +21,10 @@ public class RebateRecordDO extends LotteryUserBaseDO {
     private BigDecimal dragonBet;
     private BigDecimal normalAmount;
     private BigDecimal dragonAmount;
+    private String partnerMemberId;
+    private BigDecimal partnerNormalAmount;
+    private BigDecimal partnerDragonAmount;
+    private BigDecimal partnerTotalAmount;
     private BigDecimal totalAmount;
 
 }

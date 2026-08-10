@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `name` varchar(100) NOT NULL, `balance` decimal(18,2) NOT NULL DEFAULT 0,
   `status` varchar(20) NOT NULL DEFAULT '离线', `partner` varchar(100) NOT NULL DEFAULT '无',
   `normal_rate` decimal(8,4) NOT NULL DEFAULT 0, `lhh_rate` decimal(8,4) NOT NULL DEFAULT 0,
+  `partner_normal_rate` decimal(8,4) NOT NULL DEFAULT 0, `partner_lhh_rate` decimal(8,4) NOT NULL DEFAULT 0,
   `tag` varchar(50) NOT NULL DEFAULT '普通', `external_nickname` varchar(100) NOT NULL DEFAULT '',
   `total_bet` decimal(18,2) NOT NULL DEFAULT 0, `profit_loss` decimal(18,2) NOT NULL DEFAULT 0,
   `member_type` varchar(20) NOT NULL DEFAULT 'REAL', `auto_proxy` bit(1) NOT NULL DEFAULT b'0',
@@ -348,7 +349,9 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
 CREATE TABLE IF NOT EXISTS `lucky5_rebate_record` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `normal_bet` decimal(18,2) NOT NULL DEFAULT 0,
   `dragon_bet` decimal(18,2) NOT NULL DEFAULT 0, `normal_amount` decimal(18,2) NOT NULL DEFAULT 0,
-  `dragon_amount` decimal(18,2) NOT NULL DEFAULT 0, `total_amount` decimal(18,2) NOT NULL DEFAULT 0,
+  `dragon_amount` decimal(18,2) NOT NULL DEFAULT 0, `partner_member_id` varchar(64) NULL,
+  `partner_normal_amount` decimal(18,2) NOT NULL DEFAULT 0, `partner_dragon_amount` decimal(18,2) NOT NULL DEFAULT 0,
+  `partner_total_amount` decimal(18,2) NOT NULL DEFAULT 0, `total_amount` decimal(18,2) NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
@@ -408,6 +411,32 @@ PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lu
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='member_id')=0,
   'ALTER TABLE `lucky5_message` ADD COLUMN `member_id` varchar(64) NULL AFTER `channel`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
+-- 拉手返水比例与发放明细，兼容已经初始化的数据库。
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='partner_normal_rate')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `partner_normal_rate` decimal(8,4) NOT NULL DEFAULT 0 AFTER `lhh_rate`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='partner_lhh_rate')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `partner_lhh_rate` decimal(8,4) NOT NULL DEFAULT 0 AFTER `partner_normal_rate`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_rebate_record' AND column_name='partner_member_id')=0,
+  'ALTER TABLE `lucky5_rebate_record` ADD COLUMN `partner_member_id` varchar(64) NULL AFTER `dragon_amount`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_rebate_record' AND column_name='partner_normal_amount')=0,
+  'ALTER TABLE `lucky5_rebate_record` ADD COLUMN `partner_normal_amount` decimal(18,2) NOT NULL DEFAULT 0 AFTER `partner_member_id`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_rebate_record' AND column_name='partner_dragon_amount')=0,
+  'ALTER TABLE `lucky5_rebate_record` ADD COLUMN `partner_dragon_amount` decimal(18,2) NOT NULL DEFAULT 0 AFTER `partner_normal_amount`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_rebate_record' AND column_name='partner_total_amount')=0,
+  'ALTER TABLE `lucky5_rebate_record` ADD COLUMN `partner_total_amount` decimal(18,2) NOT NULL DEFAULT 0 AFTER `partner_dragon_amount`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 UPDATE `lucky5_message` message

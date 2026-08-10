@@ -52,6 +52,25 @@ class LotteryRebateCalculatorTest {
     }
 
     @Test
+    void calculatesPullerRebateFromThePlayersPendingBetBase() {
+        MemberDO member = member(null);
+        member.setPartner("拉手A");
+        member.setPartnerNormalRate(new BigDecimal("0.5"));
+        member.setPartnerLhhRate(new BigDecimal("1.5"));
+        OrderDO normal = order("O-1", LocalDateTime.now());
+        OrderDO dragon = order("O-2", LocalDateTime.now());
+
+        LotteryRebateCalculator.RebateResult result = calculator.calculate(member, List.of(normal, dragon),
+                Map.of("O-1", List.of(item("普通", "100")), "O-2", List.of(item("龙虎", "40"))),
+                List.of(), true);
+
+        assertThat(result.partnerNormalAmount()).isEqualByComparingTo("0.50");
+        assertThat(result.partnerDragonAmount()).isEqualByComparingTo("0.60");
+        assertThat(result.partnerTotalAmount()).isEqualByComparingTo("1.10");
+        assertThat(result.combinedAmount()).isEqualByComparingTo("2.90");
+    }
+
+    @Test
     void ignoresOrdersAndRebatesBeforeFlowClearTime() {
         LocalDateTime clearedAt = LocalDateTime.now();
         MemberDO member = member(clearedAt);

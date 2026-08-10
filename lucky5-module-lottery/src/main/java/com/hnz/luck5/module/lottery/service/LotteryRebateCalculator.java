@@ -23,7 +23,7 @@ public class LotteryRebateCalculator {
                                   Map<String, List<BetItemDO>> itemsByOrder,
                                   List<RebateRecordDO> rebateRecords, boolean separateDragonRebate) {
         if ("BOT".equalsIgnoreCase(member.getMemberType()) || Boolean.TRUE.equals(member.getAutoProxy())) {
-            return new RebateResult(ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO);
+            return new RebateResult(ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO);
         }
         BigDecimal normalBet = ZERO;
         BigDecimal dragonBet = ZERO;
@@ -54,8 +54,15 @@ public class LotteryRebateCalculator {
         BigDecimal pendingDragonBet = money(dragonBet.subtract(usedDragonBet).max(ZERO));
         BigDecimal normalAmount = money(pendingNormalBet.multiply(value(member.getNormalRate())).divide(HUNDRED));
         BigDecimal dragonAmount = money(pendingDragonBet.multiply(value(member.getLhhRate())).divide(HUNDRED));
+        boolean hasPartner = member.getPartner() != null && !member.getPartner().isBlank()
+                && !"无".equals(member.getPartner());
+        BigDecimal partnerNormalAmount = hasPartner
+                ? money(pendingNormalBet.multiply(value(member.getPartnerNormalRate())).divide(HUNDRED)) : ZERO;
+        BigDecimal partnerDragonAmount = hasPartner
+                ? money(pendingDragonBet.multiply(value(member.getPartnerLhhRate())).divide(HUNDRED)) : ZERO;
         return new RebateResult(money(normalBet), money(dragonBet), pendingNormalBet, pendingDragonBet,
-                normalAmount, dragonAmount, money(normalAmount.add(dragonAmount)));
+                normalAmount, dragonAmount, money(normalAmount.add(dragonAmount)), partnerNormalAmount,
+                partnerDragonAmount, money(partnerNormalAmount.add(partnerDragonAmount)));
     }
 
     private boolean beforeClear(LocalDateTime createdAt, LocalDateTime clearedAt) {
@@ -72,7 +79,12 @@ public class LotteryRebateCalculator {
 
     public record RebateResult(BigDecimal normalBet, BigDecimal dragonBet, BigDecimal pendingNormalBet,
                                BigDecimal pendingDragonBet, BigDecimal normalAmount, BigDecimal dragonAmount,
-                               BigDecimal totalAmount) {
+                               BigDecimal totalAmount, BigDecimal partnerNormalAmount,
+                               BigDecimal partnerDragonAmount, BigDecimal partnerTotalAmount) {
+
+        public BigDecimal combinedAmount() {
+            return totalAmount.add(partnerTotalAmount);
+        }
     }
 
 }

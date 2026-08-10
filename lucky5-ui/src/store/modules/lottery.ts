@@ -374,13 +374,19 @@ const useLucky5StoreBase = defineStore('lucky5', {
     saveOdds() {
       return this.perform(() => saveOddsApi(this.odds), '赔率已保存')
     },
-    saveDiscounts() {
-      const payload = this.members.map(({ id, normalRate, lhhRate }) => ({
-        id,
-        normalRate,
-        lhhRate
-      }))
-      return this.perform(() => saveDiscountsApi(payload), '返水比例已保存')
+    saveDiscounts(members: Record<string, any>[] = this.members) {
+      const payload = members.map(
+        ({ id, normalRate, lhhRate, partner, partnerNormalRate, partnerLhhRate, puller, tag }) => ({
+          id,
+          normalRate,
+          lhhRate,
+          partner,
+          partnerNormalRate,
+          partnerLhhRate,
+          puller: puller ?? tag === '拉手'
+        })
+      )
+      return this.perform(() => saveDiscountsApi(payload), '返水及拉手设置已保存')
     },
     applyRebates() {
       return this.perform(() => applyRebatesApi(), '返水已结算到会员余额')
