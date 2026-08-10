@@ -27,6 +27,9 @@ const refreshOrders = async () => {
 
 onMounted(() => void refreshOrders())
 
+const normalizedOrderType = (item: any) =>
+  item?.orderType === 'AUTO_PROXY' || item?.autoProxy === true ? 'AUTO_PROXY' : 'PLAYER'
+
 const rows = computed(() => {
   const name = nickname.value.trim()
   const periodValue = period.value.trim()
@@ -34,7 +37,7 @@ const rows = computed(() => {
     (item) =>
       (!name || item.member.includes(name)) &&
       (!periodValue || item.period.includes(periodValue)) &&
-      (!orderType.value || item.orderType === orderType.value)
+      (!orderType.value || normalizedOrderType(item) === orderType.value)
   )
 })
 const detailItems = computed(() =>
@@ -124,7 +127,7 @@ const cancelOrder = async (row: any) => {
           <div class="lucky-mobile-card__meta">
             <span>会员：{{ row.member }}</span>
             <el-tag :type="statusTagType(row.status)" size="small">{{ row.status }}</el-tag>
-            <span>{{ row.orderType === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}</span>
+            <span>{{ normalizedOrderType(row) === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}</span>
           </div>
           <div v-if="canCancel(row)" class="order-mobile-actions">
             <el-button
@@ -160,7 +163,7 @@ const cancelOrder = async (row: any) => {
         </el-table-column>
         <el-table-column label="类型" min-width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.orderType === 'AUTO_PROXY'" type="warning">自动托</el-tag>
+            <el-tag v-if="normalizedOrderType(row) === 'AUTO_PROXY'" type="warning">自动托</el-tag>
             <el-tag v-else type="success">真实玩家</el-tag>
           </template>
         </el-table-column>
@@ -205,7 +208,7 @@ const cancelOrder = async (row: any) => {
           {{ detailOrder.drawResult || '待开奖' }}
         </el-descriptions-item>
         <el-descriptions-item v-if="!isMobile" label="类型">
-          {{ detailOrder.orderType === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}
+          {{ normalizedOrderType(detailOrder) === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}
         </el-descriptions-item>
         <el-descriptions-item v-if="!isMobile" label="来源">网页</el-descriptions-item>
       </el-descriptions>
