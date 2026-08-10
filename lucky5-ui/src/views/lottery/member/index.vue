@@ -219,6 +219,10 @@ const deleteMember = async (row: any) => {
 
 const avatarColor = (avatar: number) =>
   ['#30bbbb', '#3d9970', '#e89500', '#dd3224', '#337ab7', '#7a5ea8'][(Number(avatar || 1) - 1) % 6]
+
+const isAutoProxy = (row: any) => row.memberType === 'BOT' || Boolean(row.autoProxy)
+const isSearchable = (row: any) => row.searchable !== false
+const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
 </script>
 
 <template>
@@ -288,26 +292,42 @@ const avatarColor = (avatar: number) =>
         <el-table-column label="盈亏" min-width="90"
           ><template #default="{ row }">{{ row.profitLoss || 0 }}</template></el-table-column
         >
-        <el-table-column label="自动托" min-width="80"
-          ><template #default="{ row }">{{
-            row.autoProxy ? '是' : '否'
-          }}</template></el-table-column
-        >
-        <el-table-column label="吃" min-width="70"
-          ><template #default="{ row }">{{
-            row.eatEnabled ? '是' : '否'
-          }}</template></el-table-column
-        >
-        <el-table-column label="查" min-width="70"
-          ><template #default="{ row }">{{
-            row.searchable === false ? '否' : '是'
-          }}</template></el-table-column
-        >
-        <el-table-column label="绑定" min-width="100"
-          ><template #default="{ row }">{{
-            row.fingerprint || '未绑定'
-          }}</template></el-table-column
-        >
+        <el-table-column label="自动托" width="80" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="isAutoProxy(row) ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="isAutoProxy(row) ? '已开启自动托' : '未开启自动托'"
+            >{{ isAutoProxy(row) ? '√' : '×' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="吃" width="60" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="row.eatEnabled ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="row.eatEnabled ? '已开启吃码' : '未开启吃码'"
+            >{{ row.eatEnabled ? '√' : '×' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="查" width="60" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="isSearchable(row) ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="isSearchable(row) ? '允许查询流水' : '禁止查询流水'"
+            >{{ isSearchable(row) ? '√' : '×' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="绑定" width="70" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="isBound(row) ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="isBound(row) ? '已绑定设备标识' : '未绑定设备标识'"
+            >{{ isBound(row) ? '√' : '×' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" min-width="420" fixed="right">
           <template #default="{ row }">
             <div class="lucky-table-actions">
@@ -458,6 +478,25 @@ const avatarColor = (avatar: number) =>
 <style scoped>
 .lucky-member-total {
   color: #0000ff;
+}
+
+.member-boolean {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.member-boolean--yes {
+  color: #159447;
+}
+
+.member-boolean--no {
+  color: #d44747;
 }
 
 .member-identity,
