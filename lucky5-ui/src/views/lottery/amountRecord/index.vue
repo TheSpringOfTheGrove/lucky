@@ -114,11 +114,30 @@ const submit = async () => {
           <el-option label="昨天" :value="2" />
           <el-option label="本周" :value="3" />
         </el-select>
-        <el-button type="primary" :loading="refreshing" @click="refreshAmountRecords">搜索</el-button>
+        <el-button type="primary" :loading="refreshing" @click="refreshAmountRecords"
+          >搜索</el-button
+        >
       </div>
     </div>
     <el-card shadow="never">
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.member }}</span>
+            <el-tag :type="row.type === '上分' ? 'success' : 'warning'" size="small">
+              {{ row.type }} {{ row.amount }}
+            </el-tag>
+          </div>
+          <div v-if="row.remark" class="lucky-mobile-card__content">{{ row.remark }}</div>
+          <div class="lucky-mobile-card__meta">
+            <span>状态：{{ row.status }}</span>
+            <span>{{ row.createdAt }}</span>
+          </div>
+          <div v-if="row.status === '待审核'" class="lucky-mobile-card__actions">
+            <el-button size="small" type="warning" @click="audit(row, '已通过')">通过</el-button>
+            <el-button size="small" type="danger" @click="audit(row, '已拒绝')">拒绝</el-button>
+          </div>
+        </template>
         <el-table-column prop="member" label="昵称" min-width="140" />
         <el-table-column prop="amount" label="分数" min-width="100" />
         <el-table-column prop="type" label="类型" min-width="100" />
@@ -137,12 +156,14 @@ const submit = async () => {
       </PaginatedTable>
     </el-card>
 
-    <el-dialog v-model="visible" title="提交上下分申请" width="480px">
+    <el-dialog v-model="visible" title="提交上下分申请" width="480px" class="lucky-dialog">
       <el-form :model="form" label-width="80px">
         <el-form-item label="会员">
           <el-select v-model="form.memberId" filterable>
             <el-option
-              v-for="member in store.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)"
+              v-for="member in store.members.filter(
+                (item) => item.memberType !== 'BOT' && !item.autoProxy
+              )"
               :key="member.id"
               :label="`${member.name}（余分 ${member.balance}）`"
               :value="member.id"
@@ -173,7 +194,7 @@ const submit = async () => {
 <style scoped>
 .lucky-amount-total {
   margin-left: 12px;
-  color: var(--el-color-danger);
   font-size: 14px;
+  color: var(--el-color-danger);
 }
 </style>

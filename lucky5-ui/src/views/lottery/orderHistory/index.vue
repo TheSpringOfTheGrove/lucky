@@ -1,12 +1,5 @@
 <script setup lang="ts">
-import {
-  computed,
-  onActivated,
-  onBeforeUnmount,
-  onDeactivated,
-  onMounted,
-  ref
-} from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
@@ -103,6 +96,19 @@ const totals = computed(() =>
         </div>
       </div>
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.periods }}</span>
+            <span :class="Number(row.yinKui) >= 0 ? 'lucky-danger' : ''">
+              盈亏 {{ row.yinKui }}
+            </span>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>投额：{{ row.zongTou }}</span>
+            <span>中奖：{{ row.zhongJiang }}</span>
+            <span>实投：{{ row.shiTou }}</span>
+          </div>
+        </template>
         <el-table-column prop="periods" label="期号" min-width="160" />
         <el-table-column prop="zongTou" label="投额" min-width="110" />
         <el-table-column prop="zhongJiang" label="中奖" min-width="110" />

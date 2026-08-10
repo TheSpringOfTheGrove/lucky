@@ -147,5 +147,36 @@ const save = () => {
   display: flex;
   gap: 8px;
 }
-</style>
 
+@media (width <= 768px) {
+  .lucky-odds-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .lucky-odds-form__header {
+    display: none;
+  }
+
+  .lucky-odds-form :deep(.el-row) {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-right: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  .lucky-odds-form :deep(.el-col) {
+    width: 100%;
+    max-width: none;
+    flex: none;
+    padding-right: 0 !important;
+    padding-left: 0 !important;
+  }
+
+  .lucky-odds-form__rates {
+    flex-direction: column;
+  }
+}
+</style>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core'
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
@@ -17,6 +18,7 @@ const linkQrs = ref<Record<string, string>>({})
 const linkMember = ref('')
 const detailsVisible = ref(false)
 const details = ref<any>(null)
+const isMobile = useMediaQuery('(max-width: 768px)')
 const memberForm = reactive({
   id: '',
   name: '',
@@ -282,6 +284,37 @@ const formatStatistic = (value: number) => {
       </div>
 
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <div class="member-identity member-identity--mobile">
+              <el-avatar :size="32" :style="{ backgroundColor: avatarColor(row.avatar) }">
+                {{ String(row.name || '?').slice(0, 1) }}
+              </el-avatar>
+              <span>{{ row.externalNickname || row.name }}</span>
+            </div>
+            <span>{{ row.balance }} 分</span>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>昵称：{{ row.name }}</span>
+            <span>投分：{{ row.totalBet || 0 }}</span>
+            <span>盈亏：{{ row.profitLoss || 0 }}</span>
+            <span>托 {{ isAutoProxy(row) ? '✓' : '×' }}</span>
+            <span>吃 {{ row.eatEnabled ? '✓' : '×' }}</span>
+            <span>查 {{ isSearchable(row) ? '✓' : '×' }}</span>
+            <span>绑定 {{ isBound(row) ? '✓' : '×' }}</span>
+          </div>
+          <div class="lucky-mobile-card__actions member-mobile-actions">
+            <el-button size="small" @click="openMember(row)">编辑</el-button>
+            <el-button size="small" @click="openLinks(row)">链接</el-button>
+            <el-button size="small" @click="openTransfer(row, '上分')">上分</el-button>
+            <el-button size="small" @click="openTransfer(row, '下分')">下分</el-button>
+            <el-button size="small" @click="toggleEat(row)">吃码</el-button>
+            <el-button size="small" @click="clearMember(row)">清流水</el-button>
+            <el-button size="small" @click="openDetails(row)">查询</el-button>
+            <el-button size="small" @click="store.changeMemberAvatar(row.id)">换头像</el-button>
+            <el-button size="small" type="danger" @click="deleteMember(row)">删除</el-button>
+          </div>
+        </template>
         <el-table-column label="微信/飞鱼/蓝鲸昵称" min-width="170">
           <template #default="{ row }">
             <div class="member-identity">
@@ -306,7 +339,8 @@ const formatStatistic = (value: number) => {
               class="member-boolean"
               :class="isAutoProxy(row) ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="isAutoProxy(row) ? '已开启自动托' : '未开启自动托'"
-            >{{ isAutoProxy(row) ? '✓' : '×' }}</span>
+              >{{ isAutoProxy(row) ? '✓' : '×' }}</span
+            >
           </template>
         </el-table-column>
         <el-table-column label="吃" width="60" align="center">
@@ -315,7 +349,8 @@ const formatStatistic = (value: number) => {
               class="member-boolean"
               :class="row.eatEnabled ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="row.eatEnabled ? '已开启吃码' : '未开启吃码'"
-            >{{ row.eatEnabled ? '✓' : '×' }}</span>
+              >{{ row.eatEnabled ? '✓' : '×' }}</span
+            >
           </template>
         </el-table-column>
         <el-table-column label="查" width="60" align="center">
@@ -324,7 +359,8 @@ const formatStatistic = (value: number) => {
               class="member-boolean"
               :class="isSearchable(row) ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="isSearchable(row) ? '允许查询流水' : '禁止查询流水'"
-            >{{ isSearchable(row) ? '✓' : '×' }}</span>
+              >{{ isSearchable(row) ? '✓' : '×' }}</span
+            >
           </template>
         </el-table-column>
         <el-table-column label="绑定" width="70" align="center">
@@ -333,7 +369,8 @@ const formatStatistic = (value: number) => {
               class="member-boolean"
               :class="isBound(row) ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="isBound(row) ? '已绑定设备标识' : '未绑定设备标识'"
-            >{{ isBound(row) ? '✓' : '×' }}</span>
+              >{{ isBound(row) ? '✓' : '×' }}</span
+            >
           </template>
         </el-table-column>
         <el-table-column label="操作" min-width="420" fixed="right">
@@ -364,6 +401,7 @@ const formatStatistic = (value: number) => {
       v-model="memberVisible"
       :title="memberForm.id ? '编辑会员' : '添加会员'"
       width="560px"
+      class="lucky-dialog"
     >
       <el-form :model="memberForm" label-width="110px">
         <el-form-item label="头像"
@@ -406,7 +444,12 @@ const formatStatistic = (value: number) => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="transferVisible" :title="transferForm.type" width="420px">
+    <el-dialog
+      v-model="transferVisible"
+      :title="transferForm.type"
+      width="420px"
+      class="lucky-dialog"
+    >
       <el-form :model="transferForm" label-width="80px">
         <el-form-item label="分数"
           ><el-input-number v-model="transferForm.amount" :min="0.01"
@@ -418,7 +461,12 @@ const formatStatistic = (value: number) => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="clearAllVisible" title="清理全部会员流水" width="440px">
+    <el-dialog
+      v-model="clearAllVisible"
+      title="清理全部会员流水"
+      width="440px"
+      class="lucky-dialog"
+    >
       <el-form label-width="80px">
         <el-form-item label="密码">
           <el-input v-model="clearPassword" type="password" show-password />
@@ -430,7 +478,12 @@ const formatStatistic = (value: number) => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="linkVisible" :title="`${linkMember} 会员链接`" width="620px">
+    <el-dialog
+      v-model="linkVisible"
+      :title="`${linkMember} 会员链接`"
+      width="620px"
+      class="lucky-dialog"
+    >
       <div class="member-link-token">
         <span>会员标识&nbsp; {{ linkData.openId }}</span>
         <el-button type="danger" plain size="small" @click="rotateLink">换链接</el-button>
@@ -453,8 +506,13 @@ const formatStatistic = (value: number) => {
       <el-empty v-if="!linkEntries.length" description="当前未开启玩家房间入口" :image-size="64" />
     </el-dialog>
 
-    <el-dialog v-model="detailsVisible" :title="`${details?.name || ''} 会员查询`" width="860px">
-      <el-descriptions v-if="details" :column="3" border class="mb-16px">
+    <el-dialog
+      v-model="detailsVisible"
+      :title="`${details?.name || ''} 会员查询`"
+      width="860px"
+      class="lucky-dialog member-details-dialog"
+    >
+      <el-descriptions v-if="details" :column="isMobile ? 1 : 3" border class="mb-16px">
         <el-descriptions-item label="积分">{{ details.balance }}</el-descriptions-item>
         <el-descriptions-item label="投分">{{ details.totalBet }}</el-descriptions-item>
         <el-descriptions-item label="盈亏">{{ details.profitLoss }}</el-descriptions-item>
@@ -466,6 +524,16 @@ const formatStatistic = (value: number) => {
         border
         max-height="220"
       >
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.type }}</span>
+            <span>{{ row.amount }} 分</span>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>{{ row.status }}</span>
+            <span>{{ row.createdAt }}</span>
+          </div>
+        </template>
         <el-table-column prop="type" label="类型" />
         <el-table-column prop="amount" label="分数" />
         <el-table-column prop="status" label="状态" />
@@ -473,6 +541,17 @@ const formatStatistic = (value: number) => {
       </PaginatedTable>
       <h3 class="member-detail-title">订单记录</h3>
       <PaginatedTable :data="details?.orders || []" :default-page-size="10" border max-height="260">
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.period }}</span>
+            <span>{{ row.amount }} 分</span>
+          </div>
+          <div class="lucky-mobile-card__content">{{ row.content }}</div>
+          <div class="lucky-mobile-card__meta">
+            <span>中奖：{{ row.win || 0 }}</span>
+            <span>{{ row.status }}</span>
+          </div>
+        </template>
         <el-table-column prop="period" label="期号" min-width="140" />
         <el-table-column prop="content" label="内容" min-width="180" />
         <el-table-column prop="amount" label="投额" />
@@ -485,7 +564,7 @@ const formatStatistic = (value: number) => {
 
 <style scoped>
 .lucky-member-total {
-  color: #0000ff;
+  color: #00f;
 }
 
 .member-toolbar {
@@ -521,7 +600,7 @@ const formatStatistic = (value: number) => {
   color: #9aa1aa;
 }
 
-@media (max-width: 900px) {
+@media (width <= 900px) {
   .member-toolbar {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -553,6 +632,10 @@ const formatStatistic = (value: number) => {
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+.member-identity--mobile {
+  justify-content: flex-start;
 }
 
 .member-link {
@@ -616,19 +699,48 @@ const formatStatistic = (value: number) => {
 }
 
 .member-link-row__content > span {
-  color: #606266;
   line-height: 1.55;
+  color: #606266;
   overflow-wrap: anywhere;
 }
 
 @media (width <= 560px) {
+  .member-toolbar__actions {
+    flex-wrap: wrap;
+  }
+
+  .member-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+    padding-bottom: 4px;
+    overflow-x: visible;
+    white-space: normal;
+  }
+
+  .member-summary__group {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+  }
+
+  .member-summary__separator {
+    display: none;
+  }
+
+  .member-mobile-actions .el-button {
+    min-width: 62px;
+    flex: 1;
+  }
+
   .member-link-row {
-    grid-template-columns: 88px minmax(0, 1fr);
+    align-items: center;
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
   .member-link-row > img {
-    width: 88px;
-    height: 88px;
+    width: 72px;
+    height: 72px;
   }
 }
 

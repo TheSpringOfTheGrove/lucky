@@ -52,6 +52,29 @@ const submit = async () => {
     </div>
     <el-card shadow="never">
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.member }}</span>
+            <el-tag
+              size="small"
+              :type="
+                row.status === '未识别' ? 'danger' : row.status === '处理中' ? 'warning' : 'success'
+              "
+            >
+              {{ row.status }}
+            </el-tag>
+          </div>
+          <div class="lucky-mobile-card__content">{{ row.content }}</div>
+          <div v-if="row.reply" class="lucky-mobile-card__content lucky-muted">
+            回执：{{ row.reply }}
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>{{ row.channel }}</span>
+            <span v-if="row.period">期号 {{ row.period }}</span>
+            <span>{{ row.time }}</span>
+            <span v-if="row.error" class="lucky-danger">{{ row.error }}</span>
+          </div>
+        </template>
         <el-table-column label="发送人" min-width="140">
           <template #default="{ row }">
             <div>{{ row.member }}</div>
@@ -85,12 +108,14 @@ const submit = async () => {
       </PaginatedTable>
     </el-card>
 
-    <el-dialog v-model="visible" title="录入消息" width="520px">
+    <el-dialog v-model="visible" title="录入消息" width="520px" class="lucky-dialog">
       <el-form :model="form" label-width="80px">
         <el-form-item label="会员">
           <el-select v-model="form.memberId" filterable placeholder="选择会员">
             <el-option
-              v-for="member in store.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)"
+              v-for="member in store.members.filter(
+                (item) => item.memberType !== 'BOT' && !item.autoProxy
+              )"
               :key="member.id"
               :label="`${member.name}（余分 ${member.balance}）`"
               :value="member.id"
@@ -128,8 +153,7 @@ const submit = async () => {
   align-items: center;
   justify-content: center;
   margin-top: 4px;
-  color: var(--el-text-color-secondary);
   font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>
-

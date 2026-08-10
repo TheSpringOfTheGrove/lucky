@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core'
 import { computed, reactive, ref, watch } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -8,6 +9,7 @@ const form = reactive({ id: '', content: '' })
 const keyword = ref('')
 const page = ref(1)
 const pageSize = ref(20)
+const isMobile = useMediaQuery('(max-width: 768px)')
 
 const filteredRows = computed(() => {
   const value = keyword.value.trim().toLowerCase()
@@ -71,7 +73,32 @@ const submit = async () => {
           <el-input v-model="keyword" clearable class="search-input" />
         </div>
       </div>
-      <el-table :data="pagedRows" border>
+      <div v-if="isMobile" class="preset-mobile-list">
+        <article v-for="row in pagedRows" :key="row.id" class="preset-mobile-item">
+          <div class="lucky-mobile-card__title">
+            <span>预设指令</span>
+            <el-tag v-if="!row.validationError" type="success">可用</el-tag>
+            <el-tag v-else type="danger">格式错误</el-tag>
+          </div>
+          <div class="lucky-mobile-card__content">{{ row.content }}</div>
+          <div class="lucky-mobile-card__meta">
+            <span>注数：{{ row.parsedCount || 0 }}</span>
+            <span>合计：{{ Number(row.parsedAmount || 0).toFixed(2) }}</span>
+            <span v-if="row.createdAt">{{ row.createdAt }}</span>
+          </div>
+          <div v-if="row.validationError" class="preset-mobile-error">
+            {{ row.validationError }}
+          </div>
+          <div class="lucky-mobile-card__actions">
+            <el-button size="small" type="warning" @click="openForm(row)">编辑</el-button>
+            <el-button size="small" type="danger" @click="store.remove('fakeOrders', row.id)">
+              删除
+            </el-button>
+          </div>
+        </article>
+        <el-empty v-if="!pagedRows.length" description="暂无数据" :image-size="64" />
+      </div>
+      <el-table v-else :data="pagedRows" border>
         <el-table-column type="index" label="序号" width="80" />
         <el-table-column prop="content" label="文本" min-width="300" />
         <el-table-column prop="parsedCount" label="注数" width="90" />
@@ -122,12 +149,14 @@ const submit = async () => {
           :page-size="pageSize"
           :total="filteredRows.length"
           layout="prev, pager, next"
+          :pager-count="isMobile ? 3 : 7"
+          :small="isMobile"
           background
         />
       </div>
     </el-card>
 
-    <el-dialog v-model="visible" title="添加格式" width="500px">
+    <el-dialog v-model="visible" title="添加格式" width="500px" class="lucky-dialog">
       <el-form :model="form" label-width="90px">
         <el-form-item label="格式文本">
           <el-input v-model="form.content" placeholder="逗号分隔支持多格式" />
@@ -173,5 +202,56 @@ const submit = async () => {
   justify-content: space-between;
   margin-top: 16px;
 }
-</style>
 
+.preset-mobile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.preset-mobile-item {
+  min-width: 0;
+  padding: 12px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+}
+
+.preset-mobile-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--el-color-danger);
+  overflow-wrap: anywhere;
+}
+
+@media (width <= 768px) {
+  .preset-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .preset-toolbar__right {
+    flex-wrap: wrap;
+  }
+
+  .preset-toolbar__right .search-label {
+    display: none;
+  }
+
+  .search-input {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .preset-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .preset-pagination :deep(.el-pagination) {
+    justify-content: center;
+  }
+}
+</style>

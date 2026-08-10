@@ -7,7 +7,9 @@ const nickname = ref('')
 const type = ref<'ALL' | 'MANUAL' | 'SYSTEM'>('ALL')
 
 const isSystemOperator = (item: any) => {
-  const operator = String(item.operator || '').trim().toLowerCase()
+  const operator = String(item.operator || '')
+    .trim()
+    .toLowerCase()
   return !operator || operator === 'system' || operator === '系统' || operator === '[系统]'
 }
 
@@ -50,6 +52,13 @@ const rows = computed(() => {
     </div>
     <el-card shadow="never">
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ memberLabel(row) }}</span>
+            <span class="lucky-muted">{{ row.time }}</span>
+          </div>
+          <div class="lucky-mobile-card__content">{{ row.action }}</div>
+        </template>
         <el-table-column label="会员昵称" min-width="160">
           <template #default="{ row }">
             <span :class="{ 'operator-system-member': memberLabel(row) === '【系统】' }">
@@ -66,7 +75,7 @@ const rows = computed(() => {
 
 <style scoped>
 .operator-system-member {
-  color: var(--el-text-color-primary);
   font-weight: 600;
+  color: var(--el-text-color-primary);
 }
 </style>

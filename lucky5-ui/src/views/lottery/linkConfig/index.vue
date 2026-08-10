@@ -50,8 +50,14 @@ const save = async () => {
         </el-form-item>
         <el-form-item>
           <div class="room-mode-help">
-            <p><strong>群聊：</strong>同一老板的玩家可看到彼此的聊天和下注内容，也能看到自动托下注。</p>
-            <p><strong>私聊：</strong>玩家只看到自己的消息、订单和机器人回复，不显示其他玩家或自动托。</p>
+            <p
+              ><strong>群聊：</strong
+              >同一老板的玩家可看到彼此的聊天和下注内容，也能看到自动托下注。</p
+            >
+            <p
+              ><strong>私聊：</strong
+              >玩家只看到自己的消息、订单和机器人回复，不显示其他玩家或自动托。</p
+            >
             <p>余额、上下分、退码和结算明细始终只对当前玩家显示。</p>
           </div>
         </el-form-item>
@@ -72,14 +78,34 @@ const save = async () => {
 .room-mode-help {
   max-width: 720px;
   padding: 12px 16px;
+  line-height: 1.7;
   color: #606266;
   background: #f7f9fc;
   border: 1px solid #e4e7ed;
   border-radius: 6px;
-  line-height: 1.7;
 }
 
 .room-mode-help p {
   margin: 0;
+}
+
+@media (width <= 768px) {
+  .room-mode-options {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .room-mode-options :deep(.el-radio-button__inner) {
+    width: 100%;
+    border: 1px solid var(--el-border-color);
+    border-radius: 4px;
+  }
+
+  .room-mode-help {
+    max-width: none;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
 }
 </style>

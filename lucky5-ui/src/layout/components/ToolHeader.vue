@@ -1,5 +1,6 @@
 <script lang="tsx">
 import { defineComponent, computed } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import router from '@/router'
 import { Message } from '@/layout/components/Message'
 import { Collapse } from '@/layout/components/Collapse'
@@ -22,6 +23,7 @@ const { getPrefixCls, variables } = useDesign()
 const prefixCls = getPrefixCls('tool-header')
 
 const appStore = useAppStore()
+const isMobile = useMediaQuery('(max-width: 768px)')
 
 // 面包屑
 const breadcrumb = computed(() => appStore.getBreadcrumb)
@@ -101,26 +103,26 @@ export default defineComponent({
           >
             <Icon color="var(--top-header-text-color)" size={18} icon="ep:setting" />
           </div>
-          {screenfull.value ? (
+          {!isMobile.value && screenfull.value ? (
             <Screenfull class="custom-hover" color="var(--top-header-text-color)"></Screenfull>
           ) : undefined}
-          {search.value ? (
+          {!isMobile.value && search.value ? (
             <RouterSearch isModal={false} color="var(--top-header-text-color)" />
           ) : undefined}
-          {size.value ? (
+          {!isMobile.value && size.value ? (
             <SizeDropdown class="custom-hover" color="var(--top-header-text-color)"></SizeDropdown>
           ) : undefined}
-          {locale.value ? (
+          {!isMobile.value && locale.value ? (
             <LocaleDropdown
               class="custom-hover"
               color="var(--top-header-text-color)"
             ></LocaleDropdown>
           ) : undefined}
-          {message.value ? (
+          {!isMobile.value && message.value ? (
             <Message class="custom-hover" color="var(--top-header-text-color)"></Message>
           ) : undefined}
           {/* IM 聊天入口 */}
-          {im.value ? (
+          {!isMobile.value && im.value ? (
             <div class="custom-hover" onClick={goToChat}>
               <Icon color="var(--top-header-text-color)" size={18} icon="ep:chat-dot-round" />
             </div>

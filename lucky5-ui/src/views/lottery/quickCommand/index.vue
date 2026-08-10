@@ -33,6 +33,24 @@ const submit = async () => {
         </el-button>
       </div>
       <PaginatedTable :data="store.quickCommands" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.label }}</span>
+            <el-tag :type="row.enabled ? 'success' : 'info'">
+              {{ row.enabled ? '启用' : '停用' }}
+            </el-tag>
+          </div>
+          <div class="lucky-mobile-card__content">{{ row.content }}</div>
+          <div class="lucky-mobile-card__meta">
+            <span>排序：{{ row.sort }}</span>
+          </div>
+          <div class="lucky-mobile-card__actions">
+            <el-button size="small" type="warning" @click="openForm(row)">编辑</el-button>
+            <el-button size="small" type="danger" @click="store.remove('quickCommands', row.id)">
+              删除
+            </el-button>
+          </div>
+        </template>
         <el-table-column type="index" label="序号" width="80" />
         <el-table-column prop="label" label="按钮文字" min-width="180" />
         <el-table-column prop="content" label="完整下注指令" min-width="500" />
@@ -64,7 +82,12 @@ const submit = async () => {
       </PaginatedTable>
     </el-card>
 
-    <el-dialog v-model="visible" :title="form.id ? '编辑快捷指令' : '新增快捷指令'" width="680px">
+    <el-dialog
+      v-model="visible"
+      :title="form.id ? '编辑快捷指令' : '新增快捷指令'"
+      width="680px"
+      class="lucky-dialog"
+    >
       <el-form :model="form" label-width="110px">
         <el-form-item label="按钮文字">
           <el-input v-model="form.label" maxlength="60" show-word-limit />
@@ -86,5 +109,3 @@ const submit = async () => {
     </el-dialog>
   </div>
 </template>
-
-

@@ -9,6 +9,18 @@ const store = useLucky5Store()
     <h1 class="lucky-page__heading">跟单列表</h1>
     <el-card shadow="never">
       <PaginatedTable :data="store.followOrders" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.source || '未命名会员' }}</span>
+            <span class="lucky-muted">{{ row.createdAt }}</span>
+          </div>
+          <div class="lucky-mobile-card__content">{{ row.target || '-' }}</div>
+          <div class="lucky-mobile-card__actions">
+            <el-button size="small" type="danger" @click="store.remove('followOrders', row.id)">
+              删除
+            </el-button>
+          </div>
+        </template>
         <el-table-column prop="source" label="昵称" min-width="180" />
         <el-table-column prop="target" label="订单" min-width="240" />
         <el-table-column prop="createdAt" label="创建时间" min-width="220" />
@@ -30,5 +42,3 @@ const store = useLucky5Store()
     </el-card>
   </div>
 </template>
-
-

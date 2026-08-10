@@ -3,7 +3,7 @@
     <el-select
       filterable
       placeholder="请选择租户"
-      class="!w-180px"
+      class="tenant-visit-select"
       v-model="value"
       @change="handleChange"
       clearable
@@ -44,3 +44,15 @@ onMounted(async () => {
   tenants.value = await TenantApi.getTenantList()
 })
 </script>
+
+<style scoped>
+.tenant-visit-select {
+  width: 180px;
+}
+
+@media (width <= 768px) {
+  .tenant-visit-select {
+    width: 126px;
+  }
+}
+</style>

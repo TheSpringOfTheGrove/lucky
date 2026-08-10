@@ -41,6 +41,17 @@ const clear = async () => {
         </el-tooltip>
       </div>
       <PaginatedTable :data="store.chimaRecords" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.periods || row.member || '-' }}</span>
+            <strong>{{ Number(row.fakeAmount || 0) - Number(row.totalWin || 0) }}</strong>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>投额：{{ row.fakeAmount || 0 }}</span>
+            <span>中奖：{{ row.totalWin || 0 }}</span>
+            <span>盈亏：{{ Number(row.fakeAmount || 0) - Number(row.totalWin || 0) }}</span>
+          </div>
+        </template>
         <el-table-column label="期数" min-width="160"
           ><template #default="{ row }">{{ row.periods || row.member }}</template></el-table-column
         >
@@ -54,7 +65,7 @@ const clear = async () => {
       </PaginatedTable>
     </el-card>
 
-    <el-dialog v-model="visible" title="清理数据" width="460px">
+    <el-dialog v-model="visible" title="清理数据" width="460px" class="lucky-dialog">
       <el-form label-width="80px">
         <el-form-item label="密码"
           ><el-input v-model="password" type="password" show-password placeholder="Password"
@@ -67,5 +78,3 @@ const clear = async () => {
     </el-dialog>
   </div>
 </template>
-
-

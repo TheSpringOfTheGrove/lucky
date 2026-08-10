@@ -114,6 +114,19 @@ onBeforeUnmount(() => {
 .error-text {
   color: var(--el-color-danger);
 }
+
+@media (width <= 768px) {
+  .config-header {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .config-header strong {
+    flex-basis: 100%;
+  }
+
+  .lucky-config-balance {
+    margin-left: 0;
+  }
+}
 </style>
-
-

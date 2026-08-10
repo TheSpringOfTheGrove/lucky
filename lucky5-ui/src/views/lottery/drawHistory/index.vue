@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core'
 import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
@@ -8,6 +9,7 @@ const settleVisible = ref(false)
 const issuePeriod = ref('')
 const form = reactive({ period: '', result: '', reason: '' })
 const issue = computed(() => store.market.issue)
+const isMobile = useMediaQuery('(max-width: 768px)')
 
 const submit = async () => {
   const normalizedResult = form.result.replace(/[,，\s]/g, '')
@@ -61,7 +63,7 @@ const changeIssue = async (status: 'open' | 'close') => {
     <h1 class="lucky-page__heading">开奖历史记录 <small>期号状态与开奖结算</small></h1>
 
     <el-card shadow="never" class="mb-16px">
-      <el-descriptions :column="4" border>
+      <el-descriptions :column="isMobile ? 1 : 4" border>
         <el-descriptions-item label="当前期号">{{ issue?.period || '-' }}</el-descriptions-item>
         <el-descriptions-item label="状态">{{
           issue?.status || 'UNAVAILABLE'
@@ -93,7 +95,22 @@ const changeIssue = async (status: 'open' | 'close') => {
 
     <el-card v-if="store.drawAlerts.length" shadow="never" class="mb-16px">
       <template #header><strong>开奖确认与异常</strong></template>
-      <el-table :data="store.drawAlerts" border>
+      <div v-if="isMobile" class="draw-alert-list">
+        <article v-for="row in store.drawAlerts" :key="row.period" class="draw-alert-item">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.period }}</span>
+            <el-tag type="danger" size="small">{{ row.status }}</el-tag>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>API号码：{{ row.result || '-' }}</span>
+            <span>确认 {{ row.drawConfirmations || 0 }} 次</span>
+          </div>
+          <div v-if="row.error" class="lucky-mobile-card__content lucky-danger">{{
+            row.error
+          }}</div>
+        </article>
+      </div>
+      <el-table v-else :data="store.drawAlerts" border>
         <el-table-column prop="period" label="期号" min-width="150" />
         <el-table-column prop="status" label="状态" min-width="140" />
         <el-table-column prop="result" label="API号码" min-width="120" />
@@ -104,6 +121,16 @@ const changeIssue = async (status: 'open' | 'close') => {
 
     <el-card shadow="never">
       <PaginatedTable :data="store.drawHistory" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.period }}</span>
+            <span>{{ row.result }}</span>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>{{ row.settledAt }}</span>
+            <span>{{ row.status || '已开奖' }}</span>
+          </div>
+        </template>
         <el-table-column prop="period" label="期号" min-width="160" />
         <el-table-column prop="settledAt" label="开奖时间" min-width="200" />
         <el-table-column prop="result" label="开奖号码" min-width="160" />
@@ -113,7 +140,7 @@ const changeIssue = async (status: 'open' | 'close') => {
       </PaginatedTable>
     </el-card>
 
-    <el-dialog v-model="settleVisible" title="手动开奖/结算" width="500px">
+    <el-dialog v-model="settleVisible" title="手动开奖/结算" width="500px" class="lucky-dialog">
       <el-form :model="form" label-width="100px">
         <el-form-item label="期号"
           ><el-input v-model="form.period" placeholder="例如：20260808001"
@@ -142,8 +169,33 @@ const changeIssue = async (status: 'open' | 'close') => {
 <style scoped>
 .issue-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   margin: 16px 0;
+}
+
+.draw-alert-list {
+  display: grid;
+  gap: 10px;
+}
+
+.draw-alert-item {
+  padding: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+}
+
+@media (width <= 768px) {
+  .issue-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .issue-actions :deep(.el-input),
+  .issue-actions :deep(.el-button) {
+    width: 100% !important;
+    margin-left: 0;
+  }
 }
 </style>

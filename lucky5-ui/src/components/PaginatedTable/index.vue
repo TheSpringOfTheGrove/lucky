@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
+import { computed, ref, useSlots, watch } from 'vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -13,6 +14,9 @@ const props = withDefaults(
 
 const page = ref(1)
 const pageSize = ref(props.defaultPageSize)
+const slots = useSlots()
+const isMobile = useMediaQuery('(max-width: 768px)')
+const useMobileList = computed(() => isMobile.value && Boolean(slots.mobile))
 const total = computed(() => props.data?.length || 0)
 const pagedRows = computed(() => {
   const start = (page.value - 1) * pageSize.value
@@ -32,7 +36,17 @@ watch(total, (value) => {
 
 <template>
   <div class="paginated-table">
-    <el-table v-bind="$attrs" :data="pagedRows">
+    <div v-if="useMobileList" class="paginated-table__mobile-list">
+      <article
+        v-for="(row, index) in pagedRows"
+        :key="row?.id || row?.period || row?.periods || `${page}-${index}`"
+        class="paginated-table__mobile-item"
+      >
+        <slot name="mobile" :row="row" :index="(page - 1) * pageSize + index"></slot>
+      </article>
+      <el-empty v-if="!pagedRows.length" description="暂无数据" :image-size="64" />
+    </div>
+    <el-table v-else v-bind="$attrs" :data="pagedRows">
       <slot></slot>
     </el-table>
     <div class="paginated-table__footer">
@@ -42,7 +56,9 @@ watch(total, (value) => {
         v-model:page-size="pageSize"
         :page-sizes="[10, 20, 50, 100]"
         :total="total"
-        layout="sizes, prev, pager, next"
+        :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next'"
+        :pager-count="isMobile ? 3 : 7"
+        :small="isMobile"
         background
       />
     </div>
@@ -58,12 +74,30 @@ watch(total, (value) => {
   margin-top: 16px;
 }
 
-@media (max-width: 720px) {
+.paginated-table__mobile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.paginated-table__mobile-item {
+  min-width: 0;
+  padding: 12px;
+  color: var(--el-text-color-regular);
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+}
+
+@media (width <= 720px) {
   .paginated-table__footer {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .paginated-table__footer :deep(.el-pagination) {
+    justify-content: center;
   }
 }
 </style>
-
-

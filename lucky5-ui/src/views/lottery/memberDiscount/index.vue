@@ -63,6 +63,30 @@ const apply = async () => {
         </el-select>
       </div>
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.name }}</span>
+            <span>合计 {{ Number(row.normalRebate || 0) + Number(row.dragonRebate || 0) }}</span>
+          </div>
+          <div class="rebate-mobile-rates">
+            <label>
+              <span>幸运五比例</span>
+              <el-input-number v-model="row.normalRate" :min="0" :precision="2" />
+            </label>
+            <label>
+              <span>龙虎比例</span>
+              <el-input-number v-model="row.lhhRate" :min="0" :precision="2" />
+            </label>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>普通返水：{{ row.normalRebate || 0 }}</span>
+            <span>龙虎返水：{{ row.dragonRebate || 0 }}</span>
+            <span>拉手：{{ row.partner || '无' }}</span>
+          </div>
+          <div class="lucky-mobile-card__actions">
+            <el-button size="small" type="primary" @click="store.saveDiscounts">保存</el-button>
+          </div>
+        </template>
         <el-table-column prop="name" label="昵称" min-width="110" />
         <el-table-column prop="partner" label="拉手设置" min-width="110" />
         <el-table-column label="是否拉手" min-width="100"
@@ -104,3 +128,29 @@ const apply = async () => {
   </div>
 </template>
 
+<style scoped>
+.rebate-mobile-rates {
+  display: grid;
+  margin-top: 10px;
+  gap: 8px;
+}
+
+.rebate-mobile-rates label {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.rebate-mobile-rates :deep(.el-input-number) {
+  width: 100%;
+}
+
+@media (width <= 768px) {
+  .lucky-toolbar > div:last-child {
+    font-size: 13px;
+    line-height: 1.7;
+  }
+}
+</style>

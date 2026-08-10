@@ -30,8 +30,9 @@ const rows = computed(() => {
   const periodValue = period.value.trim()
   return store.orders.filter(
     (item) =>
-      (!name || item.member.includes(name)) && (!periodValue || item.period.includes(periodValue))
-      && (!orderType.value || item.orderType === orderType.value)
+      (!name || item.member.includes(name)) &&
+      (!periodValue || item.period.includes(periodValue)) &&
+      (!orderType.value || item.orderType === orderType.value)
   )
 })
 const detailItems = computed(() =>
@@ -50,7 +51,6 @@ const detailRowClassName = ({ row }: { row: any }) => {
   if (row.won === false) return 'order-detail-row--lost'
   return ''
 }
-
 </script>
 
 <template>
@@ -69,10 +69,31 @@ const detailRowClassName = ({ row }: { row: any }) => {
     </div>
     <el-card shadow="never">
       <PaginatedTable :data="rows" border>
+        <template #mobile="{ row }">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.period }}</span>
+            <span>{{ row.amount }} 分</span>
+          </div>
+          <div class="lucky-mobile-card__content">
+            <el-link type="primary" :underline="false" @click="openDetails(row)">
+              {{ row.content }}
+            </el-link>
+          </div>
+          <div class="lucky-mobile-card__meta">
+            <span>会员：{{ row.member }}</span>
+            <span>{{ row.status }}</span>
+            <span>{{ row.orderType === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}</span>
+          </div>
+        </template>
         <el-table-column prop="period" label="期号" min-width="150" />
         <el-table-column label="文本" min-width="240">
           <template #default="{ row }">
-            <el-link class="order-content-link" type="primary" :underline="false" @click="openDetails(row)">
+            <el-link
+              class="order-content-link"
+              type="primary"
+              :underline="false"
+              @click="openDetails(row)"
+            >
               {{ row.content }}
             </el-link>
           </template>
@@ -97,7 +118,7 @@ const detailRowClassName = ({ row }: { row: any }) => {
       v-model="detailVisible"
       :title="`${detailOrder?.period || ''} 订单详情`"
       :width="isMobile ? 'calc(100vw - 16px)' : '820px'"
-      class="order-detail-dialog"
+      class="lucky-dialog order-detail-dialog"
       destroy-on-close
     >
       <el-descriptions
@@ -129,7 +150,9 @@ const detailRowClassName = ({ row }: { row: any }) => {
         <el-table-column label="结果" :min-width="isMobile ? 76 : 90">
           <template #default="scope">
             <el-tag v-if="scope.row.won === true" type="danger" effect="dark">中奖</el-tag>
-            <el-tag v-else-if="scope.row.won === false" type="success" effect="plain">未中奖</el-tag>
+            <el-tag v-else-if="scope.row.won === false" type="success" effect="plain"
+              >未中奖</el-tag
+            >
             <el-tag v-else type="info" effect="plain">待开奖</el-tag>
           </template>
         </el-table-column>
@@ -170,7 +193,7 @@ const detailRowClassName = ({ row }: { row: any }) => {
   width: 140px;
 }
 
-@media (max-width: 600px) {
+@media (width <= 600px) {
   :deep(.order-detail-dialog) {
     margin-top: 4vh;
   }
