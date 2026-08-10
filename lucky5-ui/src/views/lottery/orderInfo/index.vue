@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
@@ -31,12 +30,6 @@ const rows = computed(() => {
   )
 })
 
-const cancel = async (row: any) => {
-  await ElMessageBox.confirm(`确认退回 ${row.member} 的 ${row.amount} 分？`, '退码确认', {
-    type: 'warning'
-  })
-  await store.cancelOrder(row.id)
-}
 </script>
 
 <template>
@@ -82,34 +75,10 @@ const cancel = async (row: any) => {
             <el-tag v-else type="success">真实玩家</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="来源" min-width="110"
-          ><template #default="{ row }">{{ row.source || '网页群' }}</template></el-table-column
-        >
-        <el-table-column label="盘口状态" min-width="180">
-          <template #default="{ row }">
-            <div>{{
-              row.orderType === 'AUTO_PROXY'
-                ? '虚拟订单/永不提交网盘'
-                : row.deliveryMode === 'LOCAL_ONLY'
-                  ? '老板模式/本地吃单'
-                  : row.marketStatus
-            }}</div>
-            <small v-if="row.marketError" class="lucky-danger">{{ row.marketError }}</small>
-          </template>
+        <el-table-column label="来源" min-width="100">
+          <template #default>网页</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" min-width="200" />
-        <el-table-column v-if="store.switches.openCancel" label="操作" width="80" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.status === '未开奖' && row.orderType !== 'AUTO_PROXY'"
-              size="small"
-              type="danger"
-              @click="cancel(row)"
-              >退</el-button
-            >
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
       </PaginatedTable>
     </el-card>
   </div>
