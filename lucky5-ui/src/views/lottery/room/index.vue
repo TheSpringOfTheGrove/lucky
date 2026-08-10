@@ -269,14 +269,6 @@ const recentDraws = computed(() => (session.value?.draws || []).slice(0, 10))
 const currentPeriod = computed(
   () => session.value?.issue.currentPeriod || session.value?.suggestedPeriod || ''
 )
-const currentPeriodOrders = computed(() =>
-  (session.value?.orders || []).filter(
-    (order) => order.period === currentPeriod.value && order.status !== '已退码'
-  )
-)
-const currentBetAmount = computed(() =>
-  currentPeriodOrders.value.reduce((total, order) => total + Number(order.amount || 0), 0)
-)
 const issuePresentation = computed(() => {
   const currentSession = session.value
   const status = currentSession?.issue.status || 'UNAVAILABLE'
@@ -665,9 +657,6 @@ onBeforeUnmount(() => {
           >
             {{ issueTimingText }}
           </strong>
-          <span class="room-current-orders">
-            本期 {{ currentPeriodOrders.length }} 单 · {{ money(currentBetAmount) }} 分
-          </span>
         </div>
 
         <div class="room-overview__history">
@@ -1004,7 +993,7 @@ onBeforeUnmount(() => {
   height: 40px;
   padding: 5px 12px;
   align-items: center;
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: 8px;
   background: #f7f9fc;
   border-top: 1px solid #edf0f4;
@@ -1070,15 +1059,6 @@ onBeforeUnmount(() => {
 
 .room-countdown.is-urgent {
   color: #d01824;
-}
-
-.room-current-orders {
-  overflow: hidden;
-  color: #7b8694;
-  font-size: 11px;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .room-overview__history {
@@ -2010,10 +1990,6 @@ onBeforeUnmount(() => {
 
   .room-overview__market {
     grid-template-columns: auto auto minmax(0, 1fr);
-  }
-
-  .room-current-orders {
-    display: none;
   }
 
   .room-countdown {
