@@ -78,11 +78,14 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String settlement(String memberName, List<String> winningLines, BigDecimal memberPayout,
-                             BigDecimal balanceBefore, BigDecimal balanceAfter, BigDecimal periodPayout) {
+                             BigDecimal currentBalance) {
         return "【" + memberName + "】入住：\n" + String.join("\n", winningLines)
-                + "\n合房费：" + number(memberPayout) + "\n【面积】" + number(balanceBefore)
-                + "\n【中介费】" + number(balanceAfter)
-                + "\n\n--------\n【本次总派送】：" + number(periodPayout);
+                + "\n合房费：" + number(memberPayout)
+                + "\n【当前面积】：" + number(currentBalance);
+    }
+
+    public String payoutSummary(BigDecimal periodPayout) {
+        return "【本次总派送】：" + number(periodPayout);
     }
 
     String number(BigDecimal value) {

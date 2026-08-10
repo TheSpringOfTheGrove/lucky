@@ -165,12 +165,12 @@ const chatMessages = computed<ChatItem[]>(() => {
 
   for (const message of session.value.messages) {
     const order = message.orderId ? orderById.value[message.orderId] : undefined
-    const showSharedBetReply =
+    const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
       message.own === false &&
-      message.commandType === 'BET' &&
+      ['BET', 'SETTLEMENT', 'PAYOUT_SUMMARY'].includes(message.commandType) &&
       Boolean(message.reply)
-    if (!['SETTLEMENT', 'PERIOD_SUMMARY'].includes(message.commandType)) {
+    if (!['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType)) {
       messages.push({
         id: `member-message-${message.id}`,
         kind: message.own === false ? 'other' : 'member',
@@ -180,7 +180,13 @@ const chatMessages = computed<ChatItem[]>(() => {
         senderName: message.member
       })
     }
-    if ((message.own !== false || showSharedBetReply) && message.commandType !== 'CHAT') {
+    if ((message.own !== false || showSharedRobotReply) && message.commandType !== 'CHAT') {
+      const robotReplyDelay =
+        message.commandType === 'PAYOUT_SUMMARY'
+          ? 3
+          : message.commandType === 'SETTLEMENT'
+            ? 2
+            : 1
       messages.push({
         id: `robot-message-${message.id}`,
         kind: 'robot',
@@ -190,7 +196,7 @@ const chatMessages = computed<ChatItem[]>(() => {
           : message.reply ||
             message.error ||
             (message.status === '处理中' ? '正在处理' : message.status),
-        createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
+        createdAt: dayjs(message.createdAt).add(robotReplyDelay, 'millisecond').toISOString(),
         order
       })
     }

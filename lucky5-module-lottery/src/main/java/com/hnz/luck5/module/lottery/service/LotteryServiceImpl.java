@@ -55,6 +55,8 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String MEMBER_BOT = "BOT";
     private static final String TYPE_PLAYER = "PLAYER";
     private static final String TYPE_AUTO_PROXY = "AUTO_PROXY";
+    private static final String COMMAND_SETTLEMENT = "SETTLEMENT";
+    private static final String COMMAND_PAYOUT_SUMMARY = "PAYOUT_SUMMARY";
     private static final String ROOM_MODE_GROUP = "GROUP";
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
     private static final String CHANNEL_WEB_GROUP = "网页群";
@@ -1381,15 +1383,28 @@ public class LotteryServiceImpl implements LotteryService {
             message.setPeriod(period);
             message.setContent("");
             message.setStatus("已结算");
-            message.setCommandType("SETTLEMENT");
+            message.setCommandType(COMMAND_SETTLEMENT);
             message.setMessageType(isAutoProxy(member) ? TYPE_AUTO_PROXY : TYPE_PLAYER);
             message.setReply(robotReplyTemplate.settlement(entry.getKey(), entry.getValue(), payout,
-                    money(afterBalance.subtract(payout)), afterBalance,
-                    isAutoProxy(member) ? payout : money(totalPayout)));
+                    afterBalance));
             message.setProcessedAt(LocalDateTime.now());
             message.setUserId(userId);
             messageMapper.insert(message);
         }
+        MessageDO payoutSummary = new MessageDO();
+        payoutSummary.setChannel(CHANNEL_WEB_GROUP);
+        payoutSummary.setMemberId(null);
+        payoutSummary.setMember("");
+        payoutSummary.setPeriod(period);
+        payoutSummary.setContent("");
+        payoutSummary.setStatus("已结算");
+        payoutSummary.setExternalId("payout-summary:" + period);
+        payoutSummary.setCommandType(COMMAND_PAYOUT_SUMMARY);
+        payoutSummary.setMessageType(TYPE_PLAYER);
+        payoutSummary.setReply(robotReplyTemplate.payoutSummary(money(totalPayout)));
+        payoutSummary.setProcessedAt(LocalDateTime.now());
+        payoutSummary.setUserId(userId);
+        messageMapper.insert(payoutSummary);
         logAs(userId, actor, "-", "结算期号 " + period + "，真实订单 " + details.size() + " 笔，投额 "
                 + money(totalAmount) + "，派彩 " + money(totalPayout) + "，原因 "
                 + StrUtil.blankToDefault(reason, "开奖API二次确认"));
@@ -1771,14 +1786,15 @@ public class LotteryServiceImpl implements LotteryService {
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 80")));
         if (ROOM_MODE_PRIVATE.equals(roomMode)) {
             List<MessageDO> settlements = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                    ownRoomMessageQuery(member).eq(MessageDO::getCommandType, "SETTLEMENT")
+                    ownRoomMessageQuery(member).eq(MessageDO::getCommandType, COMMAND_SETTLEMENT)
                             .orderByDesc(MessageDO::getCreateTime).last("LIMIT 30")));
             return mergeMessages(ownMessages, settlements, 80);
         }
         List<MessageDO> sharedMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
                 new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                         .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
-                        .in(MessageDO::getCommandType, "BET", "CHAT")
+                        .in(MessageDO::getCommandType, "BET", "CHAT", COMMAND_SETTLEMENT,
+                                COMMAND_PAYOUT_SUMMARY)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
         return mergeMessages(ownMessages, sharedMessages, 100);
     }
@@ -1802,12 +1818,16 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, Object> result = messageMap(item);
         boolean own = Objects.equals(item.getMemberId(), member.getId())
                 || item.getMemberId() == null && Objects.equals(item.getMember(), member.getName());
+        boolean sharedPayoutSummary = COMMAND_PAYOUT_SUMMARY.equals(item.getCommandType());
+        boolean sharedSettlement = COMMAND_SETTLEMENT.equals(item.getCommandType());
+        String sharedReply = sharedPayoutSummary || sharedSettlement ? item.getReply() : "";
         result.put("own", own);
         if (!own) {
             result.put("orderId", "");
             result.put("error", "");
             result.put("reply", "BET".equals(item.getCommandType())
-                    ? robotReplyTemplate.publicBetReceipt(item.getMember(), item.getReply()) : "");
+                    ? robotReplyTemplate.publicBetReceipt(item.getMember(), item.getReply())
+                    : sharedReply);
         }
         return result;
     }

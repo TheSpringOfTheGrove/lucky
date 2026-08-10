@@ -47,10 +47,13 @@ class LotteryRobotReplyTemplateTest {
     @Test
     void shouldFormatSettlementLikeReferenceRobot() {
         assertThat(template.settlement("波陆秀", List.of("57XX，套数10，房费960", "X75X，套数10，房费960"),
-                new BigDecimal("1920.00"), new BigDecimal("29132.52"),
-                new BigDecimal("31052.52"), new BigDecimal("6720.00")))
+                new BigDecimal("1920.00"), new BigDecimal("31052.52")))
                 .isEqualTo("【波陆秀】入住：\n57XX，套数10，房费960\nX75X，套数10，房费960"
-                        + "\n合房费：1920\n【面积】29132.52\n【中介费】31052.52"
-                        + "\n\n--------\n【本次总派送】：6720");
+                        + "\n合房费：1920\n【当前面积】：31052.52")
+                .doesNotContain("中介费");
+        assertThat(template.payoutSummary(new BigDecimal("6720.00")))
+                .isEqualTo("【本次总派送】：6720");
+        assertThat(template.payoutSummary(BigDecimal.ZERO))
+                .isEqualTo("【本次总派送】：0");
     }
 }
