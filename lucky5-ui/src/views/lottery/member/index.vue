@@ -223,14 +223,19 @@ const avatarColor = (avatar: number) =>
 const isAutoProxy = (row: any) => row.memberType === 'BOT' || Boolean(row.autoProxy)
 const isSearchable = (row: any) => row.searchable !== false
 const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
+const formatStatistic = (value: number) => {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '0.00'
+  return (Math.abs(amount) < 0.005 ? 0 : amount).toFixed(2)
+}
 </script>
 
 <template>
   <div class="lucky-page">
     <h1 class="lucky-page__heading">会员列表 <small>添加/编辑/删除会员</small></h1>
     <el-card shadow="never">
-      <div class="lucky-toolbar">
-        <div class="lucky-toolbar__filters">
+      <div class="lucky-toolbar member-toolbar">
+        <div class="lucky-toolbar__filters member-toolbar__actions">
           <el-tooltip content="添加会员">
             <el-button type="primary" circle @click="openMember()"
               ><Icon icon="ep:user-filled"
@@ -243,21 +248,24 @@ const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
           </el-tooltip>
           <el-button type="danger" @click="clearAllFingerprints">抹除标识</el-button>
         </div>
-        <div>
-          <span class="lucky-member-total"
-            >总余分：{{ totalBalance }}，托总余分：{{ proxyBalance }}，</span
-          >
-          <span class="lucky-danger">真实会员总余分：{{ realBalance }}</span>
-          <span> || </span>
-          <span class="lucky-member-total"
-            >总投额：{{ totalBet }}，托总投额：{{ proxyBet }}，</span
-          >
-          <span class="lucky-danger">真实会员总投额：{{ realBet }}</span>
-          <span> || </span>
-          <span class="lucky-member-total">总盈亏：{{ totalProfit }}，</span>
-          <span class="lucky-danger"
-            >真实会员盈亏：{{ realProfit }}，托盈亏：{{ proxyProfit }}</span
-          >
+        <div class="member-summary">
+          <span class="member-summary__group">
+            <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}</span>
+            <span class="lucky-member-total">托总余分：{{ formatStatistic(proxyBalance) }}</span>
+            <span class="lucky-danger">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
+          </span>
+          <span class="member-summary__separator">|</span>
+          <span class="member-summary__group">
+            <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}</span>
+            <span class="lucky-member-total">托总投额：{{ formatStatistic(proxyBet) }}</span>
+            <span class="lucky-danger">真实会员总投额：{{ formatStatistic(realBet) }}</span>
+          </span>
+          <span class="member-summary__separator">|</span>
+          <span class="member-summary__group">
+            <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}</span>
+            <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}</span>
+            <span class="lucky-danger">托盈亏：{{ formatStatistic(proxyProfit) }}</span>
+          </span>
         </div>
       </div>
 
@@ -478,6 +486,45 @@ const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
 <style scoped>
 .lucky-member-total {
   color: #0000ff;
+}
+
+.member-toolbar {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.member-toolbar__actions {
+  flex-wrap: nowrap;
+}
+
+.member-summary {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  font-size: 14px;
+  line-height: 28px;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  align-items: center;
+  gap: 8px;
+}
+
+.member-summary__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.member-summary__separator {
+  color: #9aa1aa;
+}
+
+@media (max-width: 900px) {
+  .member-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .member-boolean {
