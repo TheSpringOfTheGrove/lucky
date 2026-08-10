@@ -8,6 +8,7 @@ const puller = ref('')
 const keyword = ref('')
 const editVisible = ref(false)
 const batchVisible = ref(false)
+const listVersion = ref(0)
 
 const editForm = reactive<Record<string, any>>({
   id: '',
@@ -64,13 +65,17 @@ const playerTotal = computed(() =>
 )
 const totalRebate = computed(() => normalTotal.value + dragonTotal.value + pullerTotal.value)
 const rateOptions = Array.from({ length: 101 }, (_, index) => Number((index / 10).toFixed(1)))
+const rebuildList = () => {
+  listVersion.value += 1
+}
 
 const apply = async () => {
   try {
     await ElMessageBox.confirm(`确认发放返水 ${money(totalRebate.value)} 分？`, '一键返水', {
       type: 'warning'
     })
-    await store.applyRebates()
+    const result = await store.applyRebates()
+    if (result !== false) rebuildList()
   } catch {
     // User cancelled.
   }
@@ -97,7 +102,10 @@ const saveEdit = async () => {
     editForm.partnerLhhRate = 0
   }
   const result = await store.saveDiscounts([{ ...editForm }])
-  if (result !== false) editVisible.value = false
+  if (result !== false) {
+    rebuildList()
+    editVisible.value = false
+  }
 }
 
 const togglePuller = async (row: Record<string, any>) => {
@@ -109,7 +117,8 @@ const togglePuller = async (row: Record<string, any>) => {
       action,
       { type: 'warning' }
     )
-    await store.saveDiscounts([{ ...row, puller: next }])
+    const result = await store.saveDiscounts([{ ...row, puller: next }])
+    if (result !== false) rebuildList()
   } catch {
     // User cancelled.
   }
@@ -133,7 +142,10 @@ const saveBatch = async () => {
     puller: isPuller(row)
   }))
   const result = await store.saveDiscounts(payload)
-  if (result !== false) batchVisible.value = false
+  if (result !== false) {
+    rebuildList()
+    batchVisible.value = false
+  }
 }
 </script>
 
@@ -163,7 +175,12 @@ const saveBatch = async () => {
         <el-input v-model="keyword" clearable placeholder="搜索昵称" />
       </div>
 
-      <PaginatedTable :data="rows" border>
+      <PaginatedTable
+        :key="listVersion"
+        v-loading="store.loading || store.saving"
+        :data="rows"
+        border
+      >
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <span>{{ row.name }}</span>
