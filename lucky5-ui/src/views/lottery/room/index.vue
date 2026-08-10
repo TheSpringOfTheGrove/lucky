@@ -29,7 +29,6 @@ interface ChatItem {
   content: string
   createdAt: string
   senderName?: string
-  isProxy?: boolean
   order?: RoomOrder
   amountRecord?: RoomAmountRecord
   draw?: RoomDraw
@@ -173,8 +172,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         type: 'text',
         content: message.content,
         createdAt: message.createdAt,
-        senderName: message.member,
-        isProxy: message.messageType === 'AUTO_PROXY'
+        senderName: message.member
       })
     }
     if (message.own !== false && message.commandType !== 'CHAT') {
@@ -723,7 +721,6 @@ onBeforeUnmount(() => {
             <div class="chat-body">
               <h5>
                 {{ message.kind === 'robot' ? '机器人' : message.senderName || session.member.name }}
-                <em v-if="message.isProxy">托</em>
               </h5>
               <div class="chat-bubble">
                 <template v-if="message.type === 'draw' && message.draw">
