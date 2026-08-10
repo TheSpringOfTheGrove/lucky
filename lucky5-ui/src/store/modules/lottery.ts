@@ -91,6 +91,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     loaded: false,
     loadedUserId: 0,
     loading: false,
+    marketRefreshing: false,
     saving: false,
     operator: { username: '', expireAt: '' },
     room: { open: false, online: 0 },
@@ -272,6 +273,25 @@ const useLucky5StoreBase = defineStore('lucky5', {
     },
     syncMarket() {
       return this.perform(() => syncMarketApi(), '盘口数据已同步')
+    },
+    async refreshMarketConnection() {
+      if (this.marketRefreshing || this.market.connection.mode !== 'SIMULATED') return false
+      this.marketRefreshing = true
+      try {
+        const connection = await syncMarketApi()
+        this.market = {
+          ...this.market,
+          connection: {
+            ...this.market.connection,
+            ...connection
+          }
+        }
+        return true
+      } catch {
+        return false
+      } finally {
+        this.marketRefreshing = false
+      }
     },
     saveLinks(payload: Record<string, any>) {
       return this.perform(() => saveLinksApi(payload), '链接配置已保存')

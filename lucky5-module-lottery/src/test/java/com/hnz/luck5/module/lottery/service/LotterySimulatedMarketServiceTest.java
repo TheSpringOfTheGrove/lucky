@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hnz.luck5.module.lottery.dal.dataobject.BetItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.SimulatedMarketAccountDO;
 import com.hnz.luck5.module.lottery.dal.mysql.ChimaConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketRouteItemMapper;
@@ -39,16 +40,44 @@ class LotterySimulatedMarketServiceTest {
     private LotterySimulatedMarketService service;
     private SimulatedMarketAccountMapper accountMapper;
     private MarketRouteItemMapper routeMapper;
+    private ChimaConfigMapper chimaConfigMapper;
 
     @BeforeEach
     void setUp() {
         service = new LotterySimulatedMarketService();
         accountMapper = mock(SimulatedMarketAccountMapper.class);
         routeMapper = mock(MarketRouteItemMapper.class);
+        chimaConfigMapper = mock(ChimaConfigMapper.class);
         ReflectionTestUtils.setField(service, "accountMapper", accountMapper);
         ReflectionTestUtils.setField(service, "routeItemMapper", routeMapper);
-        ReflectionTestUtils.setField(service, "chimaConfigMapper", mock(ChimaConfigMapper.class));
+        ReflectionTestUtils.setField(service, "chimaConfigMapper", chimaConfigMapper);
         ReflectionTestUtils.setField(service, "routingPolicy", new LotteryMarketRoutingPolicy());
+    }
+
+    @Test
+    void reserveDebitsSimulatedBalanceBeforeSettlement() {
+        SimulatedMarketAccountDO account = account("1000.00");
+        MemberDO member = new MemberDO();
+        member.setEatEnabled(false);
+        BetItemDO bet = new BetItemDO();
+        bet.setId("B-1");
+        bet.setPlay("龙虎");
+        bet.setSelection("龙");
+        bet.setAmount(new BigDecimal("100"));
+        bet.setOdds(new BigDecimal("2"));
+
+        when(accountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(account);
+        when(chimaConfigMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(routeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
+        when(accountMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        LotterySimulatedMarketService.RoutingResult result = service.reserve(7L, "O-1", "20260810207",
+                member, List.of(bet));
+
+        assertThat(result.simulatedAmount()).isEqualByComparingTo("100.00");
+        assertThat(result.deliveryMode()).isEqualTo("SIMULATED_MARKET");
+        assertThat(account.getBalance()).isEqualByComparingTo("900.00");
+        assertThat(account.getTotalStake()).isEqualByComparingTo("100.00");
     }
 
     @Test

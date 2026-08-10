@@ -496,8 +496,7 @@ public class LotteryServiceImpl implements LotteryService {
         LotteryConfigDO config = requireConfig(userId);
         if (!bool(config.getBossMode())) {
             LotterySimulatedMarketService.Snapshot snapshot = simulatedMarketService.snapshot(userId);
-            return map("status", "模拟已同步", "balance", money(snapshot.account().getBalance()),
-                    "mode", "SIMULATED", "realMarketWritesEnabled", false);
+            return marketMap(findUserMarket(userId), snapshot, config);
         }
         return marketSyncService.syncCurrent(TenantContextHolder.getRequiredTenantId(), userId);
     }

@@ -73,8 +73,17 @@ CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_route_bet_item` (`tenant_id`,`user_id`,`bet_item_id`,`deleted`),
   KEY `idx_lucky5_route_order` (`tenant_id`,`user_id`,`order_id`),
-  KEY `idx_lucky5_route_period` (`tenant_id`,`user_id`,`period`,`status`)
+  KEY `idx_lucky5_route_period` (`tenant_id`,`user_id`,`period`,`status`),
+  KEY `idx_lucky5_route_recent` (`tenant_id`,`user_id`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 本地吃码与模拟网盘路由快照';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_route_item' AND index_name='idx_lucky5_route_recent')=0,
+  'ALTER TABLE `lucky5_market_route_item` ADD KEY `idx_lucky5_route_recent` (`tenant_id`,`user_id`,`create_time`)',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns
