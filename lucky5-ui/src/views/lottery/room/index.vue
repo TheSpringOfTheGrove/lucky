@@ -751,7 +751,17 @@ onBeforeUnmount(() => {
                     >
                       <span>{{ draw.period.slice(-3) }}</span>
                       <span>{{ dayjs(draw.settledAt).format('HH:mm') }}</span>
-                      <span>{{ draw.numbers.join('　') }}</span>
+                      <span
+                        class="lottery-table__history-numbers"
+                        :aria-label="draw.numbers.join(' ')"
+                      >
+                        <i
+                          v-for="(number, index) in draw.numbers"
+                          :key="`${draw.period}-history-${index}`"
+                        >
+                          {{ number }}
+                        </i>
+                      </span>
                     </div>
                   </div>
                 </template>
@@ -1848,6 +1858,21 @@ onBeforeUnmount(() => {
 
 .lottery-table__history-row:nth-child(even) {
   background: #f2f2f2;
+}
+
+.lottery-table__history-numbers {
+  display: grid;
+  align-items: center;
+  justify-content: start;
+  grid-template-columns: repeat(5, 14px);
+  gap: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.lottery-table__history-numbers i {
+  font-style: normal;
+  text-align: center;
 }
 
 .draw-brief {

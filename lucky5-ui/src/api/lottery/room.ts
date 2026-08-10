@@ -146,8 +146,20 @@ const credentialQuery = (credential: RoomCredential) => {
   return query.toString()
 }
 
-export const getRoomSessionApi = (credential: RoomCredential) =>
-  request<RoomSession>(`/app-api/lottery/room/session?${credentialQuery(credential)}`)
+const normalizeDraw = (draw: RoomDraw): RoomDraw => {
+  const source =
+    Array.isArray(draw.numbers) && draw.numbers.length
+      ? draw.numbers.join('')
+      : draw.result || ''
+  return { ...draw, numbers: (source.match(/\d/g) || []).slice(0, 5) }
+}
+
+export const getRoomSessionApi = async (credential: RoomCredential) => {
+  const session = await request<RoomSession>(
+    `/app-api/lottery/room/session?${credentialQuery(credential)}`
+  )
+  return { ...session, draws: (session.draws || []).map(normalizeDraw) }
+}
 
 export const placeRoomBetApi = (
   credential: RoomCredential,
