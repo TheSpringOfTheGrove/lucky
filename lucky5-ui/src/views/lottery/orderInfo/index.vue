@@ -31,10 +31,21 @@ const rows = computed(() => {
       && (!orderType.value || item.orderType === orderType.value)
   )
 })
+const detailItems = computed(() =>
+  [...(detailOrder.value?.items || [])].sort(
+    (left, right) => Number(right.won === true) - Number(left.won === true)
+  )
+)
 
 const openDetails = (row: any) => {
   detailOrder.value = row
   detailVisible.value = true
+}
+
+const detailRowClassName = ({ row }: { row: any }) => {
+  if (row.won === true) return 'order-detail-row--won'
+  if (row.won === false) return 'order-detail-row--lost'
+  return ''
 }
 
 </script>
@@ -99,14 +110,16 @@ const openDetails = (row: any) => {
         <strong>原始文本</strong>
         <div>{{ detailOrder.content }}</div>
       </div>
-      <el-table :data="detailOrder?.items || []" border max-height="420">
+      <el-table :data="detailItems" border max-height="420" :row-class-name="detailRowClassName">
         <el-table-column prop="play" label="玩法" min-width="100" />
         <el-table-column prop="selection" label="选项" min-width="90" />
         <el-table-column prop="amount" label="金额" min-width="90" />
         <el-table-column prop="odds" label="赔率" min-width="90" />
         <el-table-column label="结果" min-width="90">
           <template #default="scope">
-            {{ scope.row.won === null ? '待开奖' : scope.row.won ? '中' : '未中' }}
+            <el-tag v-if="scope.row.won === true" type="danger" effect="dark">中奖</el-tag>
+            <el-tag v-else-if="scope.row.won === false" type="success" effect="plain">未中奖</el-tag>
+            <el-tag v-else type="info" effect="plain">待开奖</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="payout" label="派彩" min-width="90" />
@@ -132,6 +145,14 @@ const openDetails = (row: any) => {
   background: var(--el-fill-color-light);
   border-radius: 4px;
   gap: 8px;
+}
+
+:deep(.el-table__body tr.order-detail-row--won > td.el-table__cell) {
+  background: var(--el-color-danger-light-9);
+}
+
+:deep(.el-table__body tr.order-detail-row--lost > td.el-table__cell) {
+  background: var(--el-color-success-light-9);
 }
 
 .order-type-select {
