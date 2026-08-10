@@ -48,6 +48,12 @@ export const createAmountRequestApi = (
   data: { amount: number; type: '上分' | '下分'; remark?: string }
 ) => request.post({ url: `${base}/members/${id}/amount-request`, data })
 
+export const getAmountRecordsApi = () =>
+  request.get<Record<string, any>[]>({ url: `${base}/amount-records` })
+
+export const getOrdersApi = () =>
+  request.get<Record<string, any>[]>({ url: `${base}/orders` })
+
 export const getMemberDetailsApi = (id: string) =>
   request.get<Record<string, any>>({ url: `${base}/members/${id}/details` })
 

@@ -37,7 +37,7 @@ public class LotteryRoomController {
     }
 
     @PostMapping("/bets/preview")
-    public CommonResult<Map<String, Object>> previewBet(@Valid @RequestBody LotteryRoomReqVO.Bet reqVO) {
+    public CommonResult<Map<String, Object>> previewBet(@Valid @RequestBody LotteryRoomReqVO.PreviewBet reqVO) {
         return success(lotteryService.previewRoomBet(reqVO));
     }
 

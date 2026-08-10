@@ -213,6 +213,32 @@ foreach ($spec in $specs) {
     Write-Host ("{0,-28} {1,6} rows" -f $spec.Source, $rows.Count)
 }
 
+# Derive immutable robot markers that do not exist as separate fields in the legacy schema.
+$sql.Add(@"
+UPDATE lucky5_member
+SET member_type=IF(auto_proxy=b'1','BOT','REAL'), auto_bet_enabled=auto_proxy,
+    auto_top_up_amount=IF(auto_top_up_amount<=0,1000,auto_top_up_amount)
+WHERE tenant_id=$TenantId AND user_id=$OwnerUserId AND deleted=b'0';
+UPDATE lucky5_order o
+SET o.order_type=IF(
+    o.source='自动托' OR EXISTS (
+        SELECT 1 FROM lucky5_message msg
+        WHERE msg.tenant_id=o.tenant_id AND msg.user_id=o.user_id AND msg.order_id=o.id
+          AND msg.external_id LIKE 'auto-proxy:%' AND msg.deleted=b'0'
+    ),
+    'AUTO_PROXY','PLAYER'
+)
+WHERE o.tenant_id=$TenantId AND o.user_id=$OwnerUserId AND o.deleted=b'0';
+UPDATE lucky5_amount_record a
+JOIN lucky5_member m ON m.tenant_id=a.tenant_id AND m.user_id=a.user_id AND m.id=a.member_id AND m.deleted=b'0'
+SET a.record_source=IF(m.member_type='BOT','AUTO_PROXY',a.record_source)
+WHERE a.tenant_id=$TenantId AND a.user_id=$OwnerUserId AND a.deleted=b'0';
+UPDATE lucky5_message msg
+LEFT JOIN lucky5_order o ON o.tenant_id=msg.tenant_id AND o.user_id=msg.user_id AND o.id=msg.order_id AND o.deleted=b'0'
+SET msg.message_type=IF(o.order_type='AUTO_PROXY' OR msg.external_id LIKE 'auto-proxy:%','AUTO_PROXY','PLAYER')
+WHERE msg.tenant_id=$TenantId AND msg.user_id=$OwnerUserId AND msg.deleted=b'0';
+"@)
+
 # The legacy Draw table can contain the placeholder 00000 even though Issue already has the real five-digit result.
 # Reconcile only exact placeholder rows with a validated result from the same tenant/user/period.
 $sql.Add(@"

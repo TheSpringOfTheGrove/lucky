@@ -36,6 +36,13 @@ public final class LotteryRoomReqVO {
     }
 
     @Data
+    public static class PreviewBet extends Credential {
+        @NotBlank
+        @Size(max = 2000)
+        private String content;
+    }
+
+    @Data
     public static class Message extends Credential {
         @Size(max = 40)
         private String period;

@@ -94,7 +94,11 @@ public final class LotteryReqVO {
         private String externalNickname;
         private BigDecimal totalBet;
         private BigDecimal profitLoss;
+        private String memberType;
         private Boolean autoProxy;
+        private Boolean autoBetEnabled;
+        @DecimalMin("0.01")
+        private BigDecimal autoTopUpAmount;
         private Boolean eatEnabled;
         private Boolean searchable;
         private String fingerprint;
@@ -161,8 +165,6 @@ public final class LotteryReqVO {
         @NotBlank
         @Size(max = 2000)
         private String content;
-        @NotNull
-        private Boolean enabled;
     }
 
     @Data

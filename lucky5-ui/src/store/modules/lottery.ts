@@ -17,6 +17,8 @@ import {
   deleteFollowOrderApi,
   deleteMemberApi,
   getLucky5Bootstrap,
+  getAmountRecordsApi,
+  getOrdersApi,
   getMemberDetailsApi,
   getMemberLinksApi,
   rotateMemberLinkApi,
@@ -161,7 +163,9 @@ const useLucky5StoreBase = defineStore('lucky5', {
       totalMembers: state.dashboardStats.totalMembers,
       onlineMembers: state.dashboardStats.onlineMembers,
       pendingDeposits: state.dashboardStats.pendingDeposits,
-      totalBalance: state.members.reduce((sum, item) => sum + Number(item.balance || 0), 0)
+      totalBalance: state.members
+        .filter((item) => item.memberType !== 'BOT' && !item.autoProxy)
+        .reduce((sum, item) => sum + Number(item.balance || 0), 0)
     }),
     historyOrders: (state) => state.orders.filter((item) => item.status !== '未开奖')
   },
@@ -282,6 +286,22 @@ const useLucky5StoreBase = defineStore('lucky5', {
         () => createAmountRequestApi(id, { amount, type, remark }),
         '上下分申请已提交'
       )
+    },
+    async refreshAmountRecords() {
+      try {
+        this.amountRecords = await getAmountRecordsApi()
+        return true
+      } catch {
+        return false
+      }
+    },
+    async refreshOrders() {
+      try {
+        this.orders = await getOrdersApi()
+        return true
+      } catch {
+        return false
+      }
     },
     async getMemberDetails(id: string) {
       try {

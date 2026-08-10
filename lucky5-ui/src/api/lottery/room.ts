@@ -78,7 +78,7 @@ export interface RoomSession {
     status: string
     remainingSeconds: number
     nextPeriod: string
-    serverTime: string | null
+    serverTime: string | number | null
   }
   issueTransitions: Array<{
     id: number
@@ -181,4 +181,3 @@ export const cancelRoomOrderApi = (credential: RoomCredential, orderId: string) 
       body: JSON.stringify(credential)
     }
   )
-

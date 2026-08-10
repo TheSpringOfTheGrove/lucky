@@ -9,12 +9,10 @@ import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.IssueTransitionDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.LotteryConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketConnectionDO;
-import com.hnz.luck5.module.lottery.dal.dataobject.SystemStateDO;
 import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.IssueTransitionMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.LotteryConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketConnectionMapper;
-import com.hnz.luck5.module.lottery.dal.mysql.SystemStateMapper;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +32,8 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Polls the read-only market API for every tenant/user configuration and drives issue settlement.
+ * Polls one system-level read-only draw source and distributes the same issue/result snapshot to every owner.
+ * Owner market credentials remain isolated and are used only for that owner's connection/account information.
  */
 @Service
 public class LotteryMarketSyncService {
@@ -47,7 +46,6 @@ public class LotteryMarketSyncService {
     @Resource private MarketConnectionMapper marketConnectionMapper;
     @Resource private IssueMapper issueMapper;
     @Resource private IssueTransitionMapper issueTransitionMapper;
-    @Resource private SystemStateMapper systemStateMapper;
     @Resource private MarketCredentialService credentialService;
     @Resource private Wa55MarketClient marketClient;
     @Resource private LotteryDrawVerificationService drawVerificationService;
@@ -57,6 +55,12 @@ public class LotteryMarketSyncService {
     @Value("${lottery.market.draw-confirmation-delay-ms:5000}")
     private long drawConfirmationDelayMs;
 
+    @Value("${lottery.draw-source.tenant-id:1}")
+    private Long drawSourceTenantId;
+
+    @Value("${lottery.draw-source.user-id:1}")
+    private Long drawSourceUserId;
+
     @Scheduled(initialDelayString = "${lottery.market.initial-delay-ms:15000}",
             fixedDelayString = "${lottery.market.sync-interval-ms:30000}")
     public void syncAllConfigured() {
@@ -65,12 +69,13 @@ public class LotteryMarketSyncService {
             List<LotteryConfigDO> configs = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
                     () -> lotteryConfigMapper.selectList(new LambdaQueryWrapper<LotteryConfigDO>()
                             .isNotNull(LotteryConfigDO::getUserId))));
+            syncGlobalDraws(configs);
             for (LotteryConfigDO config : configs) {
-                if (!configured(config)) continue;
+                if (isDrawSource(config)) continue;
                 try {
-                    TenantUtils.execute(config.getTenantId(), () -> syncConfigured(config));
+                    TenantUtils.execute(config.getTenantId(), () -> syncOwnerConnection(config));
                 } catch (RuntimeException ex) {
-                    LOGGER.warn("盘口同步失败 tenant={} user={}: {}", config.getTenantId(), config.getUserId(),
+                    LOGGER.warn("盘口账户同步失败 tenant={} user={}: {}", config.getTenantId(), config.getUserId(),
                             rootMessage(ex));
                 }
             }
@@ -123,38 +128,92 @@ public class LotteryMarketSyncService {
                     new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
             if (config == null || !configured(config)) {
                 updateConnection(userId, config != null && Boolean.TRUE.equals(config.getBossMode())
-                        ? "老板模式（未配置盘口）" : "未配置", "", "", null, "", false);
+                        ? "老板模式（使用系统开奖源）" : "未配置", "", "", null, "", false);
                 return connectionMap(findConnection(userId));
             }
-            syncConfigured(config);
+            if (isDrawSource(config)) {
+                List<LotteryConfigDO> configs = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
+                        () -> lotteryConfigMapper.selectList(new LambdaQueryWrapper<LotteryConfigDO>()
+                                .isNotNull(LotteryConfigDO::getUserId))));
+                syncGlobalDraws(configs);
+            } else {
+                syncOwnerConnection(config);
+            }
             return connectionMap(findConnection(userId));
         });
     }
 
-    private void syncConfigured(LotteryConfigDO config) {
+    private void syncGlobalDraws(List<LotteryConfigDO> configs) {
+        LotteryConfigDO source = configs.stream().filter(this::isDrawSource).findFirst().orElse(null);
+        if (!configured(source)) {
+            LOGGER.warn("系统开奖源未配置 tenant={} user={}，本轮不更新期号和开奖结果",
+                    drawSourceTenantId, drawSourceUserId);
+            return;
+        }
+        Wa55MarketClient.Snapshot snapshot;
+        try {
+            snapshot = TenantUtils.execute(source.getTenantId(), () -> readSnapshot(source, true));
+            TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "已连接",
+                    snapshot.lineUrl(), snapshot.account().displayAccount(), snapshot.account().balance(), "", true));
+        } catch (RuntimeException ex) {
+            TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "连接失败",
+                    null, null, BigDecimal.ZERO, rootMessage(ex), false));
+            LOGGER.warn("系统开奖源同步失败 tenant={} user={}: {}", source.getTenantId(), source.getUserId(),
+                    rootMessage(ex));
+            return;
+        }
+        for (LotteryConfigDO target : configs) {
+            try {
+                TenantUtils.execute(target.getTenantId(), () -> {
+                    boolean newlyOpened = Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                            persistSharedSnapshot(target.getUserId(), snapshot)));
+                    if (newlyOpened) {
+                        lotteryService.handleMarketIssueOpened(target.getUserId(), snapshot.issue().period());
+                    }
+                });
+            } catch (RuntimeException ex) {
+                LOGGER.error("共享开奖分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
+            }
+        }
+        // Settle only after every owner's draw snapshot transaction has committed. This also avoids reading a
+        // just-updated DRAWN row through a transaction resource that was opened for snapshot persistence.
+        for (LotteryConfigDO target : configs) {
+            try {
+                TenantUtils.execute(target.getTenantId(), () -> settlePending(target.getUserId()));
+            } catch (RuntimeException ex) {
+                LOGGER.error("共享开奖结算触发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
+            }
+        }
+    }
+
+    private void syncOwnerConnection(LotteryConfigDO config) {
         Long userId = config.getUserId();
+        if (!configured(config)) {
+            updateConnection(userId, Boolean.TRUE.equals(config.getBossMode())
+                    ? "老板模式（使用系统开奖源）" : "未配置", "", "", null, "", false);
+            return;
+        }
         updateConnection(userId, "连接中", null, null, null, "", false);
         try {
-            String password = credentialService.decrypt(config.getMarketPasswordEncrypted());
-            Wa55MarketClient.Snapshot snapshot = marketClient.read(new Wa55MarketClient.Credentials(
-                    config.getUpstreamUrl(), config.getUpstreamAccount(), password), true);
-            boolean newlyOpened = Boolean.TRUE.equals(transactionTemplate.execute(status -> persistSnapshot(config, snapshot)));
-            if (newlyOpened) lotteryService.handleMarketIssueOpened(userId, snapshot.issue().period());
-            settlePending(config.getUserId());
+            Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
+            updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
+                    snapshot.account().balance(), "", true);
         } catch (RuntimeException ex) {
             updateConnection(userId, "连接失败", null, null, BigDecimal.ZERO, rootMessage(ex), false);
             throw ex;
         }
     }
 
-    private boolean persistSnapshot(LotteryConfigDO config, Wa55MarketClient.Snapshot snapshot) {
-        Long userId = config.getUserId();
+    private Wa55MarketClient.Snapshot readSnapshot(LotteryConfigDO config, boolean includeDraws) {
+        String password = credentialService.decrypt(config.getMarketPasswordEncrypted());
+        return marketClient.read(new Wa55MarketClient.Credentials(
+                config.getUpstreamUrl(), config.getUpstreamAccount(), password), includeDraws);
+    }
+
+    private boolean persistSharedSnapshot(Long userId, Wa55MarketClient.Snapshot snapshot) {
         LocalDateTime now = LocalDateTime.now();
-        updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
-                snapshot.account().balance(), "", true);
         boolean newlyOpened = upsertCurrentIssue(userId, snapshot.issue(), now);
         for (Wa55MarketClient.Draw draw : snapshot.draws()) upsertDrawIssue(userId, draw, now);
-        updateRoomState(userId, "OPEN".equals(snapshot.issue().status()));
         return newlyOpened;
     }
 
@@ -173,7 +232,7 @@ public class LotteryMarketSyncService {
                 old.setStatus("CLOSED");
                 old.setClosedAt(now);
                 issueMapper.updateById(old);
-                transition(userId, old.getPeriod(), "OPEN", "CLOSED", "盘口新期开盘", "");
+                transition(userId, old.getPeriod(), "OPEN", "CLOSED", "系统新期开奖", "");
             }
         }
         if (issue == null) {
@@ -182,7 +241,7 @@ public class LotteryMarketSyncService {
             issue.setPeriod(snapshot.period());
             issue.setStatus(nextStatus);
             issue.setResult("");
-            issue.setSource("盘口");
+            issue.setSource("系统开奖");
             issue.setError("");
             issue.setOrderSequence(0);
             issue.setDrawConfirmations(0);
@@ -194,13 +253,13 @@ public class LotteryMarketSyncService {
             if ("OPEN".equals(nextStatus) && issue.getOpenedAt() == null) issue.setOpenedAt(now);
             if ("CLOSED".equals(nextStatus) && issue.getClosedAt() == null) issue.setClosedAt(now);
             issue.setStatus(nextStatus);
-            issue.setSource("盘口");
+            issue.setSource("系统开奖");
             if (!terminal) issue.setError("");
             fillIssueSnapshot(issue, snapshot);
             issueMapper.updateById(issue);
         }
         if (!Objects.equals(oldStatus, nextStatus)) {
-            transition(userId, snapshot.period(), oldStatus, nextStatus, "盘口期号同步",
+            transition(userId, snapshot.period(), oldStatus, nextStatus, "系统期号同步",
                     "{\"marketStatus\":" + snapshot.marketStatus() + "}");
         }
         return "OPEN".equals(nextStatus) && !"OPEN".equals(oldStatus);
@@ -232,7 +291,7 @@ public class LotteryMarketSyncService {
             issue.setResult(decision.result());
             issue.setDrawConfirmations(decision.confirmations());
             issue.setDrawFirstSeenAt(decision.firstSeenAt());
-            issue.setSource("盘口");
+            issue.setSource("系统开奖");
             issue.setRawSnapshot(draw.raw());
             issue.setError(decision.error());
             issue.setOrderSequence(0);
@@ -244,7 +303,7 @@ public class LotteryMarketSyncService {
             issue.setResult(decision.result());
             issue.setDrawConfirmations(decision.confirmations());
             issue.setDrawFirstSeenAt(decision.firstSeenAt());
-            issue.setSource("盘口");
+            issue.setSource("系统开奖");
             issue.setRawSnapshot(draw.raw());
             issue.setError(decision.error());
             issue.setDrawTime(draw.drawTime());
@@ -308,23 +367,6 @@ public class LotteryMarketSyncService {
         });
     }
 
-    private void updateRoomState(Long userId, boolean open) {
-        SystemStateDO state = DataPermissionUtils.executeIgnore(() -> systemStateMapper.selectOne(
-                new LambdaQueryWrapper<SystemStateDO>().eq(SystemStateDO::getUserId, userId).last("LIMIT 1")));
-        if (state == null) {
-            state = new SystemStateDO();
-            state.setUserId(userId);
-            state.setOperatorUsername(String.valueOf(userId));
-            state.setExpireAt(LocalDateTime.of(2099, 12, 31, 23, 59, 59));
-            state.setOnline(0);
-            state.setRoomOpen(open);
-            systemStateMapper.insert(state);
-        } else if (!Objects.equals(state.getRoomOpen(), open)) {
-            state.setRoomOpen(open);
-            systemStateMapper.updateById(state);
-        }
-    }
-
     private IssueDO findIssue(Long userId, String period) {
         return DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, userId).eq(IssueDO::getPeriod, period).last("LIMIT 1")));
@@ -351,6 +393,11 @@ public class LotteryMarketSyncService {
                 && !trim(config.getMarketPasswordEncrypted()).isEmpty();
     }
 
+    private boolean isDrawSource(LotteryConfigDO config) {
+        return config != null && Objects.equals(config.getTenantId(), drawSourceTenantId)
+                && Objects.equals(config.getUserId(), drawSourceUserId);
+    }
+
     private void requireComplete(String url, String account, String password) {
         if (url.isEmpty() || account.isEmpty() || password.isEmpty()) {
             throw new IllegalStateException("请填写完整的盘口网址、账号和密码");
@@ -373,11 +420,11 @@ public class LotteryMarketSyncService {
 
     private String transitionSource(LotteryDrawVerificationService.Outcome outcome) {
         return switch (outcome) {
-            case ABNORMAL -> "盘口开奖异常";
-            case CANDIDATE -> "盘口开奖待确认";
-            case VERIFIED -> "盘口开奖确认";
-            case CONFLICT -> "盘口开奖冲突";
-            case UNCHANGED -> "盘口开奖同步";
+            case ABNORMAL -> "系统开奖异常";
+            case CANDIDATE -> "系统开奖待确认";
+            case VERIFIED -> "系统开奖确认";
+            case CONFLICT -> "系统开奖冲突";
+            case UNCHANGED -> "系统开奖同步";
         };
     }
 

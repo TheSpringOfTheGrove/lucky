@@ -156,7 +156,9 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `normal_rate` decimal(8,4) NOT NULL DEFAULT 0, `lhh_rate` decimal(8,4) NOT NULL DEFAULT 0,
   `tag` varchar(50) NOT NULL DEFAULT '普通', `external_nickname` varchar(100) NOT NULL DEFAULT '',
   `total_bet` decimal(18,2) NOT NULL DEFAULT 0, `profit_loss` decimal(18,2) NOT NULL DEFAULT 0,
-  `auto_proxy` bit(1) NOT NULL DEFAULT b'0', `eat_enabled` bit(1) NOT NULL DEFAULT b'0',
+  `member_type` varchar(20) NOT NULL DEFAULT 'REAL', `auto_proxy` bit(1) NOT NULL DEFAULT b'0',
+  `auto_bet_enabled` bit(1) NOT NULL DEFAULT b'0', `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 1000,
+  `eat_enabled` bit(1) NOT NULL DEFAULT b'0',
   `searchable` bit(1) NOT NULL DEFAULT b'1', `open_id` varchar(100) NULL, `fingerprint` varchar(200) NOT NULL DEFAULT '',
   `private_chat` bit(1) NOT NULL DEFAULT b'0', `web_only` bit(1) NOT NULL DEFAULT b'0',
   `blue_whale_password` varchar(200) NOT NULL DEFAULT '', `avatar` int NOT NULL DEFAULT 1,
@@ -171,7 +173,8 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
 CREATE TABLE IF NOT EXISTS `lucky5_amount_record` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
   `type` varchar(20) NOT NULL, `amount` decimal(18,2) NOT NULL, `status` varchar(20) NOT NULL,
-  `remark` varchar(500) NOT NULL DEFAULT '', `audited_at` datetime NULL, `audited_by` varchar(100) NULL,
+  `record_source` varchar(30) NOT NULL DEFAULT 'PLAYER', `remark` varchar(500) NOT NULL DEFAULT '',
+  `audited_at` datetime NULL, `audited_by` varchar(100) NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
@@ -201,6 +204,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
   `period` varchar(40) NOT NULL, `content` varchar(2000) NOT NULL, `amount` decimal(18,2) NOT NULL,
   `win` decimal(18,2) NOT NULL DEFAULT 0, `status` varchar(30) NOT NULL, `source` varchar(30) NOT NULL DEFAULT '网页群',
+  `order_type` varchar(30) NOT NULL DEFAULT 'PLAYER',
   `delivery_mode` varchar(30) NOT NULL DEFAULT 'LOCAL_ONLY', `market_status` varchar(30) NOT NULL DEFAULT 'NOT_REQUIRED',
   `market_order_id` varchar(100) NOT NULL DEFAULT '', `market_error` varchar(1000) NOT NULL DEFAULT '',
   `market_attempts` int NOT NULL DEFAULT 0, `period_sequence` int NOT NULL DEFAULT 0, `version` int NOT NULL DEFAULT 0,
@@ -317,7 +321,8 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `channel` varchar(50) NOT NULL,
   `member` varchar(100) NOT NULL DEFAULT '', `period` varchar(40) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
   `status` varchar(30) NOT NULL, `order_id` varchar(64) NULL, `external_id` varchar(100) NULL,
-  `error` varchar(1000) NOT NULL DEFAULT '', `command_type` varchar(50) NOT NULL DEFAULT '', `reply` varchar(2000) NOT NULL DEFAULT '',
+  `error` varchar(1000) NOT NULL DEFAULT '', `command_type` varchar(50) NOT NULL DEFAULT '',
+  `message_type` varchar(30) NOT NULL DEFAULT 'PLAYER', `reply` varchar(2000) NOT NULL DEFAULT '',
   `processed_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -345,6 +350,59 @@ CREATE TABLE IF NOT EXISTS `lucky5_chima_record` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_chima_member` (`tenant_id`,`user_id`,`member_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 吃码记录';
 
+CREATE TABLE IF NOT EXISTS `lucky5_auto_proxy_execution` (
+  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL,
+  `member_name` varchar(100) NOT NULL, `period` varchar(40) NOT NULL, `status` varchar(30) NOT NULL,
+  `preset_order_id` varchar(64) NULL, `content` varchar(2000) NOT NULL DEFAULT '',
+  `required_amount` decimal(18,2) NOT NULL DEFAULT 0, `top_up_amount` decimal(18,2) NOT NULL DEFAULT 0,
+  `order_id` varchar(64) NULL, `error` varchar(1000) NOT NULL DEFAULT '', `attempt_count` int NOT NULL DEFAULT 0,
+  `scheduled_at` datetime NOT NULL, `started_at` datetime NULL, `completed_at` datetime NULL, `version` int NOT NULL DEFAULT 0,
+  `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lucky5_auto_proxy_period` (`tenant_id`,`user_id`,`member_id`,`period`,`deleted`),
+  KEY `idx_lucky5_auto_proxy_due` (`status`,`scheduled_at`),
+  KEY `idx_lucky5_auto_proxy_owner` (`tenant_id`,`user_id`,`period`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 自动托执行任务';
+
+-- 自动托模型兼容已初始化数据库；所有语句均可安全重复执行。
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='member_type')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `member_type` varchar(20) NOT NULL DEFAULT ''REAL'' AFTER `profit_loss`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='auto_bet_enabled')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `auto_bet_enabled` bit(1) NOT NULL DEFAULT b''0'' AFTER `auto_proxy`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='auto_top_up_amount')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 1000 AFTER `auto_bet_enabled`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_order' AND column_name='order_type')=0,
+  'ALTER TABLE `lucky5_order` ADD COLUMN `order_type` varchar(30) NOT NULL DEFAULT ''PLAYER'' AFTER `source`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_amount_record' AND column_name='record_source')=0,
+  'ALTER TABLE `lucky5_amount_record` ADD COLUMN `record_source` varchar(30) NOT NULL DEFAULT ''PLAYER'' AFTER `status`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='message_type')=0,
+  'ALTER TABLE `lucky5_message` ADD COLUMN `message_type` varchar(30) NOT NULL DEFAULT ''PLAYER'' AFTER `command_type`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
+UPDATE `lucky5_member`
+SET `member_type`=IF(`auto_proxy`=b'1','BOT','REAL'), `auto_bet_enabled`=`auto_proxy`
+WHERE (`auto_proxy`=b'1' AND (`member_type`<>'BOT' OR `auto_bet_enabled`=b'0'))
+   OR (`auto_proxy`=b'0' AND `member_type` IS NULL);
+UPDATE `lucky5_order` o
+JOIN `lucky5_message` m ON m.`tenant_id`=o.`tenant_id` AND m.`user_id`=o.`user_id` AND m.`order_id`=o.`id`
+SET o.`order_type`='AUTO_PROXY'
+WHERE m.`external_id` LIKE 'auto-proxy:%';
+UPDATE `lucky5_message` SET `message_type`='AUTO_PROXY'
+WHERE `external_id` LIKE 'auto-proxy:%';
+
 -- 所有存量业务数据归超级管理员（默认 user_id=1）；新数据由 MyBatis 自动填充当前登录用户。
 -- 本段兼容已经初始化过的数据库，可重复执行。
 DELIMITER $$
@@ -360,7 +418,8 @@ BEGIN
       'lucky5_chima_config','lucky5_switch_setting','lucky5_integration','lucky5_odd',
       'lucky5_member','lucky5_amount_record','lucky5_balance_ledger','lucky5_order','lucky5_bet_item','lucky5_draw',
       'lucky5_issue','lucky5_issue_transition','lucky5_preset_order','lucky5_quick_command',
-      'lucky5_follow_order','lucky5_operation_log','lucky5_message','lucky5_rebate_record','lucky5_chima_record'
+      'lucky5_follow_order','lucky5_operation_log','lucky5_message','lucky5_rebate_record','lucky5_chima_record',
+      'lucky5_auto_proxy_execution'
     );
   DECLARE CONTINUE HANDLER FOR NOT FOUND SET finished=1;
 

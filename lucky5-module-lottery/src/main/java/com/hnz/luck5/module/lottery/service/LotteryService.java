@@ -3,6 +3,8 @@ package com.hnz.luck5.module.lottery.service;
 import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
 import com.hnz.luck5.module.lottery.controller.app.vo.LotteryRoomReqVO;
 
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 
 public interface LotteryService {
@@ -35,6 +37,10 @@ public interface LotteryService {
 
     String createAmountRequest(String id, LotteryReqVO.Transfer reqVO);
 
+    List<Map<String, Object>> getAmountRecords();
+
+    List<Map<String, Object>> getOrders();
+
     Map<String, Object> getMemberDetails(String id);
 
     Map<String, String> getMemberLinks(String id, String origin);
@@ -64,6 +70,10 @@ public interface LotteryService {
     Map<String, Object> placeBet(LotteryReqVO.PlaceBet reqVO);
 
     Map<String, Object> placeAutoBet(Long userId, LotteryReqVO.PlaceBet reqVO, String actor);
+
+    Map<String, Object> prepareAutoProxyBet(Long userId, String memberId, String content);
+
+    Map<String, Object> autoTopUpProxy(Long userId, String memberId, String period, BigDecimal amount);
 
     Map<String, Object> cancelOrder(String id);
 
@@ -101,7 +111,7 @@ public interface LotteryService {
 
     Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO);
 
-    Map<String, Object> previewRoomBet(LotteryRoomReqVO.Bet reqVO);
+    Map<String, Object> previewRoomBet(LotteryRoomReqVO.PreviewBet reqVO);
 
     Map<String, Object> processRoomMessage(LotteryRoomReqVO.Message reqVO);
 

@@ -26,7 +26,10 @@ public class MemberDO extends LotteryUserBaseDO {
     private String externalNickname;
     private BigDecimal totalBet;
     private BigDecimal profitLoss;
+    private String memberType;
     private Boolean autoProxy;
+    private Boolean autoBetEnabled;
+    private BigDecimal autoTopUpAmount;
     private Boolean eatEnabled;
     private Boolean searchable;
     private String openId;

@@ -24,6 +24,7 @@ public class OrderDO extends LotteryUserBaseDO {
     private BigDecimal win;
     private String status;
     private String source;
+    private String orderType;
     private String deliveryMode;
     private String marketStatus;
     private String marketOrderId;

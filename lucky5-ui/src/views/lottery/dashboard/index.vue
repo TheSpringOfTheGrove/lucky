@@ -14,7 +14,7 @@ const router = useRouter()
         <button
           type="button"
           class="dashboard-info-card dashboard-info-card--interactive"
-          @click="router.push('/member')"
+          @click="router.push('/lucky5/members')"
         >
           <span class="dashboard-info-card__icon dashboard-info-card__icon--teal">
             <span class="dashboard-users-icon">
@@ -29,7 +29,11 @@ const router = useRouter()
           </span>
         </button>
 
-        <article class="dashboard-info-card">
+        <button
+          type="button"
+          class="dashboard-info-card dashboard-info-card--interactive"
+          @click="router.push('/lucky5/members')"
+        >
           <span class="dashboard-info-card__icon dashboard-info-card__icon--olive">
             <span class="dashboard-users-icon">
               <Icon icon="ep:user" :size="23" />
@@ -41,12 +45,12 @@ const router = useRouter()
             <span class="dashboard-info-card__label">在线会员总数</span>
             <strong class="dashboard-info-card__value">{{ store.stats.onlineMembers }}</strong>
           </span>
-        </article>
+        </button>
 
         <button
           type="button"
           class="dashboard-info-card dashboard-info-card--interactive"
-          @click="router.push('/amount-record')"
+          @click="router.push('/lucky5/amount-records')"
         >
           <span class="dashboard-info-card__icon dashboard-info-card__icon--orange">
             <Icon icon="ep:credit-card" :size="42" />
@@ -314,4 +318,3 @@ const router = useRouter()
   }
 }
 </style>
-

@@ -45,8 +45,7 @@ const submit = async () => {
   const saved = await store.saveFakeOrder({
     id: form.id,
     member: '-',
-    content: form.content,
-    enabled: true
+    content: form.content
   })
   if (saved) visible.value = false
 }
@@ -175,5 +174,4 @@ const submit = async () => {
   margin-top: 16px;
 }
 </style>
-
 

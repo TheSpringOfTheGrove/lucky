@@ -22,12 +22,15 @@ public class LotteryRebateCalculator {
     public RebateResult calculate(MemberDO member, List<OrderDO> orders,
                                   Map<String, List<BetItemDO>> itemsByOrder,
                                   List<RebateRecordDO> rebateRecords, boolean separateDragonRebate) {
+        if ("BOT".equalsIgnoreCase(member.getMemberType()) || Boolean.TRUE.equals(member.getAutoProxy())) {
+            return new RebateResult(ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO);
+        }
         BigDecimal normalBet = ZERO;
         BigDecimal dragonBet = ZERO;
         LocalDateTime clearedAt = member.getFlowClearedAt();
         for (OrderDO order : orders) {
             if (!member.getId().equals(order.getMemberId()) || !Set.of("已中奖", "未中奖").contains(order.getStatus())
-                    || beforeClear(order.getCreateTime(), clearedAt)) {
+                    || "AUTO_PROXY".equals(order.getOrderType()) || beforeClear(order.getCreateTime(), clearedAt)) {
                 continue;
             }
             for (BetItemDO item : itemsByOrder.getOrDefault(order.getId(), List.of())) {

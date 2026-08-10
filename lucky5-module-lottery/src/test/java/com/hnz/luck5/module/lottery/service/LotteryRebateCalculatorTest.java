@@ -68,6 +68,22 @@ class LotteryRebateCalculatorTest {
         assertThat(result.totalAmount()).isEqualByComparingTo("0.30");
     }
 
+    @Test
+    void automaticBotNeverParticipatesInRebate() {
+        MemberDO member = member(null);
+        member.setMemberType("BOT");
+        member.setAutoProxy(true);
+        OrderDO order = order("O-1", LocalDateTime.now());
+        order.setOrderType("AUTO_PROXY");
+
+        LotteryRebateCalculator.RebateResult result = calculator.calculate(member, List.of(order),
+                Map.of("O-1", List.of(item("普通", "100"))), List.of(), true);
+
+        assertThat(result.totalAmount()).isZero();
+        assertThat(result.normalBet()).isZero();
+        assertThat(result.dragonBet()).isZero();
+    }
+
     private MemberDO member(LocalDateTime clearedAt) {
         MemberDO member = new MemberDO();
         member.setId("M-1");

@@ -36,6 +36,18 @@ class LotteryChimaCalculatorTest {
         });
     }
 
+    @Test
+    void automaticBotOrdersNeverParticipateInChima() {
+        LocalDateTime now = LocalDateTime.now();
+        MemberDO bot = member("BOT-1", true, null);
+        bot.setMemberType("BOT");
+        bot.setAutoProxy(true);
+        OrderDO botOrder = order("BOT-1", "100", "20", "20260809003", now, "已中奖");
+        botOrder.setOrderType("AUTO_PROXY");
+
+        assertThat(calculator.calculate(List.of(botOrder), List.of(bot), null)).isEmpty();
+    }
+
     private MemberDO member(String id, boolean eatEnabled, LocalDateTime flowClearedAt) {
         MemberDO member = new MemberDO();
         member.setId(id);

@@ -90,7 +90,7 @@ const submit = async () => {
         <el-form-item label="会员">
           <el-select v-model="form.memberId" filterable placeholder="选择会员">
             <el-option
-              v-for="member in store.members"
+              v-for="member in store.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)"
               :key="member.id"
               :label="`${member.name}（余分 ${member.balance}）`"
               :value="member.id"
@@ -132,5 +132,4 @@ const submit = async () => {
   font-size: 12px;
 }
 </style>
-
 

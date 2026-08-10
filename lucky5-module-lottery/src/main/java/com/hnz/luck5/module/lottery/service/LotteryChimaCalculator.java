@@ -21,12 +21,14 @@ public class LotteryChimaCalculator {
 
     public List<PeriodChima> calculate(List<OrderDO> orders, List<MemberDO> members, LocalDateTime chimaClearedAt) {
         Set<String> eatMembers = members.stream().filter(item -> Boolean.TRUE.equals(item.getEatEnabled()))
+                .filter(item -> !"BOT".equalsIgnoreCase(item.getMemberType()) && !Boolean.TRUE.equals(item.getAutoProxy()))
                 .map(MemberDO::getId).collect(Collectors.toSet());
         Map<String, LocalDateTime> memberClearedAt = new HashMap<>();
         members.forEach(member -> memberClearedAt.put(member.getId(), member.getFlowClearedAt()));
         Map<String, BigDecimal[]> values = new HashMap<>();
         for (OrderDO order : orders) {
             if (!eatMembers.contains(order.getMemberId()) || "已退码".equals(order.getStatus())
+                    || "AUTO_PROXY".equals(order.getOrderType())
                     || before(order.getCreateTime(), chimaClearedAt)
                     || before(order.getCreateTime(), memberClearedAt.get(order.getMemberId()))) {
                 continue;

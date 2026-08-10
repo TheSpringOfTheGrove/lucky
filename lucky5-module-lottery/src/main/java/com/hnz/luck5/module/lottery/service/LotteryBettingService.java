@@ -119,10 +119,12 @@ public class LotteryBettingService {
         String digits = draw.digits().stream().map(String::valueOf).reduce("", String::concat);
         if (bet.play().endsWith("定位") || "五位二定".equals(bet.play())) {
             if (bet.selection().contains("X")) {
-                if (digits.length() != bet.selection().length()) return false;
-                for (int i = 0; i < digits.length(); i++) {
+                String positionedDigits = digits.length() == 5 && bet.selection().length() == 4
+                        ? digits.substring(0, 4) : digits;
+                if (positionedDigits.length() != bet.selection().length()) return false;
+                for (int i = 0; i < positionedDigits.length(); i++) {
                     char expected = bet.selection().charAt(i);
-                    if (expected != 'X' && expected != digits.charAt(i)) return false;
+                    if (expected != 'X' && expected != positionedDigits.charAt(i)) return false;
                 }
                 return true;
             }

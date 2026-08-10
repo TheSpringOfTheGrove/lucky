@@ -11,6 +11,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 import static com.hnz.luck5.framework.common.pojo.CommonResult.success;
@@ -209,6 +210,18 @@ public class LotteryController {
     public CommonResult<Boolean> auditAmount(@PathVariable String id, @Valid @RequestBody LotteryReqVO.Audit reqVO) {
         lotteryService.auditAmount(id, reqVO);
         return success(true);
+    }
+
+    @GetMapping("/amount-records")
+    @PreAuthorize("@ss.hasPermission('lottery:amount:manage')")
+    public CommonResult<List<Map<String, Object>>> getAmountRecords() {
+        return success(lotteryService.getAmountRecords());
+    }
+
+    @GetMapping("/orders")
+    @PreAuthorize("@ss.hasAnyPermissions('lottery:order:manage', 'lottery:history:query')")
+    public CommonResult<List<Map<String, Object>>> getOrders() {
+        return success(lotteryService.getOrders());
     }
 
     @PostMapping("/bets")

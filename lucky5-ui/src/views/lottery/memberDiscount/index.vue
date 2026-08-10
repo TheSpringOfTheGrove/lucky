@@ -5,11 +5,16 @@ import { useLucky5Store } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
 const puller = ref('')
+const realMembers = computed(() =>
+  store.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)
+)
 const rows = computed(() =>
-  puller.value ? store.members.filter((item) => item.partner === puller.value) : store.members
+  puller.value
+    ? realMembers.value.filter((item) => item.partner === puller.value)
+    : realMembers.value
 )
 const pullers = computed(() => [
-  ...new Set(store.members.map((item) => item.partner).filter((item) => item && item !== '无'))
+  ...new Set(realMembers.value.map((item) => item.partner).filter((item) => item && item !== '无'))
 ])
 const totalRebate = computed(() =>
   rows.value.reduce(
@@ -98,5 +103,4 @@ const apply = async () => {
     </el-card>
   </div>
 </template>
-
 

@@ -47,14 +47,38 @@ const linkEntries = computed(() => {
   ]
   return entries.filter((item) => item.url)
 })
+const realMembers = computed(() =>
+  store.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)
+)
+const proxyMembers = computed(() =>
+  store.members.filter((item) => item.memberType === 'BOT' || item.autoProxy)
+)
 const totalBalance = computed(() =>
   store.members.reduce((sum, item) => sum + Number(item.balance || 0), 0)
+)
+const proxyBalance = computed(() =>
+  proxyMembers.value.reduce((sum, item) => sum + Number(item.balance || 0), 0)
+)
+const realBalance = computed(() =>
+  realMembers.value.reduce((sum, item) => sum + Number(item.balance || 0), 0)
 )
 const totalBet = computed(() =>
   store.members.reduce((sum, item) => sum + Number(item.totalBet || 0), 0)
 )
+const proxyBet = computed(() =>
+  proxyMembers.value.reduce((sum, item) => sum + Number(item.totalBet || 0), 0)
+)
+const realBet = computed(() =>
+  realMembers.value.reduce((sum, item) => sum + Number(item.totalBet || 0), 0)
+)
 const totalProfit = computed(() =>
   store.members.reduce((sum, item) => sum + Number(item.profitLoss || 0), 0)
+)
+const proxyProfit = computed(() =>
+  proxyMembers.value.reduce((sum, item) => sum + Number(item.profitLoss || 0), 0)
+)
+const realProfit = computed(() =>
+  realMembers.value.reduce((sum, item) => sum + Number(item.profitLoss || 0), 0)
 )
 
 const openMember = (row?: any) => {
@@ -81,7 +105,12 @@ const openTransfer = (row: any, type: '上分' | '下分') => {
   transferVisible.value = true
 }
 
-const toggleEat = (row: any) => store.saveMember({ ...row, eatEnabled: !row.eatEnabled })
+const toggleEat = (row: any) =>
+  store.saveMember({
+    ...row,
+    eatEnabled: !row.eatEnabled,
+    autoBetEnabled: Boolean(row.autoProxy)
+  })
 
 const submitMember = async () => {
   const saved = await store.saveMember(memberForm)
@@ -211,14 +240,20 @@ const avatarColor = (avatar: number) =>
           <el-button type="danger" @click="clearAllFingerprints">抹除标识</el-button>
         </div>
         <div>
-          <span class="lucky-member-total">总余分：{{ totalBalance }}，托总余分：0，</span>
-          <span class="lucky-danger">真实会员总余分：{{ totalBalance }}</span>
+          <span class="lucky-member-total"
+            >总余分：{{ totalBalance }}，托总余分：{{ proxyBalance }}，</span
+          >
+          <span class="lucky-danger">真实会员总余分：{{ realBalance }}</span>
           <span> || </span>
-          <span class="lucky-member-total">总投额：{{ totalBet }}，托总投额：0，</span>
-          <span class="lucky-danger">真实会员总投额：{{ totalBet }}</span>
+          <span class="lucky-member-total"
+            >总投额：{{ totalBet }}，托总投额：{{ proxyBet }}，</span
+          >
+          <span class="lucky-danger">真实会员总投额：{{ realBet }}</span>
           <span> || </span>
           <span class="lucky-member-total">总盈亏：{{ totalProfit }}，</span>
-          <span class="lucky-danger">真实会员盈亏：{{ totalProfit }}，托盈亏：0</span>
+          <span class="lucky-danger"
+            >真实会员盈亏：{{ realProfit }}，托盈亏：{{ proxyProfit }}</span
+          >
         </div>
       </div>
 
@@ -408,27 +443,6 @@ const avatarColor = (avatar: number) =>
         <el-table-column prop="status" label="状态" />
         <el-table-column prop="createdAt" label="时间" min-width="180" />
       </PaginatedTable>
-      <h3 class="member-detail-title">资金流水</h3>
-      <PaginatedTable
-        :data="details?.balanceLedgers || []"
-        :default-page-size="10"
-        border
-        max-height="260"
-      >
-        <el-table-column prop="type" label="类型" min-width="100" />
-        <el-table-column label="变动" min-width="90">
-          <template #default="{ row }">
-            <span :class="row.direction === 'CREDIT' ? 'ledger-credit' : 'ledger-debit'">
-              {{ row.direction === 'CREDIT' ? '+' : '-' }}{{ row.amount }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="balanceBefore" label="变动前" min-width="90" />
-        <el-table-column prop="balanceAfter" label="变动后" min-width="90" />
-        <el-table-column prop="remark" label="说明" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="actor" label="操作人" min-width="100" />
-        <el-table-column prop="createdAt" label="时间" min-width="180" />
-      </PaginatedTable>
       <h3 class="member-detail-title">订单记录</h3>
       <PaginatedTable :data="details?.orders || []" :default-page-size="10" border max-height="260">
         <el-table-column prop="period" label="期号" min-width="140" />
@@ -444,14 +458,6 @@ const avatarColor = (avatar: number) =>
 <style scoped>
 .lucky-member-total {
   color: #0000ff;
-}
-
-.ledger-credit {
-  color: #16803b;
-}
-
-.ledger-debit {
-  color: #d03050;
 }
 
 .member-identity,

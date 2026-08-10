@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  reactive,
+  ref
+} from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -7,7 +15,37 @@ const store = useLucky5Store()
 const nickname = ref('')
 const timeType = ref(1)
 const visible = ref(false)
+const refreshing = ref(false)
 const form = reactive({ memberId: '', type: '上分' as '上分' | '下分', amount: 0, remark: '' })
+let refreshTimer: number | undefined
+
+const refreshAmountRecords = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await store.refreshAmountRecords()
+  } finally {
+    refreshing.value = false
+  }
+}
+
+const startAutoRefresh = () => {
+  if (refreshTimer) return
+  void refreshAmountRecords()
+  refreshTimer = window.setInterval(() => void refreshAmountRecords(), 5000)
+}
+
+const stopAutoRefresh = () => {
+  if (!refreshTimer) return
+  window.clearInterval(refreshTimer)
+  refreshTimer = undefined
+}
+
+onMounted(startAutoRefresh)
+onActivated(startAutoRefresh)
+onDeactivated(stopAutoRefresh)
+onBeforeUnmount(stopAutoRefresh)
+
 const rows = computed(() => {
   const keyword = nickname.value.trim()
   if (!keyword) return store.amountRecords
@@ -76,7 +114,7 @@ const submit = async () => {
           <el-option label="昨天" :value="2" />
           <el-option label="本周" :value="3" />
         </el-select>
-        <el-button type="primary">搜索</el-button>
+        <el-button type="primary" :loading="refreshing" @click="refreshAmountRecords">搜索</el-button>
       </div>
     </div>
     <el-card shadow="never">
@@ -104,7 +142,7 @@ const submit = async () => {
         <el-form-item label="会员">
           <el-select v-model="form.memberId" filterable>
             <el-option
-              v-for="member in store.members"
+              v-for="member in store.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)"
               :key="member.id"
               :label="`${member.name}（余分 ${member.balance}）`"
               :value="member.id"
@@ -139,5 +177,3 @@ const submit = async () => {
   font-size: 14px;
 }
 </style>
-
-

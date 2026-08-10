@@ -81,6 +81,19 @@ class LotteryBettingServiceTest {
                 "三字现", "139", BigDecimal.ONE, BigDecimal.ONE), draw)).isTrue();
     }
 
+    @Test
+    void matchesFourPositionBetsAgainstFirstFourDigitsOfLucky5Draw() {
+        LotteryBettingService.ParsedBet regular = service.parse("千1各1", odds).get(0);
+        assertThat(regular.selection()).isEqualTo("1XXX");
+        assertThat(service.isWinning(regular, service.deriveDraw("10000"))).isTrue();
+        assertThat(service.isWinning(regular, service.deriveDraw("01000"))).isFalse();
+
+        LotteryBettingService.ParsedBet fifth = service.parse("五位二定千1五2各1", odds).get(0);
+        assertThat(fifth.selection()).isEqualTo("1XXX2");
+        assertThat(service.isWinning(fifth, service.deriveDraw("10002"))).isTrue();
+        assertThat(service.isWinning(fifth, service.deriveDraw("10003"))).isFalse();
+    }
+
     private OddDO odd(String code, String play, String rate) {
         OddDO odd = new OddDO();
         odd.setCode(code);

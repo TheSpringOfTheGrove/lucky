@@ -1,13 +1,51 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  ref
+} from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
 const period = ref('')
 const timeType = ref(1)
+const refreshing = ref(false)
+let refreshTimer: number | undefined
+
+const refreshOrders = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await store.refreshOrders()
+  } finally {
+    refreshing.value = false
+  }
+}
+
+const startAutoRefresh = () => {
+  if (refreshTimer) return
+  void refreshOrders()
+  refreshTimer = window.setInterval(() => void refreshOrders(), 5000)
+}
+
+const stopAutoRefresh = () => {
+  if (!refreshTimer) return
+  window.clearInterval(refreshTimer)
+  refreshTimer = undefined
+}
+
+onMounted(startAutoRefresh)
+onActivated(startAutoRefresh)
+onDeactivated(stopAutoRefresh)
+onBeforeUnmount(stopAutoRefresh)
+
 const rows = computed(() => {
   const groups = new Map<string, any>()
   store.orders.forEach((item) => {
+    if (item.orderType === 'AUTO_PROXY' || item.autoProxy) return
     if (!['已中奖', '未中奖'].includes(item.status)) return
     if (period.value && !item.period.includes(period.value.trim())) return
     const current = groups.get(item.period) || {
@@ -61,7 +99,7 @@ const totals = computed(() =>
             <el-option label="昨天" :value="2" />
             <el-option label="本周" :value="3" />
           </el-select>
-          <el-button type="primary">搜索</el-button>
+          <el-button type="primary" :loading="refreshing" @click="refreshOrders">搜索</el-button>
         </div>
       </div>
       <PaginatedTable :data="rows" border>
@@ -75,5 +113,3 @@ const totals = computed(() =>
     </el-card>
   </div>
 </template>
-
-
