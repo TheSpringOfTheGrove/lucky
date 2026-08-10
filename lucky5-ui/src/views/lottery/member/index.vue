@@ -298,7 +298,7 @@ const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
               class="member-boolean"
               :class="isAutoProxy(row) ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="isAutoProxy(row) ? '已开启自动托' : '未开启自动托'"
-            >{{ isAutoProxy(row) ? '√' : '×' }}</span>
+            >{{ isAutoProxy(row) ? '✓' : '×' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="吃" width="60" align="center">
@@ -307,7 +307,7 @@ const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
               class="member-boolean"
               :class="row.eatEnabled ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="row.eatEnabled ? '已开启吃码' : '未开启吃码'"
-            >{{ row.eatEnabled ? '√' : '×' }}</span>
+            >{{ row.eatEnabled ? '✓' : '×' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="查" width="60" align="center">
@@ -316,7 +316,7 @@ const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
               class="member-boolean"
               :class="isSearchable(row) ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="isSearchable(row) ? '允许查询流水' : '禁止查询流水'"
-            >{{ isSearchable(row) ? '√' : '×' }}</span>
+            >{{ isSearchable(row) ? '✓' : '×' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="绑定" width="70" align="center">
@@ -325,7 +325,7 @@ const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
               class="member-boolean"
               :class="isBound(row) ? 'member-boolean--yes' : 'member-boolean--no'"
               :title="isBound(row) ? '已绑定设备标识' : '未绑定设备标识'"
-            >{{ isBound(row) ? '√' : '×' }}</span>
+            >{{ isBound(row) ? '✓' : '×' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" min-width="420" fixed="right">
