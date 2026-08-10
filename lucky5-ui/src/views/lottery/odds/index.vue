@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 
 type OddsRow = {
@@ -12,6 +12,7 @@ type OddsRow = {
 }
 
 const store = useLucky5Store()
+const dragonTigerOddsIds = new Set(['regexlh', 'regexh'])
 const rows = reactive<OddsRow[]>([
   { id: 'regex4x', label: '四字现', rate: 360, minLimit: 1, maxLimit: 100 },
   { id: 'regex3x', label: '三字现', rate: 45, minLimit: 1, maxLimit: 100 },
@@ -24,6 +25,22 @@ const rows = reactive<OddsRow[]>([
   { id: 'regexlh', label: '龙虎', rate: 0, minLimit: 0, maxLimit: 0 },
   { id: 'regexh', label: '和', rate: 0, minLimit: 0, maxLimit: 0 }
 ])
+
+const playType = computed(() => Number(store.config.playType ?? 2))
+const playTypeLabel = computed(() => {
+  if (playType.value === 0) return '普通'
+  if (playType.value === 1) return '龙虎和'
+  return '普通+龙虎和'
+})
+const visibleRows = computed(() => {
+  if (playType.value === 0) {
+    return rows.filter((row) => !dragonTigerOddsIds.has(row.id))
+  }
+  if (playType.value === 1) {
+    return rows.filter((row) => dragonTigerOddsIds.has(row.id))
+  }
+  return rows
+})
 
 watch(
   () => store.odds,
@@ -59,7 +76,10 @@ const save = () => {
   <div class="lucky-page">
     <el-card class="lucky-card" shadow="never">
       <template #header>
-        <strong>配置信息</strong>
+        <div class="lucky-odds-header">
+          <strong>配置信息</strong>
+          <el-tag type="info">当前玩法：{{ playTypeLabel }}</el-tag>
+        </div>
       </template>
       <el-form class="lucky-original-form lucky-odds-form" label-width="150px">
         <el-form-item class="lucky-odds-form__header">
@@ -69,7 +89,7 @@ const save = () => {
             <el-col :span="8">最大限额</el-col>
           </el-row>
         </el-form-item>
-        <el-form-item v-for="row in rows" :key="row.id" :label="row.label">
+        <el-form-item v-for="row in visibleRows" :key="row.id" :label="row.label">
           <el-row :gutter="10" class="w-100%">
             <el-col :span="8">
               <div class="lucky-odds-form__rates">
@@ -112,6 +132,12 @@ const save = () => {
 </template>
 
 <style scoped lang="less">
+.lucky-odds-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .lucky-odds-form__header {
   font-weight: 600;
   text-align: center;
@@ -122,5 +148,4 @@ const save = () => {
   gap: 8px;
 }
 </style>
-
 
