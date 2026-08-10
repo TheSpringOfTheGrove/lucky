@@ -1,5 +1,6 @@
 package com.hnz.luck5.module.lottery.controller.admin.vo;
 
+import com.hnz.luck5.framework.common.pojo.PageParam;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -29,6 +30,16 @@ public final class LotteryReqVO {
     public static class Room {
         @NotNull
         private Boolean open;
+    }
+
+    @Data
+    public static class MessagePage extends PageParam {
+        @Size(max = 100)
+        private String period;
+        @Size(max = 500)
+        private String content;
+        @Size(max = 100)
+        private String nickname;
     }
 
     @Data

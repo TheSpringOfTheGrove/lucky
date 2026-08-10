@@ -1,6 +1,7 @@
 package com.hnz.luck5.module.lottery.controller.admin;
 
 import com.hnz.luck5.framework.common.pojo.CommonResult;
+import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
 import com.hnz.luck5.module.lottery.service.LotteryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -260,6 +261,12 @@ public class LotteryController {
     @PreAuthorize("@ss.hasPermission('lottery:draw:manage')")
     public CommonResult<Integer> settlePendingIssues() {
         return success(lotteryService.settlePendingIssues());
+    }
+
+    @GetMapping("/messages")
+    @PreAuthorize("@ss.hasPermission('lottery:message:manage')")
+    public CommonResult<PageResult<Map<String, Object>>> getMessages(@Valid LotteryReqVO.MessagePage reqVO) {
+        return success(lotteryService.getMessages(reqVO));
     }
 
     @PostMapping("/messages/incoming")

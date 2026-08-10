@@ -6,6 +6,7 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
+import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.framework.security.core.service.SecurityFrameworkService;
 import com.hnz.luck5.framework.security.core.util.SecurityFrameworkUtils;
 import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
@@ -163,9 +164,6 @@ public class LotteryServiceImpl implements LotteryService {
                 .orderByDesc(FollowOrderDO::getCreateTime));
         List<OperationLogDO> operators = operationLogMapper.selectList(new LambdaQueryWrapper<OperationLogDO>()
                 .orderByDesc(OperationLogDO::getCreateTime).last("LIMIT 1000"));
-        List<MessageDO> messages = messageMapper.selectList(new LambdaQueryWrapper<MessageDO>()
-                .ne(MessageDO::getMessageType, TYPE_AUTO_PROXY)
-                .orderByDesc(MessageDO::getCreateTime).last("LIMIT 1000"));
         List<RebateRecordDO> rebates = rebateRecordMapper.selectList(null);
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -215,7 +213,7 @@ public class LotteryServiceImpl implements LotteryService {
         result.put("quickCommands", has("lottery:quick-command:manage") ? commands.stream().map(this::quickCommandMap).toList() : List.of());
         result.put("followOrders", has("lottery:follow:manage") ? follows.stream().map(this::followMap).toList() : List.of());
         result.put("operators", has("lottery:operator:query") ? operators.stream().map(this::operationMap).toList() : List.of());
-        result.put("messages", has("lottery:message:manage") ? messages.stream().map(this::messageMap).toList() : List.of());
+        result.put("messages", List.of());
         result.put("chimaConfig", has("lottery:chima-config:manage") ? chimaConfigMap(chimaConfig) : Map.of());
         result.put("chimaRecords", has("lottery:chima-record:manage")
                 ? calculatePeriodChima(orders, members, state) : List.of());
@@ -368,6 +366,22 @@ public class LotteryServiceImpl implements LotteryService {
                 "commandType", item.getCommandType(), "messageType", value(item.getMessageType(), TYPE_PLAYER),
                 "reply", item.getReply(), "processedAt", date(item.getProcessedAt()),
                 "createdAt", date(item.getCreateTime()), "time", date(item.getCreateTime()));
+    }
+
+    private List<Map<String, Object>> messageDisplayRows(MessageDO item) {
+        String sourceMember = StrUtil.blankToDefault(item.getMember(), "未知会员");
+        List<Map<String, Object>> rows = new ArrayList<>(2);
+        if (StrUtil.isNotBlank(item.getReply())) {
+            rows.add(map("id", "robot-" + item.getId(), "sender", "机器人", "sourceMember", sourceMember,
+                    "period", value(item.getPeriod(), ""), "content", item.getReply(), "kind", "robot",
+                    "time", date(value(item.getProcessedAt(), item.getCreateTime()))));
+        }
+        if (StrUtil.isNotBlank(item.getContent())) {
+            rows.add(map("id", "member-" + item.getId(), "sender", sourceMember, "sourceMember", sourceMember,
+                    "period", value(item.getPeriod(), ""), "content", item.getContent(), "kind", "member",
+                    "time", date(item.getCreateTime())));
+        }
+        return rows;
     }
 
     private Map<String, Object> chimaConfigMap(ChimaConfigDO item) {
@@ -1558,6 +1572,44 @@ public class LotteryServiceImpl implements LotteryService {
     @Transactional(rollbackFor = Exception.class)
     public void handleMarketIssueOpened(Long userId, String period) {
         publishIssueOpened(userId, period);
+    }
+
+    @Override
+    public PageResult<Map<String, Object>> getMessages(LotteryReqVO.MessagePage reqVO) {
+        String period = StrUtil.trim(reqVO.getPeriod());
+        String content = StrUtil.trim(reqVO.getContent());
+        String nickname = StrUtil.trim(reqVO.getNickname());
+        boolean nicknameCanMatchRobot = StrUtil.isNotBlank(nickname)
+                && StrUtil.containsIgnoreCase("机器人", nickname);
+        LambdaQueryWrapper<MessageDO> query = new LambdaQueryWrapper<MessageDO>()
+                .and(wrapper -> wrapper.isNull(MessageDO::getMessageType)
+                        .or().ne(MessageDO::getMessageType, TYPE_AUTO_PROXY))
+                .like(StrUtil.isNotBlank(period), MessageDO::getPeriod, period)
+                .and(StrUtil.isNotBlank(content), wrapper -> wrapper.like(MessageDO::getContent, content)
+                        .or().like(MessageDO::getReply, content))
+                .like(StrUtil.isNotBlank(nickname) && !nicknameCanMatchRobot, MessageDO::getMember, nickname)
+                .orderByDesc(MessageDO::getCreateTime)
+                .orderByDesc(MessageDO::getId);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (MessageDO message : messageMapper.selectList(query)) {
+            for (Map<String, Object> row : messageDisplayRows(message)) {
+                if (StrUtil.isNotBlank(content)
+                        && !StrUtil.containsIgnoreCase(String.valueOf(row.get("content")), content)) {
+                    continue;
+                }
+                if (StrUtil.isNotBlank(nickname)
+                        && !StrUtil.containsIgnoreCase(String.valueOf(row.get("sender")), nickname)
+                        && !StrUtil.containsIgnoreCase(String.valueOf(row.get("sourceMember")), nickname)) {
+                    continue;
+                }
+                rows.add(row);
+            }
+        }
+        int pageSize = reqVO.getPageSize();
+        long requestedStart = (long) (reqVO.getPageNo() - 1) * pageSize;
+        int fromIndex = (int) Math.min(requestedStart, rows.size());
+        int toIndex = Math.min(fromIndex + pageSize, rows.size());
+        return new PageResult<>(new ArrayList<>(rows.subList(fromIndex, toIndex)), (long) rows.size());
     }
 
     @Override

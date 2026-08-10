@@ -4,6 +4,24 @@ const base = '/lottery'
 
 export type IntegrationKey = 'blueWhale' | 'fish' | 'wechat'
 
+export interface LotteryMessageRow {
+  id: string
+  sender: string
+  sourceMember: string
+  period: string
+  content: string
+  time: string
+  kind: 'member' | 'robot'
+}
+
+export interface LotteryMessagePageParams {
+  pageNo: number
+  pageSize: number
+  period?: string
+  content?: string
+  nickname?: string
+}
+
 export const getLucky5Bootstrap = () =>
   request.get<Record<string, any>>({ url: `${base}/bootstrap` })
 
@@ -53,6 +71,9 @@ export const getAmountRecordsApi = () =>
 
 export const getOrdersApi = () =>
   request.get<Record<string, any>[]>({ url: `${base}/orders` })
+
+export const getMessagesApi = (params: LotteryMessagePageParams) =>
+  request.get<PageResult<LotteryMessageRow[]>>({ url: `${base}/messages`, params })
 
 export const getMemberDetailsApi = (id: string) =>
   request.get<Record<string, any>>({ url: `${base}/members/${id}/details` })

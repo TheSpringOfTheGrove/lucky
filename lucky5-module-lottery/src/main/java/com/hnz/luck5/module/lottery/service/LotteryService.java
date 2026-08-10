@@ -1,5 +1,6 @@
 package com.hnz.luck5.module.lottery.service;
 
+import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
 import com.hnz.luck5.module.lottery.controller.app.vo.LotteryRoomReqVO;
 
@@ -88,6 +89,8 @@ public interface LotteryService {
     void setIssueStatus(String period, String status);
 
     int settlePendingIssues();
+
+    PageResult<Map<String, Object>> getMessages(LotteryReqVO.MessagePage reqVO);
 
     Map<String, Object> processIncomingMessage(LotteryReqVO.IncomingMessage reqVO);
 

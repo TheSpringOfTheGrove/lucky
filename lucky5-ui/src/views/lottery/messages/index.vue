@@ -1,159 +1,187 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { useLucky5Store } from '@/store/modules/lottery'
+import { useMediaQuery } from '@vueuse/core'
+import { computed, onMounted, ref } from 'vue'
+import {
+  getMessagesApi,
+  type LotteryMessagePageParams,
+  type LotteryMessageRow
+} from '@/api/lottery'
 
-const store = useLucky5Store()
 const period = ref('')
 const content = ref('')
 const nickname = ref('')
-const visible = ref(false)
-const form = reactive({ memberId: '', period: '', content: '', channel: '网页群' })
-const rows = computed(() =>
-  store.messages.filter(
-    (item) =>
-      (!period.value || String(item.period || '').includes(period.value.trim())) &&
-      (!content.value || item.content.includes(content.value.trim())) &&
-      (!nickname.value || item.member.includes(nickname.value.trim()))
-  )
-)
+const rows = ref<LotteryMessageRow[]>([])
+const loading = ref(false)
+const pageNo = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const isMobile = useMediaQuery('(max-width: 768px)')
 
-const open = () => {
-  Object.assign(form, { memberId: '', period: '', content: '', channel: '网页群' })
-  visible.value = true
-}
+const startRow = computed(() => (total.value ? (pageNo.value - 1) * pageSize.value + 1 : 0))
+const endRow = computed(() => Math.min(pageNo.value * pageSize.value, total.value))
 
-const submit = async () => {
-  if (!form.memberId || !form.content.trim()) {
-    ElMessage.warning('请选择会员并填写消息内容')
-    return
+const query = (): LotteryMessagePageParams => ({
+  pageNo: pageNo.value,
+  pageSize: pageSize.value,
+  period: period.value.trim() || undefined,
+  content: content.value.trim() || undefined,
+  nickname: nickname.value.trim() || undefined
+})
+
+const load = async () => {
+  loading.value = true
+  try {
+    const result = await getMessagesApi(query())
+    rows.value = result.list || []
+    total.value = Number(result.total || 0)
+  } finally {
+    loading.value = false
   }
-  const saved = await store.processIncomingMessage({
-    ...form,
-    period: form.period.trim() || undefined
-  })
-  if (saved) visible.value = false
 }
+
+const search = () => {
+  pageNo.value = 1
+  load()
+}
+
+const changePage = (value: number) => {
+  pageNo.value = value
+  load()
+}
+
+const changePageSize = (value: number) => {
+  pageSize.value = value
+  pageNo.value = 1
+  load()
+}
+
+onMounted(load)
 </script>
 
 <template>
-  <div class="lucky-page">
+  <div class="lucky-page message-page">
     <h1 class="lucky-page__heading">消息列表</h1>
-    <div class="lucky-toolbar">
-      <div class="lucky-toolbar__filters">
-        <el-tooltip content="录入消息">
-          <el-button type="primary" circle @click="open"><Icon icon="ep:plus" /></el-button>
-        </el-tooltip>
-        <el-input v-model="period" clearable placeholder="期数" />
-        <el-input v-model="content" clearable placeholder="内容" />
-        <el-input v-model="nickname" clearable placeholder="昵称" />
-        <el-button type="primary">搜索</el-button>
+
+    <div class="lucky-toolbar message-toolbar">
+      <div class="lucky-toolbar__filters message-filters">
+        <el-input v-model="period" clearable placeholder="期数" @keyup.enter="search" />
+        <el-input v-model="content" clearable placeholder="内容" @keyup.enter="search" />
+        <el-input v-model="nickname" clearable placeholder="昵称" @keyup.enter="search" />
+        <el-button type="primary" @click="search">搜索</el-button>
       </div>
     </div>
-    <el-card shadow="never">
-      <PaginatedTable :data="rows" border>
-        <template #mobile="{ row }">
-          <div class="lucky-mobile-card__title">
-            <span>{{ row.member }}</span>
-            <el-tag
-              size="small"
-              :type="
-                row.status === '未识别' ? 'danger' : row.status === '处理中' ? 'warning' : 'success'
-              "
-            >
-              {{ row.status }}
-            </el-tag>
-          </div>
-          <div class="lucky-mobile-card__content">{{ row.content }}</div>
-          <div v-if="row.reply" class="lucky-mobile-card__content lucky-muted">
-            回执：{{ row.reply }}
-          </div>
-          <div class="lucky-mobile-card__meta">
-            <span>{{ row.channel }}</span>
-            <span v-if="row.period">期号 {{ row.period }}</span>
-            <span>{{ row.time }}</span>
-            <span v-if="row.error" class="lucky-danger">{{ row.error }}</span>
-          </div>
-        </template>
-        <el-table-column label="发送人" min-width="140">
-          <template #default="{ row }">
-            <div>{{ row.member }}</div>
-            <small class="lucky-muted">{{ row.channel }}</small>
-          </template>
-        </el-table-column>
-        <el-table-column label="内容" min-width="420">
-          <template #default="{ row }">
-            <div>{{ row.content }}</div>
-            <div v-if="row.reply" class="lucky-muted">回执：{{ row.reply }}</div>
-            <div class="message-meta">
-              <span v-if="row.period">期号 {{ row.period }}</span>
-              <el-tag
-                size="small"
-                :type="
-                  row.status === '未识别'
-                    ? 'danger'
-                    : row.status === '处理中'
-                      ? 'warning'
-                      : 'success'
-                "
-              >
-                {{ row.status }}
-              </el-tag>
-              <span v-if="row.orderId">订单 {{ row.orderId }}</span>
-              <span v-if="row.error" class="lucky-danger">{{ row.error }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="time" label="创建时间" min-width="200" />
-      </PaginatedTable>
-    </el-card>
 
-    <el-dialog v-model="visible" title="录入消息" width="520px" class="lucky-dialog">
-      <el-form :model="form" label-width="80px">
-        <el-form-item label="会员">
-          <el-select v-model="form.memberId" filterable placeholder="选择会员">
-            <el-option
-              v-for="member in store.members.filter(
-                (item) => item.memberType !== 'BOT' && !item.autoProxy
-              )"
-              :key="member.id"
-              :label="`${member.name}（余分 ${member.balance}）`"
-              :value="member.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="期号"><el-input v-model="form.period" /></el-form-item>
-        <el-form-item label="来源">
-          <el-select v-model="form.channel">
-            <el-option
-              v-for="item in ['网页群', '微信', '飞鱼', '蓝鲸', '跟', '私聊']"
-              :key="item"
-              :label="item"
-              :value="item"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="内容">
-          <el-input v-model="form.content" type="textarea" :rows="4" placeholder="大100 单50" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" :loading="store.saving" @click="submit">确定</el-button>
-      </template>
-    </el-dialog>
+    <el-card v-loading="loading" shadow="never">
+      <div v-if="isMobile" class="message-mobile-list">
+        <article v-for="row in rows" :key="row.id" class="lucky-mobile-card message-mobile-item">
+          <div class="lucky-mobile-card__title">
+            <span>{{ row.sender }}</span>
+            <span class="message-time">{{ row.time }}</span>
+          </div>
+          <div class="lucky-mobile-card__content message-content">{{ row.content }}</div>
+          <div v-if="row.period" class="lucky-mobile-card__meta">
+            <span>期号 {{ row.period }}</span>
+          </div>
+        </article>
+        <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
+      </div>
+
+      <el-table v-else :data="rows" row-key="id" border>
+        <el-table-column prop="sender" label="发送人" min-width="140" />
+        <el-table-column label="内容" min-width="520">
+          <template #default="{ row }">
+            <div class="message-content">{{ row.content }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="time" label="创建时间" min-width="180" />
+      </el-table>
+
+      <div class="message-pagination">
+        <span>显示第 {{ startRow }} 到 {{ endRow }} 条，共 {{ total }} 条</span>
+        <el-pagination
+          :current-page="pageNo"
+          :page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next, jumper'"
+          :pager-count="isMobile ? 3 : 7"
+          :small="isMobile"
+          background
+          @current-change="changePage"
+          @size-change="changePageSize"
+        />
+      </div>
+    </el-card>
   </div>
 </template>
 
 <style scoped>
-.message-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  align-items: center;
-  justify-content: center;
-  margin-top: 4px;
-  font-size: 12px;
+.message-toolbar {
+  margin-bottom: 18px;
+}
+
+.message-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 240px)) auto;
+  justify-content: start;
+  width: 100%;
+}
+
+.message-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.65;
+}
+
+.message-time {
   color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.message-mobile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.message-mobile-item {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+}
+
+.message-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+:deep(.el-table__cell) {
+  vertical-align: top;
+}
+
+@media (max-width: 768px) {
+  .message-filters {
+    display: flex;
+  }
+
+  .message-filters :deep(.el-button) {
+    width: 100%;
+  }
+
+  .message-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .message-pagination :deep(.el-pagination) {
+    justify-content: center;
+  }
 }
 </style>
