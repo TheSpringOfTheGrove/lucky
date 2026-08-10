@@ -113,7 +113,7 @@ const cancelOrder = async (row: any) => {
       </div>
     </div>
     <el-card shadow="never">
-      <PaginatedTable :data="rows" border>
+      <PaginatedTable :key="orderType || 'ALL'" :data="rows" row-key="id" border>
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <span>{{ row.period }}</span>
