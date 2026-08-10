@@ -47,7 +47,7 @@ public class LotteryRobotReplyTemplate {
     public String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                              BigDecimal amount, BigDecimal balance) {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content
-                + "\n【户型审核成功】√√\n【编号】：" + sequence
+                + "\n【户型审核成功】✓✓\n【编号】：" + sequence
                 + "\n【套内】：" + itemCount + "\n【套外】：" + number(amount)
                 + "\n【面积】：" + number(balance) + "\n点击退码";
     }

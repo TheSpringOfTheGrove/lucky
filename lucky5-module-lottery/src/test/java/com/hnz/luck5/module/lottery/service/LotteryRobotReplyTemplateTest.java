@@ -15,7 +15,7 @@ class LotteryRobotReplyTemplateTest {
     void shouldFormatBetReceiptLikeReferenceRobot() {
         assertThat(template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√"
+                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
                         + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n点击退码");
     }
 
@@ -25,7 +25,7 @@ class LotteryRobotReplyTemplateTest {
                 new BigDecimal("360"), new BigDecimal("26764.45"));
 
         assertThat(template.publicBetReceipt("露露", privateReceipt))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√"
+                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
                         + "\n【编号】：3\n【套内】：36\n【套外】：360")
                 .doesNotContain("26764.45", "点击退码");
         assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001"))

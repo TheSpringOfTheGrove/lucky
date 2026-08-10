@@ -66,7 +66,7 @@ class LotteryMessageQueryTest {
 
     @Test
     void includesAutoProxyRoomMessagesAndExcludesDrawResults() {
-        MessageDO autoProxyBet = message(3L, "A01", "20260810181", "大100", "@A01\n下注成功");
+        MessageDO autoProxyBet = message(3L, "A01", "20260810181", "大100", "@A01\n【户型审核成功】√√");
         autoProxyBet.setMessageType("AUTO_PROXY");
         autoProxyBet.setCommandType("BET");
         MessageDO drawResult = message(2L, "", "20260810180", "", "180期开奖结果-0|6|2|2|2");
@@ -80,7 +80,7 @@ class LotteryMessageQueryTest {
         assertThat(result.getList()).extracting(row -> row.get("sender"))
                 .containsExactly("机器人", "A01");
         assertThat(result.getList()).extracting(row -> row.get("content"))
-                .containsExactly("@A01\n下注成功", "大100");
+                .containsExactly("@A01\n【户型审核成功】✓✓", "大100");
     }
 
     private MessageDO message(Long id, String member, String period, String content, String reply) {

@@ -365,7 +365,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "member", item.getMember(), "period", item.getPeriod(),
                 "content", item.getContent(), "status", item.getStatus(), "orderId", item.getOrderId(), "error", item.getError(),
                 "commandType", item.getCommandType(), "messageType", value(item.getMessageType(), TYPE_PLAYER),
-                "reply", item.getReply(), "processedAt", date(item.getProcessedAt()),
+                "reply", normalizeCheckMarks(item.getReply()), "processedAt", date(item.getProcessedAt()),
                 "createdAt", date(item.getCreateTime()), "time", date(item.getCreateTime()));
     }
 
@@ -374,7 +374,7 @@ public class LotteryServiceImpl implements LotteryService {
         List<Map<String, Object>> rows = new ArrayList<>(2);
         if (StrUtil.isNotBlank(item.getReply())) {
             rows.add(map("id", "robot-" + item.getId(), "sender", "机器人", "sourceMember", sourceMember,
-                    "period", value(item.getPeriod(), ""), "content", item.getReply(), "kind", "robot",
+                    "period", value(item.getPeriod(), ""), "content", normalizeCheckMarks(item.getReply()), "kind", "robot",
                     "time", date(value(item.getProcessedAt(), item.getCreateTime()))));
         }
         if (StrUtil.isNotBlank(item.getContent())) {
@@ -383,6 +383,10 @@ public class LotteryServiceImpl implements LotteryService {
                     "time", date(item.getCreateTime())));
         }
         return rows;
+    }
+
+    private String normalizeCheckMarks(String text) {
+        return text == null ? null : text.replace('√', '✓');
     }
 
     private Map<String, Object> chimaConfigMap(ChimaConfigDO item) {
