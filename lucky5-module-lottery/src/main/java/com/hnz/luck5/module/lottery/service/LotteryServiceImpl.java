@@ -294,6 +294,15 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
+    public List<Map<String, Object>> getMemberSnapshots() {
+        return memberMapper.selectList(new LambdaQueryWrapper<MemberDO>().orderByAsc(MemberDO::getId)).stream()
+                .map(item -> map("id", item.getId(), "balance", money(item.getBalance()),
+                        "totalBet", money(item.getTotalBet()), "profitLoss", money(item.getProfitLoss()),
+                        "status", item.getStatus(), "version", value(item.getVersion(), 0)))
+                .toList();
+    }
+
+    @Override
     public Map<String, Object> initializeOwner(Long userId) {
         AdminUserDO user = adminUserService.getUser(userId);
         if (user == null) {

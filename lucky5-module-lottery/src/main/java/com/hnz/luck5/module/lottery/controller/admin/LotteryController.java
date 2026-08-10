@@ -107,6 +107,12 @@ public class LotteryController {
         return success(lotteryService.saveMember(reqVO));
     }
 
+    @GetMapping("/members/snapshot")
+    @PreAuthorize("@ss.hasPermission('lottery:member:manage')")
+    public CommonResult<List<Map<String, Object>>> getMemberSnapshots() {
+        return success(lotteryService.getMemberSnapshots());
+    }
+
     @PutMapping("/members/{id}")
     @PreAuthorize("@ss.hasPermission('lottery:member:manage')")
     public CommonResult<String> updateMember(@PathVariable String id, @Valid @RequestBody LotteryReqVO.Member reqVO) {

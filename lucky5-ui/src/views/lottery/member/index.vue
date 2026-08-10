@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
-import { computed, reactive, ref } from 'vue'
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  reactive,
+  ref
+} from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
 import { useLucky5Store } from '@/store/modules/lottery'
@@ -230,6 +238,23 @@ const formatStatistic = (value: number) => {
   if (!Number.isFinite(amount)) return '0.00'
   return (Math.abs(amount) < 0.005 ? 0 : amount).toFixed(2)
 }
+
+let memberRefreshTimer: number | undefined
+const startMemberRefresh = () => {
+  if (memberRefreshTimer) return
+  void store.refreshMembers()
+  memberRefreshTimer = window.setInterval(() => void store.refreshMembers(), 2_000)
+}
+const stopMemberRefresh = () => {
+  if (!memberRefreshTimer) return
+  window.clearInterval(memberRefreshTimer)
+  memberRefreshTimer = undefined
+}
+
+onMounted(startMemberRefresh)
+onActivated(startMemberRefresh)
+onDeactivated(stopMemberRefresh)
+onBeforeUnmount(stopMemberRefresh)
 </script>
 
 <template>

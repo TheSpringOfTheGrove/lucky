@@ -34,6 +34,8 @@ public interface LotteryService {
 
     String saveMember(LotteryReqVO.Member reqVO);
 
+    List<Map<String, Object>> getMemberSnapshots();
+
     void transferMember(String id, LotteryReqVO.Transfer reqVO);
 
     String createAmountRequest(String id, LotteryReqVO.Transfer reqVO);

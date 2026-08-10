@@ -19,6 +19,7 @@ import {
   getLucky5Bootstrap,
   getAmountRecordsApi,
   getOrdersApi,
+  getMemberSnapshotsApi,
   getMemberDetailsApi,
   getMemberLinksApi,
   rotateMemberLinkApi,
@@ -92,6 +93,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     loadedUserId: 0,
     loading: false,
     marketRefreshing: false,
+    membersRefreshing: false,
     saving: false,
     operator: { username: '', expireAt: '' },
     room: { open: false, online: 0 },
@@ -291,6 +293,23 @@ const useLucky5StoreBase = defineStore('lucky5', {
         return false
       } finally {
         this.marketRefreshing = false
+      }
+    },
+    async refreshMembers() {
+      if (this.membersRefreshing) return false
+      this.membersRefreshing = true
+      try {
+        const snapshots = await getMemberSnapshotsApi()
+        const snapshotById = new Map(snapshots.map((item) => [item.id, item]))
+        this.members = this.members.map((member) => ({
+          ...member,
+          ...(snapshotById.get(member.id) || {})
+        }))
+        return true
+      } catch {
+        return false
+      } finally {
+        this.membersRefreshing = false
       }
     },
     saveLinks(payload: Record<string, any>) {
