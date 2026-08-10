@@ -20,6 +20,19 @@ class LotteryRobotReplyTemplateTest {
     }
 
     @Test
+    void shouldRemoveBalanceAndCancelActionFromPublicGroupReceipt() {
+        String privateReceipt = template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
+                new BigDecimal("360"), new BigDecimal("26764.45"));
+
+        assertThat(template.publicBetReceipt("露露", privateReceipt))
+                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√"
+                        + "\n【编号】：3\n【套内】：36\n【套外】：360")
+                .doesNotContain("26764.45", "点击退码");
+        assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001"))
+                .isEqualTo("@露露\n下注成功");
+    }
+
+    @Test
     void shouldFormatClosedAndAmountReplies() {
         assertThat(template.roomClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n当前未开盘");
         assertThat(template.amountPending("旺旺杀米米")).isEqualTo("@旺旺杀米米\n请稍后");

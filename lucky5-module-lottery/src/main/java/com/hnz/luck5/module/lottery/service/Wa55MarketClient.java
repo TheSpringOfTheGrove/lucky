@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 
+import javax.net.ssl.SSLHandshakeException;
 import java.math.BigDecimal;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -191,8 +192,25 @@ public class Wa55MarketClient {
             throw new IllegalStateException("盘口请求被中断", ex);
         } catch (Exception ex) {
             if (ex instanceof IllegalStateException state) throw state;
+            if (isTlsValidationFailure(ex)) {
+                throw new IllegalStateException("盘口HTTPS证书无效或域名已失效，请更新有效的网盘会员网址", ex);
+            }
             throw new IllegalStateException("盘口请求失败：" + ex.getMessage(), ex);
         }
+    }
+
+    private boolean isTlsValidationFailure(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof SSLHandshakeException) return true;
+            String message = current.getMessage();
+            if (message != null && (message.contains("PKIX path building failed")
+                    || message.contains("unable to find valid certification path"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private JsonNode json(HttpClient client, HttpRequest request) {

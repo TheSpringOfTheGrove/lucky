@@ -165,6 +165,11 @@ const chatMessages = computed<ChatItem[]>(() => {
 
   for (const message of session.value.messages) {
     const order = message.orderId ? orderById.value[message.orderId] : undefined
+    const showSharedBetReply =
+      session.value.room.mode === 'GROUP' &&
+      message.own === false &&
+      message.commandType === 'BET' &&
+      Boolean(message.reply)
     if (!['SETTLEMENT', 'PERIOD_SUMMARY'].includes(message.commandType)) {
       messages.push({
         id: `member-message-${message.id}`,
@@ -175,7 +180,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         senderName: message.member
       })
     }
-    if (message.own !== false && message.commandType !== 'CHAT') {
+    if ((message.own !== false || showSharedBetReply) && message.commandType !== 'CHAT') {
       messages.push({
         id: `robot-message-${message.id}`,
         kind: 'robot',
@@ -277,6 +282,7 @@ const issuePresentation = computed(() => {
   if (status === 'CLOSED') return { label: '已封盘', tone: 'closed' }
   if (status === 'DRAW_PENDING') return { label: '开奖确认中', tone: 'pending' }
   if (status === 'DRAW_ABNORMAL') return { label: '开奖异常', tone: 'abnormal' }
+  if (status === 'SOURCE_STALE') return { label: '开奖源异常', tone: 'abnormal' }
   if (status === 'SETTLED') return { label: '等待下一期', tone: 'muted' }
   return { label: '等待开盘', tone: 'muted' }
 })
@@ -296,6 +302,7 @@ const issueTimingText = computed(() => {
   if (status === 'CLOSED') return '等待开奖'
   if (status === 'DRAW_PENDING') return '号码确认中'
   if (status === 'DRAW_ABNORMAL') return '暂停结算'
+  if (status === 'SOURCE_STALE') return '数据已过期 · 暂停下注'
   if (status === 'SETTLED') return '本期已结算'
   return '等待开盘'
 })

@@ -413,7 +413,15 @@ public class LotteryMarketSyncService {
     }
 
     private String rootMessage(Throwable error) {
+        String tlsMessage = "盘口HTTPS证书无效或域名已失效，请更新有效的网盘会员网址";
         Throwable current = error;
+        while (current != null) {
+            if (current.getMessage() != null && current.getMessage().contains(tlsMessage)) {
+                return tlsMessage;
+            }
+            current = current.getCause();
+        }
+        current = error;
         while (current.getCause() != null && current.getCause() != current) current = current.getCause();
         return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
     }

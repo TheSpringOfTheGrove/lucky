@@ -100,6 +100,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryBettingService bettingService;
     @Resource private LotteryRoomMessagePolicy roomMessagePolicy;
     @Resource private LotteryRobotReplyTemplate robotReplyTemplate;
+    @Resource private LotteryIssueFreshnessPolicy issueFreshnessPolicy;
     @Resource private LotteryRebateCalculator rebateCalculator;
     @Resource private LotteryChimaCalculator chimaCalculator;
     @Resource private LotteryOwnerInitializationService ownerInitializationService;
@@ -1073,6 +1074,7 @@ public class LotteryServiceImpl implements LotteryService {
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getPeriod, reqVO.getPeriod())));
         if (issue == null || !"OPEN".equals(issue.getStatus())) throw exception(ISSUE_NOT_OPEN);
+        if (issueFreshnessPolicy.isStale(issue)) throw exception(ISSUE_SOURCE_STALE);
         List<OddDO> odds = getEffectiveOdds(member.getUserId());
         List<LotteryBettingService.ParsedBet> parsed = bettingService.parse(reqVO.getContent(), odds);
         boolean hasDragonTiger = parsed.stream().anyMatch(item -> "龙虎".equals(item.play()));
@@ -1533,6 +1535,7 @@ public class LotteryServiceImpl implements LotteryService {
                     .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getStatus, "OPEN")
                     .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
             if (issue == null) return roomClosedReply(member, reqVO);
+            if (issueFreshnessPolicy.isStale(issue)) return drawSourceStaleReply(member, reqVO);
             period = issue.getPeriod();
         } else {
             String requestedPeriod = period;
@@ -1540,6 +1543,7 @@ public class LotteryServiceImpl implements LotteryService {
                     .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getPeriod, requestedPeriod)
                     .eq(IssueDO::getStatus, "OPEN").last("LIMIT 1")));
             if (issue == null) return roomClosedReply(member, reqVO);
+            if (issueFreshnessPolicy.isStale(issue)) return drawSourceStaleReply(member, reqVO);
         }
         LotteryReqVO.PlaceBet bet = new LotteryReqVO.PlaceBet();
         bet.setMemberId(member.getId());
@@ -1721,6 +1725,7 @@ public class LotteryServiceImpl implements LotteryService {
                 .stream().collect(Collectors.toMap(SwitchSettingDO::getSettingKey,
                         item -> bool(item.getEnabled()), (a, b) -> b));
         List<QuickCommandDO> commands = getEffectiveQuickCommands(member.getUserId(), true);
+        String effectiveIssueStatus = issueFreshnessPolicy.effectiveStatus(current);
         return map("member", map("id", member.getId(), "name", member.getName(), "balance", money(member.getBalance()),
                         "totalBet", money(member.getTotalBet()), "profitLoss", money(member.getProfitLoss()), "avatar", member.getAvatar()),
                 "room", map("name", value(config.getRoomName(), "幸运5"), "announcement", value(config.getAnnouncement(), ""),
@@ -1735,10 +1740,13 @@ public class LotteryServiceImpl implements LotteryService {
                                 "imageBold", switches.getOrDefault("imageBold", false),
                                 "linkToCode", switches.getOrDefault("linkToCode", false))),
                 "suggestedPeriod", current == null ? "" : current.getPeriod(),
-                "issue", current == null ? map("currentPeriod", "", "status", "UNAVAILABLE", "remainingSeconds", 0, "nextPeriod", "")
-                        : map("currentPeriod", current.getPeriod(), "status", current.getStatus(),
-                                "remainingSeconds", value(current.getRemainingSeconds(), 0), "nextPeriod", value(current.getNextPeriod(), ""),
-                                "serverTime", current.getServerTime()),
+                "issue", current == null ? map("currentPeriod", "", "status", "UNAVAILABLE", "remainingSeconds", 0,
+                                "nextPeriod", "", "sourceStale", false)
+                        : map("currentPeriod", current.getPeriod(), "status", effectiveIssueStatus,
+                                "remainingSeconds", LotteryIssueFreshnessPolicy.STATUS_SOURCE_STALE.equals(effectiveIssueStatus)
+                                        ? 0 : value(current.getRemainingSeconds(), 0),
+                                "nextPeriod", value(current.getNextPeriod(), ""), "serverTime", current.getServerTime(),
+                                "sourceStale", LotteryIssueFreshnessPolicy.STATUS_SOURCE_STALE.equals(effectiveIssueStatus)),
                 "issueTransitions", transitions.stream().sorted(Comparator.comparing(IssueTransitionDO::getCreateTime))
                         .map(item -> map("id", item.getId(), "period", item.getPeriod(), "status", item.getToStatus(),
                                 "summary", value(item.getSource(), "系统") + "：" + value(item.getFromStatus(), "-")
@@ -1798,7 +1806,8 @@ public class LotteryServiceImpl implements LotteryService {
         if (!own) {
             result.put("orderId", "");
             result.put("error", "");
-            result.put("reply", "");
+            result.put("reply", "BET".equals(item.getCommandType())
+                    ? robotReplyTemplate.publicBetReceipt(item.getMember(), item.getReply()) : "");
         }
         return result;
     }
@@ -1919,6 +1928,15 @@ public class LotteryServiceImpl implements LotteryService {
         message.setError("当前未开盘");
         messageMapper.updateById(message);
         return map("messageId", message.getId(), "reply", reply, "commandType", "ROOM_CLOSED");
+    }
+
+    private Map<String, Object> drawSourceStaleReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
+        String reply = robotReplyTemplate.drawSourceStale(member.getName());
+        MessageDO message = saveCommandMessage(member, reqVO, "SOURCE_STALE", reply);
+        message.setStatus("已拒绝");
+        message.setError("开奖数据已过期");
+        messageMapper.updateById(message);
+        return map("messageId", message.getId(), "reply", reply, "commandType", "SOURCE_STALE");
     }
 
     private void updateAmountRequestReply(AmountRecordDO record, MemberDO member) {

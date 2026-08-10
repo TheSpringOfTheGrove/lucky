@@ -3,6 +3,7 @@ package com.hnz.luck5.module.lottery.service;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -49,6 +50,31 @@ public class LotteryRobotReplyTemplate {
                 + "\n【户型审核成功】√√\n【编号】：" + sequence
                 + "\n【套内】：" + itemCount + "\n【套外】：" + number(amount)
                 + "\n【面积】：" + number(balance) + "\n点击退码";
+    }
+
+    /**
+     * Group rooms may show that another player was accepted, but must not expose their balance or cancellation entry.
+     */
+    public String publicBetReceipt(String memberName, String receipt) {
+        if (receipt == null || receipt.isBlank() || receipt.contains("订单号")) {
+            return "@" + memberName + "\n下注成功";
+        }
+        List<String> visible = new ArrayList<>();
+        for (String line : receipt.split("\\R")) {
+            String normalized = line.trim();
+            if (normalized.startsWith("【面积】") || normalized.startsWith("面积：")
+                    || normalized.equals("点击退码") || normalized.startsWith("可用积分")
+                    || normalized.startsWith("余额")) {
+                continue;
+            }
+            visible.add(line);
+        }
+        String result = String.join("\n", visible).trim();
+        return result.isEmpty() ? "@" + memberName + "\n下注成功" : result;
+    }
+
+    public String drawSourceStale(String memberName) {
+        return "@" + memberName + "\n开奖数据异常，当前暂停下注";
     }
 
     public String settlement(String memberName, List<String> winningLines, BigDecimal memberPayout,

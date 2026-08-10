@@ -82,6 +82,7 @@ export interface RoomSession {
     remainingSeconds: number
     nextPeriod: string
     serverTime: string | number | null
+    sourceStale?: boolean
   }
   issueTransitions: Array<{
     id: number

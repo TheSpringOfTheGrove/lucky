@@ -37,4 +37,5 @@ public interface ErrorCodeConstants {
             "老板模式关闭时，请填写网盘会员网址、账户和密码");
     ErrorCode ROOM_MODE_DISABLED = new ErrorCode(2_001_000_030, "该房间入口当前未开启");
     ErrorCode ROOM_MODE_REQUIRED = new ErrorCode(2_001_000_031, "请至少开启一种房间入口，并选择已开启的默认入口");
+    ErrorCode ISSUE_SOURCE_STALE = new ErrorCode(2_001_000_032, "开奖数据已过期，当前暂停下注，请等待开奖源恢复");
 }
