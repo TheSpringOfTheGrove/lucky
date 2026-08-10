@@ -113,6 +113,12 @@ class LotteryOwnerInitializationServiceTest {
         assertThat(stateCaptor.getValue().getOperatorUsername()).isEqualTo("boss200");
         assertThat(stateCaptor.getValue().getRoomOpen()).isFalse();
 
+        ArgumentCaptor<LinkConfigDO> linkCaptor = ArgumentCaptor.forClass(LinkConfigDO.class);
+        verify(linkConfigMapper).insert(linkCaptor.capture());
+        assertThat(linkCaptor.getValue().getGroupLinkEnabled()).isTrue();
+        assertThat(linkCaptor.getValue().getPrivateLinkEnabled()).isTrue();
+        assertThat(linkCaptor.getValue().getDefaultRoomMode()).isEqualTo("GROUP");
+
         ArgumentCaptor<IntegrationDO> integrationCaptor = ArgumentCaptor.forClass(IntegrationDO.class);
         verify(integrationMapper).insert(integrationCaptor.capture());
         assertThat(integrationCaptor.getValue().getAccount()).isEmpty();

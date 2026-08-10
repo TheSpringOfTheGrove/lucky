@@ -19,7 +19,7 @@ import { roomReplyTemplates } from './replyTemplates'
 import logo from '@/assets/imgs/logo.png'
 import memberAvatar from '@/assets/imgs/avatar.jpg'
 
-type ChatKind = 'member' | 'robot'
+type ChatKind = 'member' | 'other' | 'robot'
 type ChatType = 'text' | 'order' | 'amount' | 'draw'
 
 interface ChatItem {
@@ -28,6 +28,8 @@ interface ChatItem {
   type: ChatType
   content: string
   createdAt: string
+  senderName?: string
+  isProxy?: boolean
   order?: RoomOrder
   amountRecord?: RoomAmountRecord
   draw?: RoomDraw
@@ -68,11 +70,21 @@ const credential = computed<RoomCredential>(() => {
   const queryOpenId = typeof route.query.openId === 'string' ? route.query.openId : ''
   const shortOpenId = typeof route.params.openId === 'string' ? route.params.openId : ''
   const legacyFingerprint = typeof route.query.fp === 'string' ? route.query.fp : ''
+  const queryRoomMode =
+    route.query.roomMode === 'GROUP' || route.query.roomMode === 'PRIVATE'
+      ? route.query.roomMode
+      : undefined
+  const roomMode = route.path.startsWith('/g/')
+    ? 'GROUP'
+    : route.path.startsWith('/p/')
+      ? 'PRIVATE'
+      : queryRoomMode
   return {
     tenantId: Number(route.query.tenantId || 1),
     uid: typeof route.query.uid === 'string' ? route.query.uid : undefined,
     openId: queryOpenId || shortOpenId || legacyFingerprint,
-    fp: legacyFingerprint || undefined
+    fp: legacyFingerprint || undefined,
+    roomMode
   }
 })
 
@@ -157,13 +169,15 @@ const chatMessages = computed<ChatItem[]>(() => {
     if (!['SETTLEMENT', 'PERIOD_SUMMARY'].includes(message.commandType)) {
       messages.push({
         id: `member-message-${message.id}`,
-        kind: 'member',
+        kind: message.own === false ? 'other' : 'member',
         type: 'text',
         content: message.content,
-        createdAt: message.createdAt
+        createdAt: message.createdAt,
+        senderName: message.member,
+        isProxy: message.messageType === 'AUTO_PROXY'
       })
     }
-    if (message.commandType !== 'CHAT') {
+    if (message.own !== false && message.commandType !== 'CHAT') {
       messages.push({
         id: `robot-message-${message.id}`,
         kind: 'robot',
@@ -533,9 +547,9 @@ watch(
 )
 
 watch(
-  () => credential.value.openId,
-  async (openId, previousOpenId) => {
-    if (!openId || openId === previousOpenId) return
+  () => `${credential.value.openId}:${credential.value.roomMode || 'DEFAULT'}`,
+  async (credentialKey, previousCredentialKey) => {
+    if (!credential.value.openId || credentialKey === previousCredentialKey) return
     sessionStartedAt.value = new Date().toISOString()
     localMessages.value = []
     visibleDrawPeriods.value = []
@@ -615,7 +629,7 @@ onBeforeUnmount(() => {
             <img :src="memberAvatar" :alt="session.member.name" />
             <div>
               <strong>{{ session.member.name }}</strong>
-              <span>{{ session.room.name }}</span>
+              <span>{{ session.room.name }} · {{ session.room.modeName }}</span>
             </div>
           </div>
           <div class="room-balance">
@@ -704,16 +718,22 @@ onBeforeUnmount(() => {
             <img
               class="chat-avatar"
               :src="message.kind === 'robot' ? logo : memberAvatar"
-              :alt="message.kind === 'robot' ? '机器人' : session.member.name"
+              :alt="message.kind === 'robot' ? '机器人' : message.senderName || session.member.name"
             />
             <div class="chat-body">
-              <h5>{{ message.kind === 'robot' ? '机器人' : session.member.name }}</h5>
+              <h5>
+                {{ message.kind === 'robot' ? '机器人' : message.senderName || session.member.name }}
+                <em v-if="message.isProxy">托</em>
+              </h5>
               <div class="chat-bubble">
                 <template v-if="message.type === 'draw' && message.draw">
                   <pre class="draw-brief">{{ message.content }}</pre>
                   <div
                     v-if="
-                      session.room.features.groupImage && message.draw.period === latestDraw?.period
+                      (session.room.mode === 'GROUP'
+                        ? session.room.features.groupImage
+                        : session.room.features.privateImage) &&
+                      message.draw.period === latestDraw?.period
                     "
                     :class="['lottery-table', { 'is-bold': session.room.features.imageBold }]"
                   >
@@ -1351,6 +1371,16 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
+.chat-body h5 em {
+  margin-left: 4px;
+  padding: 0 4px;
+  color: #b26b00;
+  background: #fff2d6;
+  border-radius: 3px;
+  font-size: 11px;
+  font-style: normal;
+}
+
 .chat-bubble {
   position: relative;
   min-height: 32px;
@@ -1373,13 +1403,15 @@ onBeforeUnmount(() => {
   content: '';
 }
 
-.chat-message-robot .chat-bubble::before {
+.chat-message-robot .chat-bubble::before,
+.chat-message-other .chat-bubble::before {
   left: -9px;
   border-color: transparent #d1d1d1 transparent transparent;
   border-width: 7px 9px 7px 0;
 }
 
-.chat-message-robot .chat-bubble::after {
+.chat-message-robot .chat-bubble::after,
+.chat-message-other .chat-bubble::after {
   left: -7px;
   border-color: transparent #fff transparent transparent;
   border-width: 7px 9px 7px 0;

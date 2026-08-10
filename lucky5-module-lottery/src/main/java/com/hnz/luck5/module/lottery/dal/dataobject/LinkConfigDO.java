@@ -21,5 +21,8 @@ public class LinkConfigDO extends LotteryUserBaseDO {
     private String shortUrl;
     private String qrMode;
     private Integer shortUrlMode;
+    private Boolean groupLinkEnabled;
+    private Boolean privateLinkEnabled;
+    private String defaultRoomMode;
 
 }

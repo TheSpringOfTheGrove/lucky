@@ -3,6 +3,7 @@ export interface RoomCredential {
   uid?: string
   openId: string
   fp?: string
+  roomMode?: 'GROUP' | 'PRIVATE'
 }
 
 export interface RoomBetItem {
@@ -60,6 +61,8 @@ export interface RoomSession {
   room: {
     name: string
     announcement: string
+    mode: 'GROUP' | 'PRIVATE'
+    modeName: string
     open: boolean
     online: number
     bettingEnabled: boolean
@@ -92,6 +95,8 @@ export interface RoomSession {
   amountRecords: RoomAmountRecord[]
   messages: Array<{
     id: number
+    memberId: string | null
+    member: string
     period: string
     content: string
     status: string
@@ -99,6 +104,8 @@ export interface RoomSession {
     error: string
     reply: string
     commandType: string
+    messageType: 'PLAYER' | 'AUTO_PROXY'
+    own: boolean
     createdAt: string
   }>
   quickCommands: Array<{
@@ -134,6 +141,7 @@ const credentialQuery = (credential: RoomCredential) => {
   const query = new URLSearchParams({ tenantId: String(credential.tenantId), openId: credential.openId })
   if (credential.uid) query.set('uid', credential.uid)
   if (credential.fp) query.set('fp', credential.fp)
+  if (credential.roomMode) query.set('roomMode', credential.roomMode)
   return query.toString()
 }
 

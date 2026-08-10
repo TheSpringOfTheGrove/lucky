@@ -127,7 +127,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
       issue: null as Record<string, any> | null,
       recentIssues: [] as any[]
     },
-    links: { shortUrlMode: 2 },
+    links: { groupLinkEnabled: true, privateLinkEnabled: true, defaultRoomMode: 'GROUP' },
     odds: [] as any[],
     members: [] as any[],
     amountRecords: [] as any[],

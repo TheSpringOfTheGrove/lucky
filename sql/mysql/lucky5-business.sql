@@ -100,12 +100,26 @@ CREATE TABLE IF NOT EXISTS `lucky5_link_config` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `device_id` varchar(100) NOT NULL DEFAULT '',
   `dealer_url` varchar(500) NOT NULL DEFAULT '', `room_url` varchar(500) NOT NULL DEFAULT '',
   `short_url` varchar(500) NOT NULL DEFAULT '', `qr_mode` varchar(50) NOT NULL DEFAULT '',
-  `short_url_mode` tinyint NOT NULL DEFAULT 2,
+  `short_url_mode` tinyint NOT NULL DEFAULT 2, `group_link_enabled` bit(1) NOT NULL DEFAULT b'1',
+  `private_link_enabled` bit(1) NOT NULL DEFAULT b'1', `default_room_mode` varchar(20) NOT NULL DEFAULT 'GROUP',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_link_tenant` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 链接配置';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_link_config' AND column_name='group_link_enabled')=0,
+  'ALTER TABLE `lucky5_link_config` ADD COLUMN `group_link_enabled` bit(1) NOT NULL DEFAULT b''1'' AFTER `short_url_mode`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_link_config' AND column_name='private_link_enabled')=0,
+  'ALTER TABLE `lucky5_link_config` ADD COLUMN `private_link_enabled` bit(1) NOT NULL DEFAULT b''1'' AFTER `group_link_enabled`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_link_config' AND column_name='default_room_mode')=0,
+  'ALTER TABLE `lucky5_link_config` ADD COLUMN `default_room_mode` varchar(20) NOT NULL DEFAULT ''GROUP'' AFTER `private_link_enabled`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_chima_config` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `si_zi_xian` decimal(18,2) NOT NULL DEFAULT 0,
@@ -167,7 +181,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_member_name` (`tenant_id`,`user_id`,`name`,`deleted`),
-  UNIQUE KEY `uk_lucky5_member_open_id` (`tenant_id`,`user_id`,`open_id`), KEY `idx_lucky5_member_tenant` (`tenant_id`,`user_id`)
+  UNIQUE KEY `uk_lucky5_member_open_id` (`tenant_id`,`open_id`), KEY `idx_lucky5_member_tenant` (`tenant_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 会员';
 
 CREATE TABLE IF NOT EXISTS `lucky5_amount_record` (
@@ -319,7 +333,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_operation_log` (
 
 CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `legacy_id` bigint NULL, `channel` varchar(50) NOT NULL,
-  `member` varchar(100) NOT NULL DEFAULT '', `period` varchar(40) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
+  `member_id` varchar(64) NULL, `member` varchar(100) NOT NULL DEFAULT '', `period` varchar(40) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
   `status` varchar(30) NOT NULL, `order_id` varchar(64) NULL, `external_id` varchar(100) NULL,
   `error` varchar(1000) NOT NULL DEFAULT '', `command_type` varchar(50) NOT NULL DEFAULT '',
   `message_type` varchar(30) NOT NULL DEFAULT 'PLAYER', `reply` varchar(2000) NOT NULL DEFAULT '',
@@ -391,6 +405,16 @@ SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='message_type')=0,
   'ALTER TABLE `lucky5_message` ADD COLUMN `message_type` varchar(30) NOT NULL DEFAULT ''PLAYER'' AFTER `command_type`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='member_id')=0,
+  'ALTER TABLE `lucky5_message` ADD COLUMN `member_id` varchar(64) NULL AFTER `channel`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
+UPDATE `lucky5_message` message
+JOIN `lucky5_member` member ON member.`tenant_id`=message.`tenant_id`
+  AND member.`user_id`=message.`user_id` AND member.`name`=message.`member` AND member.`deleted`=b'0'
+SET message.`member_id`=member.`id`
+WHERE message.`member_id` IS NULL;
 
 UPDATE `lucky5_member`
 SET `member_type`=IF(`auto_proxy`=b'1','BOT','REAL'), `auto_bet_enabled`=`auto_proxy`
@@ -490,7 +514,7 @@ CALL `lucky5_rebuild_unique`('lucky5_switch_setting','uk_lucky5_switch','`tenant
 CALL `lucky5_rebuild_unique`('lucky5_integration','uk_lucky5_integration','`tenant_id`,`user_id`,`integration_key`,`deleted`')$$
 CALL `lucky5_rebuild_unique`('lucky5_odd','uk_lucky5_odd','`tenant_id`,`user_id`,`code`,`deleted`')$$
 CALL `lucky5_rebuild_unique`('lucky5_member','uk_lucky5_member_name','`tenant_id`,`user_id`,`name`,`deleted`')$$
-CALL `lucky5_rebuild_unique`('lucky5_member','uk_lucky5_member_open_id','`tenant_id`,`user_id`,`open_id`')$$
+CALL `lucky5_rebuild_unique`('lucky5_member','uk_lucky5_member_open_id','`tenant_id`,`open_id`')$$
 CALL `lucky5_rebuild_unique`('lucky5_order','uk_lucky5_order_sequence','`tenant_id`,`user_id`,`period`,`period_sequence`')$$
 CALL `lucky5_rebuild_unique`('lucky5_draw','uk_lucky5_draw_period','`tenant_id`,`user_id`,`period`,`deleted`')$$
 CALL `lucky5_rebuild_unique`('lucky5_issue','uk_lucky5_issue_period','`tenant_id`,`user_id`,`period`,`deleted`')$$

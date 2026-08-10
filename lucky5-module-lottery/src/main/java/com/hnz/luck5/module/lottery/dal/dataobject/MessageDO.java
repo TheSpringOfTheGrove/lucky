@@ -17,6 +17,7 @@ public class MessageDO extends LotteryUserBaseDO {
     private Long id;
     private Long legacyId;
     private String channel;
+    private String memberId;
     private String member;
     private String period;
     private String content;

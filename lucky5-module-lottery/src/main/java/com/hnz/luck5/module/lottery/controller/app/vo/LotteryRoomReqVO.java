@@ -3,6 +3,7 @@ package com.hnz.luck5.module.lottery.controller.app.vo;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -20,6 +21,8 @@ public final class LotteryRoomReqVO {
         @NotBlank
         @Size(max = 100)
         private String openId;
+        @Pattern(regexp = "GROUP|PRIVATE")
+        private String roomMode;
         private String fp;
     }
 

@@ -35,4 +35,6 @@ public interface ErrorCodeConstants {
     ErrorCode OWNER_INITIALIZATION_NOT_ALLOWED = new ErrorCode(2_001_000_028, "超级管理员账号不能初始化为老板账号");
     ErrorCode MARKET_CONFIG_REQUIRED = new ErrorCode(2_001_000_029,
             "老板模式关闭时，请填写网盘会员网址、账户和密码");
+    ErrorCode ROOM_MODE_DISABLED = new ErrorCode(2_001_000_030, "该房间入口当前未开启");
+    ErrorCode ROOM_MODE_REQUIRED = new ErrorCode(2_001_000_031, "请至少开启一种房间入口，并选择已开启的默认入口");
 }

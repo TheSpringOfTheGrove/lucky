@@ -210,7 +210,8 @@ public class LotteryOwnerInitializationService {
             return;
         }
         LinkConfigDO linkConfig = new LinkConfigDO().setDeviceId("").setDealerUrl("")
-                .setRoomUrl("").setShortUrl("").setQrMode("").setShortUrlMode(2);
+                .setRoomUrl("").setShortUrl("").setQrMode("").setShortUrlMode(2)
+                .setGroupLinkEnabled(true).setPrivateLinkEnabled(true).setDefaultRoomMode("GROUP");
         linkConfig.setUserId(userId);
         linkConfigMapper.insert(linkConfig);
     }

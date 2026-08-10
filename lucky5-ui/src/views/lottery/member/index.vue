@@ -42,8 +42,8 @@ const rows = computed(() =>
 )
 const linkEntries = computed(() => {
   const entries = [
-    { key: 'roomUrl', label: '房间链接', url: String(linkData.value.roomUrl || '') },
-    { key: 'shortUrl', label: '短链接', url: String(linkData.value.shortUrl || '') }
+    { key: 'groupUrl', label: '群聊链接', url: String(linkData.value.groupUrl || '') },
+    { key: 'privateUrl', label: '私聊链接', url: String(linkData.value.privateUrl || '') }
   ]
   return entries.filter((item) => item.url)
 })
@@ -422,7 +422,7 @@ const avatarColor = (avatar: number) =>
           </div>
         </div>
       </div>
-      <el-empty v-if="!linkEntries.length" description="当前链接模式已关闭" :image-size="64" />
+      <el-empty v-if="!linkEntries.length" description="当前未开启玩家房间入口" :image-size="64" />
     </el-dialog>
 
     <el-dialog v-model="detailsVisible" :title="`${details?.name || ''} 会员查询`" width="860px">

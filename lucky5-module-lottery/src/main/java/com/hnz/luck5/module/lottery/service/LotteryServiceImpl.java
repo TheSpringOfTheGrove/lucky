@@ -55,6 +55,10 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String MEMBER_BOT = "BOT";
     private static final String TYPE_PLAYER = "PLAYER";
     private static final String TYPE_AUTO_PROXY = "AUTO_PROXY";
+    private static final String ROOM_MODE_GROUP = "GROUP";
+    private static final String ROOM_MODE_PRIVATE = "PRIVATE";
+    private static final String CHANNEL_WEB_GROUP = "网页群";
+    private static final String CHANNEL_WEB_PRIVATE = "网页私聊";
 
     private record BetResult(Long messageId, String orderId, String member, String period, BigDecimal amount,
                              BigDecimal balance, int itemCount, int periodSequence,
@@ -62,6 +66,12 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private record CancelResult(String id, String status, BigDecimal refunded) {
+    }
+
+    private record RoomAccess(MemberDO member, String mode) {
+        String channel() {
+            return ROOM_MODE_PRIVATE.equals(mode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
+        }
     }
 
     @Resource private LotteryConfigMapper lotteryConfigMapper;
@@ -121,7 +131,9 @@ public class LotteryServiceImpl implements LotteryService {
                         .and(wrapper -> wrapper.in(IssueDO::getStatus, "DRAW_ABNORMAL", "DRAW_PENDING")
                                 .or().ne(IssueDO::getError, ""))
                         .orderByDesc(IssueDO::getPeriod).last("LIMIT 20")));
-        LinkConfigDO links = first(linkConfigMapper.selectList(null));
+        LinkConfigDO links = loginUserId == null ? null : DataPermissionUtils.executeIgnore(() ->
+                linkConfigMapper.selectOne(new LambdaQueryWrapper<LinkConfigDO>()
+                        .eq(LinkConfigDO::getUserId, loginUserId).last("LIMIT 1")));
         ChimaConfigDO chimaConfig = first(chimaConfigMapper.selectList(null));
         List<SwitchSettingDO> switches = switchSettingMapper.selectList(new LambdaQueryWrapper<SwitchSettingDO>()
                 .orderByAsc(SwitchSettingDO::getSettingKey));
@@ -178,7 +190,11 @@ public class LotteryServiceImpl implements LotteryService {
         result.put("issue", has("lottery:draw:manage") && currentIssue != null ? issueMap(currentIssue) : null);
         result.put("drawAlerts", has("lottery:draw:manage")
                 ? drawAlerts.stream().map(this::issueMap).toList() : List.of());
-        result.put("links", has("lottery:link:manage") ? map("shortUrlMode", links == null ? 2 : links.getShortUrlMode(),
+        result.put("links", has("lottery:link:manage") ? map(
+                "groupLinkEnabled", links == null || links.getGroupLinkEnabled() == null || bool(links.getGroupLinkEnabled()),
+                "privateLinkEnabled", links == null || links.getPrivateLinkEnabled() == null || bool(links.getPrivateLinkEnabled()),
+                "defaultRoomMode", links == null ? ROOM_MODE_GROUP
+                        : value(links.getDefaultRoomMode(), ROOM_MODE_GROUP),
                 "bound", links != null) : Map.of());
         result.put("odds", has("lottery:odds:manage") ? odds.stream().map(this::oddMap).toList() : List.of());
 
@@ -322,7 +338,8 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> messageMap(MessageDO item) {
-        return map("id", item.getId(), "channel", item.getChannel(), "member", item.getMember(), "period", item.getPeriod(),
+        return map("id", item.getId(), "channel", item.getChannel(), "memberId", item.getMemberId(),
+                "member", item.getMember(), "period", item.getPeriod(),
                 "content", item.getContent(), "status", item.getStatus(), "orderId", item.getOrderId(), "error", item.getError(),
                 "commandType", item.getCommandType(), "messageType", value(item.getMessageType(), TYPE_PLAYER),
                 "reply", item.getReply(), "processedAt", date(item.getProcessedAt()),
@@ -413,13 +430,34 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveLinks(LotteryReqVO.LinkConfig reqVO) {
-        LinkConfigDO links = first(linkConfigMapper.selectList(null));
+        boolean groupEnabled = bool(reqVO.getGroupLinkEnabled());
+        boolean privateEnabled = bool(reqVO.getPrivateLinkEnabled());
+        String defaultMode = reqVO.getDefaultRoomMode();
+        if (!groupEnabled && !privateEnabled
+                || ROOM_MODE_GROUP.equals(defaultMode) && !groupEnabled
+                || ROOM_MODE_PRIVATE.equals(defaultMode) && !privateEnabled) {
+            throw exception(ROOM_MODE_REQUIRED);
+        }
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        LinkConfigDO links = DataPermissionUtils.executeIgnore(() -> linkConfigMapper.selectOne(
+                new LambdaQueryWrapper<LinkConfigDO>().eq(LinkConfigDO::getUserId, userId).last("LIMIT 1")));
         if (links == null) {
             links = new LinkConfigDO();
-            links.setShortUrlMode(reqVO.getShortUrlMode());
+            links.setUserId(userId);
+            links.setDeviceId("");
+            links.setDealerUrl("");
+            links.setRoomUrl("");
+            links.setShortUrl("");
+            links.setQrMode("");
+            links.setShortUrlMode(2);
+            links.setGroupLinkEnabled(groupEnabled);
+            links.setPrivateLinkEnabled(privateEnabled);
+            links.setDefaultRoomMode(defaultMode);
             linkConfigMapper.insert(links);
         } else {
-            links.setShortUrlMode(reqVO.getShortUrlMode());
+            links.setGroupLinkEnabled(groupEnabled);
+            links.setPrivateLinkEnabled(privateEnabled);
+            links.setDefaultRoomMode(defaultMode);
             linkConfigMapper.updateById(links);
         }
         log("-", "保存链接配置");
@@ -970,7 +1008,8 @@ public class LotteryServiceImpl implements LotteryService {
         amountRecordMapper.insert(record);
 
         MessageDO message = new MessageDO();
-        message.setChannel(StrUtil.blankToDefault(channel, "网页群"));
+        message.setChannel(StrUtil.blankToDefault(channel, CHANNEL_WEB_GROUP));
+        message.setMemberId(member.getId());
         message.setMember(member.getName());
         message.setPeriod(StrUtil.blankToDefault(period, ""));
         message.setContent(("上分".equals(transfer.getType()) ? "上" : "下")
@@ -1009,12 +1048,14 @@ public class LotteryServiceImpl implements LotteryService {
         }
         SystemStateDO state = requireState(member.getUserId());
         if (!bool(state.getRoomOpen())) throw exception(ROOM_CLOSED);
-        String channel = StrUtil.blankToDefault(reqVO.getChannel(), "网页群");
-        if ("网页群".equals(channel) && !enabled("pullEnable", member.getUserId())) throw exception(ROOM_CLOSED);
+        String channel = StrUtil.blankToDefault(reqVO.getChannel(), CHANNEL_WEB_GROUP);
+        if (CHANNEL_WEB_GROUP.equals(channel) && !enabled("pullEnable", member.getUserId())) throw exception(ROOM_CLOSED);
 
         LotteryConfigDO config = requireConfig(member.getUserId());
         if (!TYPE_AUTO_PROXY.equals(orderType) && !bool(config.getBossMode())) throw exception(MARKET_ORDER_UNAVAILABLE);
-        if (bool(member.getWebOnly()) && !"网页群".equals(channel)) throw exception(ROOM_CLOSED);
+        if (bool(member.getWebOnly()) && !Set.of(CHANNEL_WEB_GROUP, CHANNEL_WEB_PRIVATE).contains(channel)) {
+            throw exception(ROOM_CLOSED);
+        }
         if ("私聊".equals(channel) && (!enabled("privateMode", member.getUserId()) || !bool(member.getPrivateChat()))) {
             throw exception(PRIVATE_BET_DISABLED);
         }
@@ -1069,7 +1110,8 @@ public class LotteryServiceImpl implements LotteryService {
         order.setAmount(total);
         order.setWin(ZERO);
         order.setStatus("未开奖");
-        order.setSource(TYPE_AUTO_PROXY.equals(orderType) ? "自动托" : channel);
+        order.setSource(TYPE_AUTO_PROXY.equals(orderType) ? "自动托"
+                : CHANNEL_WEB_PRIVATE.equals(channel) ? "私聊" : channel);
         order.setOrderType(orderType);
         order.setDeliveryMode("LOCAL_ONLY");
         order.setMarketStatus("NOT_REQUIRED");
@@ -1099,6 +1141,7 @@ public class LotteryServiceImpl implements LotteryService {
         }
         MessageDO message = new MessageDO();
         message.setChannel(channel);
+        message.setMemberId(member.getId());
         message.setMember(member.getName());
         message.setPeriod(order.getPeriod());
         message.setContent(order.getContent());
@@ -1330,7 +1373,8 @@ public class LotteryServiceImpl implements LotteryService {
             BigDecimal payout = money(winningPayouts.get(entry.getKey()));
             BigDecimal afterBalance = money(member.getBalance());
             MessageDO message = new MessageDO();
-            message.setChannel("网页群");
+            message.setChannel(CHANNEL_WEB_GROUP);
+            message.setMemberId(member.getId());
             message.setMember(entry.getKey());
             message.setPeriod(period);
             message.setContent("");
@@ -1642,10 +1686,13 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public Map<String, Object> getRoomSession(LotteryRoomReqVO.Credential reqVO) {
-        return TenantUtils.execute(reqVO.getTenantId(), () -> getRoomSessionInternal(requireRoomMember(reqVO)));
+        return TenantUtils.execute(reqVO.getTenantId(), () -> {
+            RoomAccess access = requireRoomAccess(reqVO);
+            return getRoomSessionInternal(access.member(), access.mode());
+        });
     }
 
-    private Map<String, Object> getRoomSessionInternal(MemberDO member) {
+    private Map<String, Object> getRoomSessionInternal(MemberDO member, String roomMode) {
         LotteryConfigDO config = requireConfig(member.getUserId());
         SystemStateDO state = requireState(member.getUserId());
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
@@ -1658,9 +1705,7 @@ public class LotteryServiceImpl implements LotteryService {
         List<AmountRecordDO> amounts = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
                 new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
                         .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20")));
-        List<MessageDO> messages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                        .eq(MessageDO::getMember, member.getName()).orderByDesc(MessageDO::getCreateTime).last("LIMIT 60")));
+        List<MessageDO> messages = roomMessages(member, roomMode);
         List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                 .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 20")));
         IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
@@ -1679,8 +1724,10 @@ public class LotteryServiceImpl implements LotteryService {
         return map("member", map("id", member.getId(), "name", member.getName(), "balance", money(member.getBalance()),
                         "totalBet", money(member.getTotalBet()), "profitLoss", money(member.getProfitLoss()), "avatar", member.getAvatar()),
                 "room", map("name", value(config.getRoomName(), "幸运5"), "announcement", value(config.getAnnouncement(), ""),
+                        "mode", roomMode, "modeName", ROOM_MODE_PRIVATE.equals(roomMode) ? "私聊" : "群聊",
                         "open", bool(state.getRoomOpen()), "online", value(state.getOnline(), 0),
-                        "bettingEnabled", switches.getOrDefault("pullEnable", false),
+                        "bettingEnabled", ROOM_MODE_PRIVATE.equals(roomMode)
+                                || switches.getOrDefault("pullEnable", false),
                         "cancelEnabled", switches.getOrDefault("openCancel", false),
                         "features", map("groupImage", switches.getOrDefault("groupImage", false),
                                 "privateImage", switches.getOrDefault("privateImage", false),
@@ -1703,21 +1750,72 @@ public class LotteryServiceImpl implements LotteryService {
                 }).toList(),
                 "orders", orders.stream().map(item -> orderMap(item, items.getOrDefault(item.getId(), List.of()))).toList(),
                 "amountRecords", amounts.stream().map(this::amountRecordMap).toList(),
-                "messages", messages.stream().sorted(Comparator.comparing(MessageDO::getCreateTime)).map(this::messageMap).toList(),
+                "messages", messages.stream().sorted(Comparator.comparing(MessageDO::getCreateTime))
+                        .map(item -> roomMessageMap(item, member)).toList(),
                 "quickCommands", commands.stream().map(this::quickCommandMap).toList());
+    }
+
+    private List<MessageDO> roomMessages(MemberDO member, String roomMode) {
+        List<MessageDO> ownMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                ownRoomMessageQuery(member)
+                        .eq(MessageDO::getChannel, ROOM_MODE_PRIVATE.equals(roomMode)
+                                ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP)
+                        .orderByDesc(MessageDO::getCreateTime).last("LIMIT 80")));
+        if (ROOM_MODE_PRIVATE.equals(roomMode)) {
+            List<MessageDO> settlements = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                    ownRoomMessageQuery(member).eq(MessageDO::getCommandType, "SETTLEMENT")
+                            .orderByDesc(MessageDO::getCreateTime).last("LIMIT 30")));
+            return mergeMessages(ownMessages, settlements, 80);
+        }
+        List<MessageDO> sharedMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                        .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
+                        .in(MessageDO::getCommandType, "BET", "CHAT")
+                        .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
+        return mergeMessages(ownMessages, sharedMessages, 100);
+    }
+
+    private LambdaQueryWrapper<MessageDO> ownRoomMessageQuery(MemberDO member) {
+        return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                .and(wrapper -> wrapper.eq(MessageDO::getMemberId, member.getId())
+                        .or(nested -> nested.isNull(MessageDO::getMemberId)
+                                .eq(MessageDO::getMember, member.getName())));
+    }
+
+    private List<MessageDO> mergeMessages(List<MessageDO> first, List<MessageDO> second, int limit) {
+        Map<Long, MessageDO> byId = new LinkedHashMap<>();
+        first.forEach(item -> byId.put(item.getId(), item));
+        second.forEach(item -> byId.put(item.getId(), item));
+        return byId.values().stream().sorted(Comparator.comparing(MessageDO::getCreateTime).reversed())
+                .limit(limit).toList();
+    }
+
+    private Map<String, Object> roomMessageMap(MessageDO item, MemberDO member) {
+        Map<String, Object> result = messageMap(item);
+        boolean own = Objects.equals(item.getMemberId(), member.getId())
+                || item.getMemberId() == null && Objects.equals(item.getMember(), member.getName());
+        result.put("own", own);
+        if (!own) {
+            result.put("orderId", "");
+            result.put("error", "");
+            result.put("reply", "");
+        }
+        return result;
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
-            MemberDO member = requireRoomMember(reqVO);
+            RoomAccess access = requireRoomAccess(reqVO);
+            MemberDO member = access.member();
             LotteryReqVO.PlaceBet bet = new LotteryReqVO.PlaceBet();
             bet.setMemberId(member.getId());
             bet.setPeriod(reqVO.getPeriod());
             bet.setContent(reqVO.getContent());
-            bet.setChannel("网页群");
-            bet.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null : "room:" + member.getId() + ":" + reqVO.getExternalId());
+            bet.setChannel(access.channel());
+            bet.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null
+                    : "room:" + access.mode() + ":" + member.getId() + ":" + reqVO.getExternalId());
             return betResultMap(placeBetInternal(bet, member.getName()));
         });
     }
@@ -1725,7 +1823,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     public Map<String, Object> previewRoomBet(LotteryRoomReqVO.PreviewBet reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
-            MemberDO member = requireRoomMember(reqVO);
+            MemberDO member = requireRoomAccess(reqVO).member();
             List<LotteryBettingService.ParsedBet> items = bettingService.parse(reqVO.getContent(),
                     getEffectiveOdds(member.getUserId()));
             return map("count", items.size(), "total", money(items.stream().map(LotteryBettingService.ParsedBet::amount)
@@ -1737,14 +1835,16 @@ public class LotteryServiceImpl implements LotteryService {
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> processRoomMessage(LotteryRoomReqVO.Message reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
-            MemberDO member = requireRoomMember(reqVO);
+            RoomAccess access = requireRoomAccess(reqVO);
+            MemberDO member = access.member();
             LotteryReqVO.IncomingMessage message = new LotteryReqVO.IncomingMessage();
             message.setMemberId(member.getId());
             message.setMemberName(member.getName());
             message.setPeriod(reqVO.getPeriod());
             message.setContent(reqVO.getContent());
-            message.setChannel("网页群");
-            message.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null : "room:" + member.getId() + ":" + reqVO.getExternalId());
+            message.setChannel(access.channel());
+            message.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null
+                    : "room:" + access.mode() + ":" + member.getId() + ":" + reqVO.getExternalId());
             return processIncomingMessageInternal(message, member.getName());
         });
     }
@@ -1753,14 +1853,15 @@ public class LotteryServiceImpl implements LotteryService {
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
-            MemberDO member = requireRoomMember(reqVO);
-            requireRoomOperation(member.getUserId(), "网页群");
+            RoomAccess access = requireRoomAccess(reqVO);
+            MemberDO member = access.member();
+            requireRoomOperation(member.getUserId(), access.channel());
             LotteryReqVO.Transfer transfer = new LotteryReqVO.Transfer();
             transfer.setType(reqVO.getType());
             transfer.setAmount(reqVO.getAmount());
             transfer.setRemark(reqVO.getRemark());
             if (isAutoProxy(member)) {
-                return approveAutoProxyTransfer(member, transfer, "", "网页群", null,
+                return approveAutoProxyTransfer(member, transfer, "", access.channel(), null,
                         "自动托:" + member.getName());
             }
             return map("id", createAmountRequest(member.getId(), transfer));
@@ -1771,12 +1872,12 @@ public class LotteryServiceImpl implements LotteryService {
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
-            MemberDO member = requireRoomMember(reqVO);
+            MemberDO member = requireRoomAccess(reqVO).member();
             return cancelResultMap(cancelOrderInternal(orderId, member.getId(), member.getName()));
         });
     }
 
-    private MemberDO requireRoomMember(LotteryRoomReqVO.Credential reqVO) {
+    private RoomAccess requireRoomAccess(LotteryRoomReqVO.Credential reqVO) {
         MemberDO member = memberMapper.selectOne(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getOpenId, reqVO.getOpenId()));
         if (member == null) throw exception(ROOM_CREDENTIAL_INVALID);
         if (enabled("enableFingerCheck", member.getUserId()) && StrUtil.isNotBlank(member.getFingerprint())
@@ -1785,7 +1886,18 @@ public class LotteryServiceImpl implements LotteryService {
             member.setFingerprint(reqVO.getFp());
             memberMapper.updateById(member);
         }
-        return member;
+        LinkConfigDO links = ownerLinkConfig(member.getUserId());
+        boolean groupEnabled = links == null || links.getGroupLinkEnabled() == null || bool(links.getGroupLinkEnabled());
+        boolean privateEnabled = links == null || links.getPrivateLinkEnabled() == null || bool(links.getPrivateLinkEnabled());
+        String defaultMode = links == null ? ROOM_MODE_GROUP : value(links.getDefaultRoomMode(), ROOM_MODE_GROUP);
+        if (ROOM_MODE_GROUP.equals(defaultMode) && !groupEnabled) defaultMode = ROOM_MODE_PRIVATE;
+        if (ROOM_MODE_PRIVATE.equals(defaultMode) && !privateEnabled) defaultMode = ROOM_MODE_GROUP;
+        String roomMode = StrUtil.blankToDefault(reqVO.getRoomMode(), defaultMode);
+        if (ROOM_MODE_GROUP.equals(roomMode) && !groupEnabled
+                || ROOM_MODE_PRIVATE.equals(roomMode) && !privateEnabled) {
+            throw exception(ROOM_MODE_DISABLED);
+        }
+        return new RoomAccess(member, roomMode);
     }
 
     private void requireRoomOperation(Long userId, String channel) {
@@ -1796,7 +1908,8 @@ public class LotteryServiceImpl implements LotteryService {
 
     private boolean roomOperationAvailable(Long userId, String channel) {
         return bool(requireState(userId).getRoomOpen())
-                && (!"网页群".equals(StrUtil.blankToDefault(channel, "网页群")) || enabled("pullEnable", userId));
+                && (!CHANNEL_WEB_GROUP.equals(StrUtil.blankToDefault(channel, CHANNEL_WEB_GROUP))
+                || enabled("pullEnable", userId));
     }
 
     private Map<String, Object> roomClosedReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
@@ -1859,6 +1972,7 @@ public class LotteryServiceImpl implements LotteryService {
     private MessageDO saveCommandMessage(MemberDO member, LotteryReqVO.IncomingMessage reqVO, String type, String reply) {
         MessageDO message = new MessageDO();
         message.setChannel(reqVO.getChannel());
+        message.setMemberId(member.getId());
         message.setMember(member.getName());
         message.setPeriod(value(reqVO.getPeriod(), ""));
         message.setContent(reqVO.getContent());
@@ -2085,13 +2199,30 @@ public class LotteryServiceImpl implements LotteryService {
     private Map<String, String> linkPayload(MemberDO member, String origin) {
         String base = StrUtil.removeSuffix(StrUtil.blankToDefault(origin, "http://localhost:8080"), "/");
         String tenantId = String.valueOf(TenantContextHolder.getRequiredTenantId());
-        String roomUrl = base + "/room?tenantId=" + tenantId + "&openId=" + member.getOpenId();
-        LinkConfigDO links = DataPermissionUtils.executeIgnore(() -> linkConfigMapper.selectOne(
-                new LambdaQueryWrapper<LinkConfigDO>().eq(LinkConfigDO::getUserId, member.getUserId()).last("LIMIT 1")));
-        int shortUrlMode = links == null ? 2 : value(links.getShortUrlMode(), 2);
-        String shortUrl = shortUrlMode == 0 ? "" : base + "/r/" + member.getOpenId() + "?tenantId=" + tenantId;
-        return Map.of("roomUrl", roomUrl, "longUrl", roomUrl, "shortUrl", shortUrl,
-                "qrText", roomUrl, "openId", member.getOpenId());
+        LinkConfigDO links = ownerLinkConfig(member.getUserId());
+        boolean groupEnabled = links == null || links.getGroupLinkEnabled() == null || bool(links.getGroupLinkEnabled());
+        boolean privateEnabled = links == null || links.getPrivateLinkEnabled() == null || bool(links.getPrivateLinkEnabled());
+        String defaultMode = links == null ? ROOM_MODE_GROUP : value(links.getDefaultRoomMode(), ROOM_MODE_GROUP);
+        if (ROOM_MODE_GROUP.equals(defaultMode) && !groupEnabled) defaultMode = ROOM_MODE_PRIVATE;
+        if (ROOM_MODE_PRIVATE.equals(defaultMode) && !privateEnabled) defaultMode = ROOM_MODE_GROUP;
+        String groupUrl = groupEnabled ? base + "/g/" + member.getOpenId() + "?tenantId=" + tenantId : "";
+        String privateUrl = privateEnabled ? base + "/p/" + member.getOpenId() + "?tenantId=" + tenantId : "";
+        String defaultUrl = ROOM_MODE_PRIVATE.equals(defaultMode) ? privateUrl : groupUrl;
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("roomUrl", defaultUrl);
+        result.put("longUrl", defaultUrl);
+        result.put("shortUrl", defaultUrl);
+        result.put("qrText", defaultUrl);
+        result.put("groupUrl", groupUrl);
+        result.put("privateUrl", privateUrl);
+        result.put("defaultMode", defaultMode);
+        result.put("openId", member.getOpenId());
+        return result;
+    }
+
+    private LinkConfigDO ownerLinkConfig(Long userId) {
+        return DataPermissionUtils.executeIgnore(() -> linkConfigMapper.selectOne(
+                new LambdaQueryWrapper<LinkConfigDO>().eq(LinkConfigDO::getUserId, userId).last("LIMIT 1")));
     }
 
     private void log(String member, String action) {
