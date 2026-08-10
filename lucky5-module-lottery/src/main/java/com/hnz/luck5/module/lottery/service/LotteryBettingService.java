@@ -376,11 +376,14 @@ public class LotteryBettingService {
 
     private ParsedBet basicBet(String selection, BigDecimal amount, List<OddDO> odds) {
         String play = "大小".contains(selection) ? "大小" : "单双".contains(selection) ? "单双" : "龙虎";
+        if ("龙虎".equals(play)) {
+            String code = "和".equals(selection) ? "regexh" : "regexlh";
+            return configuredBet(play, selection, amount, code, odds);
+        }
         OddDO configured = odds.stream().filter(item -> "启用".equals(item.getStatus())
                 && (selection.equals(item.getItem()) || selection.equals(item.getPlay()))).findFirst().orElse(null);
-        BigDecimal fallback = "和".equals(selection) ? new BigDecimal("8.8")
-                : "龙".equals(selection) || "虎".equals(selection) ? new BigDecimal("1.95") : new BigDecimal("1.98");
-        return new ParsedBet(play, selection, amount, configured == null ? fallback : configured.getRate());
+        return new ParsedBet(play, selection, amount,
+                configured == null ? new BigDecimal("1.98") : configured.getRate());
     }
 
     private ParsedBet configuredBet(String play, String selection, BigDecimal amount, String code, List<OddDO> odds) {

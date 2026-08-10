@@ -71,6 +71,21 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void appliesConfiguredDragonTigerAndTieOddsAndLimits() {
+        OddDO dragonTiger = odd("regexlh", "龙虎", "2");
+        dragonTiger.setMinLimit(new BigDecimal("100"));
+        OddDO tie = odd("regexh", "和", "9");
+        tie.setMinLimit(new BigDecimal("100"));
+        List<OddDO> configuredOdds = List.of(dragonTiger, tie);
+
+        assertThat(service.parse("龙虎和各100", configuredOdds))
+                .extracting(LotteryBettingService.ParsedBet::odds)
+                .containsExactly(new BigDecimal("2"), new BigDecimal("2"), new BigDecimal("9"));
+        assertThatThrownBy(() -> service.parse("龙50", configuredOdds)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> service.parse("和50", configuredOdds)).isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
     void derivesAndSettlesDraws() {
         LotteryBettingService.DrawResult draw = service.deriveDraw("1379");
         assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
