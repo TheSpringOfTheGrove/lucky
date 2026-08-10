@@ -64,6 +64,25 @@ class LotteryMessageQueryTest {
                 .containsExactly("机器人", "玩家A");
     }
 
+    @Test
+    void includesAutoProxyRoomMessagesAndExcludesDrawResults() {
+        MessageDO autoProxyBet = message(3L, "A01", "20260810181", "大100", "@A01\n下注成功");
+        autoProxyBet.setMessageType("AUTO_PROXY");
+        autoProxyBet.setCommandType("BET");
+        MessageDO drawResult = message(2L, "", "20260810180", "", "180期开奖结果-0|6|2|2|2");
+        drawResult.setCommandType("DRAW_RESULT");
+        when(messageMapper.selectList(any())).thenReturn(List.of(autoProxyBet, drawResult));
+
+        LotteryReqVO.MessagePage request = new LotteryReqVO.MessagePage();
+        PageResult<Map<String, Object>> result = service.getMessages(request);
+
+        assertThat(result.getTotal()).isEqualTo(2);
+        assertThat(result.getList()).extracting(row -> row.get("sender"))
+                .containsExactly("机器人", "A01");
+        assertThat(result.getList()).extracting(row -> row.get("content"))
+                .containsExactly("@A01\n下注成功", "大100");
+    }
+
     private MessageDO message(Long id, String member, String period, String content, String reply) {
         MessageDO message = new MessageDO();
         message.setId(id);

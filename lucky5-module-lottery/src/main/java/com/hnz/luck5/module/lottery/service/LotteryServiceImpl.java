@@ -58,6 +58,7 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String TYPE_AUTO_PROXY = "AUTO_PROXY";
     private static final String COMMAND_SETTLEMENT = "SETTLEMENT";
     private static final String COMMAND_PAYOUT_SUMMARY = "PAYOUT_SUMMARY";
+    private static final Set<String> DRAW_RESULT_COMMANDS = Set.of("DRAW", "DRAW_RESULT", "LOTTERY_RESULT");
     private static final String ROOM_MODE_GROUP = "GROUP";
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
     private static final String CHANNEL_WEB_GROUP = "网页群";
@@ -1582,8 +1583,8 @@ public class LotteryServiceImpl implements LotteryService {
         boolean nicknameCanMatchRobot = StrUtil.isNotBlank(nickname)
                 && StrUtil.containsIgnoreCase("机器人", nickname);
         LambdaQueryWrapper<MessageDO> query = new LambdaQueryWrapper<MessageDO>()
-                .and(wrapper -> wrapper.isNull(MessageDO::getMessageType)
-                        .or().ne(MessageDO::getMessageType, TYPE_AUTO_PROXY))
+                .and(wrapper -> wrapper.isNull(MessageDO::getCommandType)
+                        .or().notIn(MessageDO::getCommandType, DRAW_RESULT_COMMANDS))
                 .like(StrUtil.isNotBlank(period), MessageDO::getPeriod, period)
                 .and(StrUtil.isNotBlank(content), wrapper -> wrapper.like(MessageDO::getContent, content)
                         .or().like(MessageDO::getReply, content))
@@ -1592,6 +1593,9 @@ public class LotteryServiceImpl implements LotteryService {
                 .orderByDesc(MessageDO::getId);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (MessageDO message : messageMapper.selectList(query)) {
+            if (DRAW_RESULT_COMMANDS.contains(StrUtil.blankToDefault(message.getCommandType(), ""))) {
+                continue;
+            }
             for (Map<String, Object> row : messageDisplayRows(message)) {
                 if (StrUtil.isNotBlank(content)
                         && !StrUtil.containsIgnoreCase(String.valueOf(row.get("content")), content)) {
