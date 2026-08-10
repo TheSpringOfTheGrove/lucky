@@ -20,11 +20,8 @@ import java.math.BigDecimal;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LotteryOrderCancelTest {
@@ -84,13 +81,28 @@ class LotteryOrderCancelTest {
     }
 
     @Test
-    void ownerCannotCancelAutoProxyOrder() {
-        when(orderMapper.selectById("O-1"))
-                .thenReturn(pendingOrder("AUTO_PROXY", "\u81ea\u52a8\u6258"));
+    void ownerCanCancelPendingAutoProxyOrder() {
+        OrderDO order = pendingOrder("AUTO_PROXY", "\u81ea\u52a8\u6258");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("\u865a\u62df\u6258A");
+        member.setUserId(142L);
+        member.setBalance(BigDecimal.ZERO);
+        member.setTotalBet(new BigDecimal("100"));
+        member.setVersion(0);
+        when(orderMapper.selectById("O-1")).thenReturn(order);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(messageMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
 
-        assertThatThrownBy(() -> service.cancelOrder("O-1"));
+        Map<String, Object> result = service.cancelOrder("O-1");
 
-        verify(memberMapper, never()).selectById(any());
+        assertThat(result)
+                .containsEntry("status", "\u5df2\u9000\u7801")
+                .containsEntry("refunded", new BigDecimal("100.00"));
+        assertThat(member.getBalance()).isEqualByComparingTo("100.00");
+        assertThat(member.getTotalBet()).isEqualByComparingTo("0.00");
     }
 
     private OrderDO pendingOrder(String orderType, String source) {
