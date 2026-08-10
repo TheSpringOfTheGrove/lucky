@@ -7,6 +7,8 @@ const nickname = ref('')
 const period = ref('')
 const orderType = ref('')
 const refreshing = ref(false)
+const detailVisible = ref(false)
+const detailOrder = ref<any>(null)
 
 const refreshOrders = async () => {
   if (refreshing.value) return
@@ -30,6 +32,11 @@ const rows = computed(() => {
   )
 })
 
+const openDetails = (row: any) => {
+  detailOrder.value = row
+  detailVisible.value = true
+}
+
 </script>
 
 <template>
@@ -48,24 +55,14 @@ const rows = computed(() => {
     </div>
     <el-card shadow="never">
       <PaginatedTable :data="rows" border>
-        <el-table-column type="expand" width="48">
+        <el-table-column prop="period" label="期号" min-width="150" />
+        <el-table-column label="文本" min-width="240">
           <template #default="{ row }">
-            <el-table :data="row.items || []" border class="order-item-table">
-              <el-table-column prop="play" label="玩法" min-width="100" />
-              <el-table-column prop="selection" label="选项" min-width="90" />
-              <el-table-column prop="amount" label="金额" min-width="90" />
-              <el-table-column prop="odds" label="赔率" min-width="90" />
-              <el-table-column label="结果" min-width="90">
-                <template #default="scope">
-                  {{ scope.row.won === null ? '待开奖' : scope.row.won ? '中' : '未中' }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="payout" label="派彩" min-width="90" />
-            </el-table>
+            <el-link class="order-content-link" type="primary" :underline="false" @click="openDetails(row)">
+              {{ row.content }}
+            </el-link>
           </template>
         </el-table-column>
-        <el-table-column prop="period" label="期号" min-width="150" />
-        <el-table-column prop="content" label="文本" min-width="240" />
         <el-table-column prop="member" label="会员" min-width="120" />
         <el-table-column prop="amount" label="总金额" min-width="110" />
         <el-table-column prop="status" label="状态" min-width="110" />
@@ -81,13 +78,60 @@ const rows = computed(() => {
         <el-table-column prop="createdAt" label="创建时间" min-width="200" />
       </PaginatedTable>
     </el-card>
+
+    <el-dialog
+      v-model="detailVisible"
+      :title="`${detailOrder?.period || ''} 订单详情`"
+      width="820px"
+      destroy-on-close
+    >
+      <el-descriptions v-if="detailOrder" :column="3" border class="mb-16px">
+        <el-descriptions-item label="期号">{{ detailOrder.period }}</el-descriptions-item>
+        <el-descriptions-item label="会员">{{ detailOrder.member }}</el-descriptions-item>
+        <el-descriptions-item label="总金额">{{ detailOrder.amount }}</el-descriptions-item>
+        <el-descriptions-item label="状态">{{ detailOrder.status }}</el-descriptions-item>
+        <el-descriptions-item label="类型">
+          {{ detailOrder.orderType === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="来源">网页</el-descriptions-item>
+      </el-descriptions>
+      <div v-if="detailOrder" class="order-detail-content">
+        <strong>原始文本</strong>
+        <div>{{ detailOrder.content }}</div>
+      </div>
+      <el-table :data="detailOrder?.items || []" border max-height="420">
+        <el-table-column prop="play" label="玩法" min-width="100" />
+        <el-table-column prop="selection" label="选项" min-width="90" />
+        <el-table-column prop="amount" label="金额" min-width="90" />
+        <el-table-column prop="odds" label="赔率" min-width="90" />
+        <el-table-column label="结果" min-width="90">
+          <template #default="scope">
+            {{ scope.row.won === null ? '待开奖' : scope.row.won ? '中' : '未中' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="payout" label="派彩" min-width="90" />
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.order-item-table {
-  margin: 10px 18px;
-  width: calc(100% - 36px) !important;
+.order-content-link {
+  display: inline-flex;
+  max-width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.order-detail-content {
+  display: grid;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
+  gap: 8px;
 }
 
 .order-type-select {
