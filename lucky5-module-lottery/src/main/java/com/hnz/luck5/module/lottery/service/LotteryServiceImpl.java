@@ -153,6 +153,7 @@ public class LotteryServiceImpl implements LotteryService {
         List<BetItemDO> items = orderIds.isEmpty() ? List.of() : betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds));
         Map<String, List<BetItemDO>> itemsByOrder = items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        Map<String, String> drawResultsByPeriod = drawResultsForOrders(loginUserId, orders);
         List<DrawDO> draws = drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                 .orderByDesc(DrawDO::getPeriod).last("LIMIT 500"));
         List<PresetOrderDO> presets = presetOrderMapper.selectList(new LambdaQueryWrapper<PresetOrderDO>()
@@ -207,7 +208,8 @@ public class LotteryServiceImpl implements LotteryService {
                         rebates, separateDragonRebate))).toList() : List.of());
         result.put("amountRecords", has("lottery:amount:manage") ? amountRecords.stream().map(this::amountRecordMap).toList() : List.of());
         result.put("orders", hasAny("lottery:order:manage", "lottery:history:query")
-                ? orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()))).toList() : List.of());
+                ? orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()),
+                        drawResultsByPeriod.get(item.getPeriod()))).toList() : List.of());
         result.put("drawHistory", has("lottery:draw:manage") ? draws.stream().map(this::drawMap).toList() : List.of());
         result.put("fakeOrders", has("lottery:preset:manage") ? presets.stream().map(item -> presetMap(item, odds)).toList() : List.of());
         result.put("quickCommands", has("lottery:quick-command:manage") ? commands.stream().map(this::quickCommandMap).toList() : List.of());
@@ -290,13 +292,29 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets) {
+        return orderMap(item, bets, null);
+    }
+
+    private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets, String drawResult) {
         return map("id", item.getId(), "member", item.getMemberName(), "period", item.getPeriod(), "content", item.getContent(),
                 "amount", money(item.getAmount()), "win", money(item.getWin()), "status", item.getStatus(), "source", item.getSource(),
                 "orderType", value(item.getOrderType(), TYPE_PLAYER), "autoProxy", isAutoProxyOrder(item),
                 "deliveryMode", item.getDeliveryMode(), "marketStatus", item.getMarketStatus(), "marketOrderId", item.getMarketOrderId(),
                 "marketError", item.getMarketError(), "marketAttempts", value(item.getMarketAttempts(), 0),
                 "createdAt", date(item.getCreateTime()), "settledAt", date(item.getSettledAt()),
-                "itemCount", bets.size(), "items", bets.stream().map(this::betItemMap).toList());
+                "drawResult", value(drawResult, ""), "itemCount", bets.size(),
+                "items", bets.stream().map(this::betItemMap).toList());
+    }
+
+    private Map<String, String> drawResultsForOrders(Long userId, List<OrderDO> orders) {
+        Set<String> periods = orders.stream().map(OrderDO::getPeriod).filter(StrUtil::isNotBlank).collect(Collectors.toSet());
+        if (userId == null || periods.isEmpty()) {
+            return Map.of();
+        }
+        return drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
+                        .eq(DrawDO::getUserId, userId).in(DrawDO::getPeriod, periods))
+                .stream().collect(Collectors.toMap(DrawDO::getPeriod, item -> value(item.getResult(), ""),
+                        (first, ignored) -> first));
     }
 
     private Map<String, Object> betItemMap(BetItemDO item) {
@@ -670,7 +688,9 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, List<BetItemDO>> itemsByOrder = orderIds.isEmpty() ? Map.of()
                 : betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds))
                         .stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
-        return orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()))).toList();
+        Map<String, String> drawResultsByPeriod = drawResultsForOrders(SecurityFrameworkUtils.getLoginUserId(), orders);
+        return orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()),
+                drawResultsByPeriod.get(item.getPeriod()))).toList();
     }
 
     @Override
@@ -694,7 +714,9 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, Object> result = memberMap(member, rebateCalculator.calculate(member, orders, items, rebates,
                 enabled("dragonTigerSeparateRebate", member.getUserId())));
         result.put("amountRecords", amounts.stream().map(this::amountRecordMap).toList());
-        result.put("orders", orders.stream().map(item -> orderMap(item, items.getOrDefault(item.getId(), List.of()))).toList());
+        Map<String, String> drawResultsByPeriod = drawResultsForOrders(member.getUserId(), orders);
+        result.put("orders", orders.stream().map(item -> orderMap(item, items.getOrDefault(item.getId(), List.of()),
+                drawResultsByPeriod.get(item.getPeriod()))).toList());
         result.put("balanceLedgers", ledgers.stream().map(this::balanceLedgerMap).toList());
         return result;
     }

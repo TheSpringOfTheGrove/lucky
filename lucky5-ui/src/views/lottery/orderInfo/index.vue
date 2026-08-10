@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core'
 import { computed, onMounted, ref } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -9,6 +10,8 @@ const orderType = ref('')
 const refreshing = ref(false)
 const detailVisible = ref(false)
 const detailOrder = ref<any>(null)
+const isMobile = useMediaQuery('(max-width: 600px)')
+const detailDescriptionColumns = computed(() => (isMobile.value ? 1 : 3))
 
 const refreshOrders = async () => {
   if (refreshing.value) return
@@ -93,36 +96,44 @@ const detailRowClassName = ({ row }: { row: any }) => {
     <el-dialog
       v-model="detailVisible"
       :title="`${detailOrder?.period || ''} 订单详情`"
-      width="820px"
+      :width="isMobile ? 'calc(100vw - 16px)' : '820px'"
+      class="order-detail-dialog"
       destroy-on-close
     >
-      <el-descriptions v-if="detailOrder" :column="3" border class="mb-16px">
+      <el-descriptions
+        v-if="detailOrder"
+        :column="detailDescriptionColumns"
+        border
+        class="order-detail-summary mb-16px"
+      >
         <el-descriptions-item label="期号">{{ detailOrder.period }}</el-descriptions-item>
         <el-descriptions-item label="会员">{{ detailOrder.member }}</el-descriptions-item>
         <el-descriptions-item label="总金额">{{ detailOrder.amount }}</el-descriptions-item>
-        <el-descriptions-item label="状态">{{ detailOrder.status }}</el-descriptions-item>
-        <el-descriptions-item label="类型">
+        <el-descriptions-item label="开奖号码">
+          {{ detailOrder.drawResult || '待开奖' }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="!isMobile" label="类型">
           {{ detailOrder.orderType === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}
         </el-descriptions-item>
-        <el-descriptions-item label="来源">网页</el-descriptions-item>
+        <el-descriptions-item v-if="!isMobile" label="来源">网页</el-descriptions-item>
       </el-descriptions>
       <div v-if="detailOrder" class="order-detail-content">
         <strong>原始文本</strong>
         <div>{{ detailOrder.content }}</div>
       </div>
       <el-table :data="detailItems" border max-height="420" :row-class-name="detailRowClassName">
-        <el-table-column prop="play" label="玩法" min-width="100" />
-        <el-table-column prop="selection" label="选项" min-width="90" />
-        <el-table-column prop="amount" label="金额" min-width="90" />
-        <el-table-column prop="odds" label="赔率" min-width="90" />
-        <el-table-column label="结果" min-width="90">
+        <el-table-column prop="play" label="玩法" :min-width="isMobile ? 72 : 100" />
+        <el-table-column prop="selection" label="选项" :min-width="isMobile ? 74 : 90" />
+        <el-table-column prop="amount" label="金额" :min-width="isMobile ? 56 : 90" />
+        <el-table-column v-if="!isMobile" prop="odds" label="赔率" min-width="90" />
+        <el-table-column label="结果" :min-width="isMobile ? 76 : 90">
           <template #default="scope">
             <el-tag v-if="scope.row.won === true" type="danger" effect="dark">中奖</el-tag>
             <el-tag v-else-if="scope.row.won === false" type="success" effect="plain">未中奖</el-tag>
             <el-tag v-else type="info" effect="plain">待开奖</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="payout" label="派彩" min-width="90" />
+        <el-table-column v-if="!isMobile" prop="payout" label="派彩" min-width="90" />
       </el-table>
     </el-dialog>
   </div>
@@ -157,5 +168,27 @@ const detailRowClassName = ({ row }: { row: any }) => {
 
 .order-type-select {
   width: 140px;
+}
+
+@media (max-width: 600px) {
+  :deep(.order-detail-dialog) {
+    margin-top: 4vh;
+  }
+
+  :deep(.order-detail-dialog .el-dialog__header) {
+    padding: 14px 16px 10px;
+  }
+
+  :deep(.order-detail-dialog .el-dialog__body) {
+    padding: 10px 12px 16px;
+  }
+
+  :deep(.order-detail-summary .el-descriptions__label.el-descriptions__cell) {
+    width: 86px;
+  }
+
+  :deep(.order-detail-dialog .el-table .cell) {
+    padding: 0 6px;
+  }
 }
 </style>
