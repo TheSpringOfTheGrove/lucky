@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
+import { ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -10,6 +11,7 @@ const orderType = ref('')
 const refreshing = ref(false)
 const detailVisible = ref(false)
 const detailOrder = ref<any>(null)
+const cancellingId = ref('')
 const isMobile = useMediaQuery('(max-width: 600px)')
 const detailDescriptionColumns = computed(() => (isMobile.value ? 1 : 3))
 
@@ -51,6 +53,36 @@ const detailRowClassName = ({ row }: { row: any }) => {
   if (row.won === false) return 'order-detail-row--lost'
   return ''
 }
+
+const canCancel = (row: any) =>
+  row.status === '未开奖' && row.orderType !== 'AUTO_PROXY' && row.autoProxy !== true
+
+const cancelOrder = async (row: any) => {
+  if (!canCancel(row) || cancellingId.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定退回会员“${row.member}”的这笔订单吗？退码后将返还 ${row.amount} 积分，且不可撤销。`,
+      '确认退码',
+      {
+        confirmButtonText: '确认退码',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+  cancellingId.value = row.id
+  try {
+    const result = await store.cancelOrder(row.id)
+    if (result) {
+      await refreshOrders()
+      if (detailOrder.value?.id === row.id) detailVisible.value = false
+    }
+  } finally {
+    cancellingId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -84,6 +116,17 @@ const detailRowClassName = ({ row }: { row: any }) => {
             <span>{{ row.status }}</span>
             <span>{{ row.orderType === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}</span>
           </div>
+          <div v-if="canCancel(row)" class="order-mobile-actions">
+            <el-button
+              type="danger"
+              plain
+              size="small"
+              :loading="cancellingId === row.id"
+              @click.stop="cancelOrder(row)"
+            >
+              退码
+            </el-button>
+          </div>
         </template>
         <el-table-column prop="period" label="期号" min-width="150" />
         <el-table-column label="文本" min-width="240">
@@ -111,6 +154,20 @@ const detailRowClassName = ({ row }: { row: any }) => {
           <template #default>网页</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" min-width="200" />
+        <el-table-column label="操作" width="86" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="canCancel(row)"
+              type="danger"
+              link
+              :loading="cancellingId === row.id"
+              @click="cancelOrder(row)"
+            >
+              退码
+            </el-button>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
       </PaginatedTable>
     </el-card>
 
@@ -191,6 +248,12 @@ const detailRowClassName = ({ row }: { row: any }) => {
 
 .order-type-select {
   width: 140px;
+}
+
+.order-mobile-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 @media (width <= 600px) {

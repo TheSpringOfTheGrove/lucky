@@ -1284,19 +1284,21 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> cancelOrder(String id) {
-        return cancelResultMap(cancelOrderInternal(id, null, loginName()));
+        return cancelResultMap(cancelOrderInternal(id, null, loginName(), false));
     }
 
-    private CancelResult cancelOrderInternal(String id, String expectedMemberId, String actor) {
+    private CancelResult cancelOrderInternal(String id, String expectedMemberId, String actor,
+                                             boolean requireCancelEnabled) {
         OrderDO order = orderMapper.selectById(id);
         if (order == null || expectedMemberId != null && !expectedMemberId.equals(order.getMemberId())) {
             throw exception(ORDER_NOT_FOUND);
         }
         if (!"未开奖".equals(order.getStatus())) throw exception(ORDER_CAN_NOT_CANCEL);
+        if (isAutoProxyOrder(order)) throw exception(ORDER_CAN_NOT_CANCEL);
         if ("MARKET_ADAPTER".equals(order.getDeliveryMode())
                 && Set.of("SUBMITTED", "CONFIRMED").contains(order.getMarketStatus())) throw exception(ORDER_CAN_NOT_CANCEL);
         MemberDO member = requireMember(order.getMemberId());
-        if (!enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
+        if (requireCancelEnabled && !enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
         order.setStatus("已退码");
         order.setCancelledAt(LocalDateTime.now());
         int orderVersion = value(order.getVersion(), 0);
@@ -1679,7 +1681,7 @@ public class LotteryServiceImpl implements LotteryService {
         java.util.regex.Matcher cancel = java.util.regex.Pattern.compile("^退(?:码)?\\s*([A-Za-z0-9_-]+)$").matcher(content);
         if (cancel.matches()) {
             String orderId = cancel.group(1);
-            CancelResult result = cancelOrderInternal(orderId, member.getId(), actor);
+            CancelResult result = cancelOrderInternal(orderId, member.getId(), actor, true);
             String reply = robotReplyTemplate.cancelSucceeded(result.id(), result.refunded());
             MessageDO message = saveCommandMessage(member, reqVO, "CANCEL", reply);
             message.setOrderId(orderId);
@@ -2048,7 +2050,7 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomAccess(reqVO).member();
-            return cancelResultMap(cancelOrderInternal(orderId, member.getId(), member.getName()));
+            return cancelResultMap(cancelOrderInternal(orderId, member.getId(), member.getName(), true));
         });
     }
 
@@ -2477,7 +2479,8 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private boolean isAutoProxyOrder(OrderDO order) {
-        return order != null && TYPE_AUTO_PROXY.equals(value(order.getOrderType(), TYPE_PLAYER));
+        return order != null && (TYPE_AUTO_PROXY.equals(value(order.getOrderType(), TYPE_PLAYER))
+                || "自动托".equals(order.getSource()));
     }
 
     private boolean bool(Boolean value) {
