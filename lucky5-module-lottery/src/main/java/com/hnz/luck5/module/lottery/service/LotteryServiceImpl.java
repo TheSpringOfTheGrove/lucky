@@ -850,8 +850,6 @@ public class LotteryServiceImpl implements LotteryService {
         if (StrUtil.isBlank(member.getPartner()) || "无".equals(member.getPartner())
                 || Objects.equals(member.getName(), member.getPartner())) {
             member.setPartner("无");
-            member.setPartnerNormalRate(ZERO);
-            member.setPartnerLhhRate(ZERO);
         }
     }
 
@@ -863,11 +861,8 @@ public class LotteryServiceImpl implements LotteryService {
         for (MemberDO member : members) {
             String partner = value(member.getPartner(), "无");
             if (!pullerNames.contains(partner) || Objects.equals(member.getName(), partner)) {
-                if (!"无".equals(partner) || money(member.getPartnerNormalRate()).signum() != 0
-                        || money(member.getPartnerLhhRate()).signum() != 0) {
+                if (!"无".equals(partner)) {
                     member.setPartner("无");
-                    member.setPartnerNormalRate(ZERO);
-                    member.setPartnerLhhRate(ZERO);
                     memberMapper.updateById(member);
                 }
             }

@@ -98,8 +98,6 @@ const openEdit = (row: Record<string, any>) => {
 const saveEdit = async () => {
   if (!editForm.partner || editForm.partner === '无') {
     editForm.partner = '无'
-    editForm.partnerNormalRate = 0
-    editForm.partnerLhhRate = 0
   }
   const result = await store.saveDiscounts([{ ...editForm }])
   if (result !== false) {
@@ -264,12 +262,12 @@ const saveBatch = async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="拉手普通返水比例">
-          <el-select v-model="editForm.partnerNormalRate" :disabled="editForm.partner === '无'">
+          <el-select v-model="editForm.partnerNormalRate">
             <el-option v-for="item in rateOptions" :key="item" :label="rate(item)" :value="item" />
           </el-select>
         </el-form-item>
         <el-form-item label="拉手龙虎返水比例">
-          <el-select v-model="editForm.partnerLhhRate" :disabled="editForm.partner === '无'">
+          <el-select v-model="editForm.partnerLhhRate">
             <el-option v-for="item in rateOptions" :key="item" :label="rate(item)" :value="item" />
           </el-select>
         </el-form-item>
