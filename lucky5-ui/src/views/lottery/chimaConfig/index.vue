@@ -7,6 +7,7 @@ const form = reactive({
   siZiXian: 0,
   sanZiXian: 0,
   erZiXian: 0,
+  danZiXian: 0,
   siDingWei: 0,
   sanDingWei: 0,
   erDingWei: 0,
@@ -29,6 +30,13 @@ watch(
         <strong>吃码额度设定</strong>
       </template>
       <el-form :model="form" class="lucky-original-form" label-width="150px">
+        <el-alert
+          class="mb-18px"
+          title="模拟网盘模式下，吃码额度按每期、每种玩法累计；额度为 0 表示该玩法全部进入模拟网盘。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
         <el-form-item label="四字现"
           ><el-input-number v-model="form.siZiXian" :controls="false"
         /></el-form-item>
@@ -37,6 +45,9 @@ watch(
         /></el-form-item>
         <el-form-item label="二字现"
           ><el-input-number v-model="form.erZiXian" :controls="false"
+        /></el-form-item>
+        <el-form-item label="单字现"
+          ><el-input-number v-model="form.danZiXian" :controls="false"
         /></el-form-item>
         <el-form-item label="四定位"
           ><el-input-number v-model="form.siDingWei" :controls="false"
@@ -65,5 +76,4 @@ watch(
     </el-card>
   </div>
 </template>
-
 

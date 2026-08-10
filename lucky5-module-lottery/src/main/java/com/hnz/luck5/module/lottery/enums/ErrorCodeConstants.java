@@ -38,4 +38,6 @@ public interface ErrorCodeConstants {
     ErrorCode ROOM_MODE_DISABLED = new ErrorCode(2_001_000_030, "该房间入口当前未开启");
     ErrorCode ROOM_MODE_REQUIRED = new ErrorCode(2_001_000_031, "请至少开启一种房间入口，并选择已开启的默认入口");
     ErrorCode ISSUE_SOURCE_STALE = new ErrorCode(2_001_000_032, "开奖数据已过期，当前暂停下注，请等待开奖源恢复");
+    ErrorCode SIMULATED_MARKET_BALANCE_NOT_ENOUGH = new ErrorCode(2_001_000_033,
+            "模拟网盘余额不足，本次下注未扣款，请补充测试余额后重试");
 }

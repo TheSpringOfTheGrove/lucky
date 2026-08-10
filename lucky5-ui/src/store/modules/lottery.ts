@@ -110,19 +110,29 @@ const useLucky5StoreBase = defineStore('lucky5', {
       password: '',
       hasPassword: false,
       alertValue: 0,
-      bossMode: false,
+      bossMode: true,
+      marketMode: 'OWNER',
+      realMarketWritesEnabled: false,
       playType: 2,
       useProxy: true
     },
     market: {
       connection: {
         status: '未配置',
+        mode: 'OWNER',
+        balanceSource: '只读盘口余额',
         lineUrl: '',
         displayAccount: '',
         balance: null as number | null,
         error: '',
         lastLoginAt: null as string | null,
-        lastSyncAt: null as string | null
+        lastSyncAt: null as string | null,
+        initialBalance: 0,
+        totalStake: 0,
+        totalPayout: 0,
+        totalRefund: 0,
+        realMarketWritesEnabled: false,
+        recentRoutes: [] as any[]
       },
       issue: null as Record<string, any> | null,
       recentIssues: [] as any[]

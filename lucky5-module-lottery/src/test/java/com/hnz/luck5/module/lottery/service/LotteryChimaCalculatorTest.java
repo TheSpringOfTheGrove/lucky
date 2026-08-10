@@ -1,6 +1,7 @@
 package com.hnz.luck5.module.lottery.service;
 
 import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +47,30 @@ class LotteryChimaCalculatorTest {
         botOrder.setOrderType("AUTO_PROXY");
 
         assertThat(calculator.calculate(List.of(botOrder), List.of(bot), null)).isEmpty();
+    }
+
+    @Test
+    void simulatedMarketOrderOnlyReportsTheLocallyRetainedPart() {
+        LocalDateTime now = LocalDateTime.now();
+        MemberDO member = member("M-1", true, null);
+        OrderDO order = order("M-1", "100", "200", "20260810001", now, "已中奖");
+        order.setId("O-1");
+        MarketRouteItemDO route = new MarketRouteItemDO();
+        route.setOrderId("O-1");
+        route.setLocalAmount(new BigDecimal("30"));
+        route.setSimulatedAmount(new BigDecimal("70"));
+        route.setLocalPayout(new BigDecimal("60"));
+        route.setSimulatedPayout(new BigDecimal("140"));
+        route.setStatus("SETTLED");
+
+        List<LotteryChimaCalculator.PeriodChima> result = calculator.calculate(List.of(order), List.of(member),
+                List.of(route), null);
+
+        assertThat(result).singleElement().satisfies(item -> {
+            assertThat(item.fakeAmount()).isEqualByComparingTo("30.00");
+            assertThat(item.totalWin()).isEqualByComparingTo("60.00");
+            assertThat(item.net()).isEqualByComparingTo("-30.00");
+        });
     }
 
     private MemberDO member(String id, boolean eatEnabled, LocalDateTime flowClearedAt) {
