@@ -64,11 +64,26 @@ const statusTagType = (status: string): OrderStatusTagType => {
   if (status === '已中奖') return 'danger'
   if (status === '未中奖') return 'success'
   if (status === '已退码') return 'info'
+  if (status === '盘口提交中' || status === '退码处理中') return 'warning'
+  if (status === '盘口待核对' || status === '退码待核对') return 'danger'
   if (status.includes('异常')) return 'danger'
   return 'primary'
 }
 
-const canCancel = (row: any) => row.status === '未开奖'
+const displayStatus = (row: any) => {
+  if (row.status !== '未开奖') return row.status
+  if (['PENDING', 'SUBMITTING', 'RETRY'].includes(row.marketStatus)) return '盘口提交中'
+  if (row.marketStatus === 'MANUAL_REVIEW') return '盘口待核对'
+  if (['CANCEL_REQUESTED', 'CANCEL_PENDING'].includes(row.marketStatus)) return '退码处理中'
+  if (row.marketStatus === 'CANCEL_FAILED') return '退码待核对'
+  return row.status
+}
+
+const canCancel = (row: any) =>
+  row.status === '未开奖' &&
+  !['SUBMITTING', 'RETRY', 'UNKNOWN', 'MANUAL_REVIEW', 'CANCEL_REQUESTED', 'CANCEL_PENDING'].includes(
+    row.marketStatus
+  )
 
 const cancelOrder = async (row: any) => {
   if (!canCancel(row) || cancellingId.value) return
@@ -126,7 +141,9 @@ const cancelOrder = async (row: any) => {
           </div>
           <div class="lucky-mobile-card__meta">
             <span>会员：{{ row.member }}</span>
-            <el-tag :type="statusTagType(row.status)" size="small">{{ row.status }}</el-tag>
+            <el-tag :type="statusTagType(displayStatus(row))" size="small">
+              {{ displayStatus(row) }}
+            </el-tag>
             <span>{{ normalizedOrderType(row) === 'AUTO_PROXY' ? '自动托' : '真实玩家' }}</span>
           </div>
           <div v-if="canCancel(row)" class="order-mobile-actions">
@@ -158,7 +175,7 @@ const cancelOrder = async (row: any) => {
         <el-table-column prop="amount" label="总金额" min-width="110" />
         <el-table-column label="状态" min-width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)">{{ row.status }}</el-tag>
+            <el-tag :type="statusTagType(displayStatus(row))">{{ displayStatus(row) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="类型" min-width="110">

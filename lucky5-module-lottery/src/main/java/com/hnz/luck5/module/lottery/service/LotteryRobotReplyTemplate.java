@@ -44,6 +44,15 @@ public class LotteryRobotReplyTemplate {
         return "退码成功：" + orderId + "，退回 " + number(refunded);
     }
 
+    public String cancelPending(String orderId) {
+        return "退码申请已提交盘口核对：" + orderId + "，确认成功后自动退回积分";
+    }
+
+    public String marketBetPending(String memberName, String period, String content) {
+        return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content
+                + "\n【盘口提交中】请等待盘口确认，确认前不会显示下注成功";
+    }
+
     public String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                              BigDecimal amount, BigDecimal balance) {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content

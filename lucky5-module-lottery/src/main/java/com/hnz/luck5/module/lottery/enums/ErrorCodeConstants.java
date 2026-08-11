@@ -34,8 +34,18 @@ public interface ErrorCodeConstants {
     ErrorCode INTEGRATION_NOT_READY = new ErrorCode(2_001_000_027, "第三方机器人尚未完成真实连接验证");
     ErrorCode OWNER_INITIALIZATION_NOT_ALLOWED = new ErrorCode(2_001_000_028, "超级管理员账号不能初始化为老板账号");
     ErrorCode MARKET_CONFIG_REQUIRED = new ErrorCode(2_001_000_029,
-            "老板模式关闭时，请填写网盘会员网址、账户和密码");
+            "请先设置盘口账号密码");
     ErrorCode ROOM_MODE_DISABLED = new ErrorCode(2_001_000_030, "该房间入口当前未开启");
     ErrorCode ROOM_MODE_REQUIRED = new ErrorCode(2_001_000_031, "请至少开启一种房间入口，并选择已开启的默认入口");
     ErrorCode ISSUE_SOURCE_STALE = new ErrorCode(2_001_000_032, "开奖数据已过期，当前暂停下注，请等待开奖源恢复");
+    ErrorCode MARKET_PLAY_UNSUPPORTED = new ErrorCode(2_001_000_033,
+            "当前真实盘口不支持玩法 {} 的选项 {}，已阻止扣款和提交");
+    ErrorCode MARKET_WRITE_DISABLED = new ErrorCode(2_001_000_034,
+            "真实盘口写入安全开关未开启，已阻止扣款和提交");
+    ErrorCode MARKET_ACCOUNT_NOT_READY = new ErrorCode(2_001_000_035,
+            "当前老板的盘口账号尚未连接，无法提交外盘下注");
+    ErrorCode MARKET_ORDER_RECONCILING = new ErrorCode(2_001_000_036,
+            "盘口订单正在核对，暂不能退码，请稍后重试或联系管理员人工核对");
+    ErrorCode MARKET_ROOM_START_NOT_READY = new ErrorCode(2_001_000_037,
+            "盘口账号尚未连接，无法开启盘口模式");
 }

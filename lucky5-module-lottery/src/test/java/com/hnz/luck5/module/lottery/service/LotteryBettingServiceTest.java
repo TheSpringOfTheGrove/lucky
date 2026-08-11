@@ -104,11 +104,19 @@ class LotteryBettingServiceTest {
     }
 
     @Test
-    void matchesFourPositionBetsAgainstFirstFourDigitsOfLucky5Draw() {
+    void matchesFourPositionBetsAgainstLastFourDigitsOfLucky5Draw() {
         LotteryBettingService.ParsedBet regular = service.parse("千1各1", odds).get(0);
         assertThat(regular.selection()).isEqualTo("1XXX");
-        assertThat(service.isWinning(regular, service.deriveDraw("10000"))).isTrue();
-        assertThat(service.isWinning(regular, service.deriveDraw("01000"))).isFalse();
+        assertThat(service.isWinning(regular, service.deriveDraw("01000"))).isTrue();
+        assertThat(service.isWinning(regular, service.deriveDraw("10000"))).isFalse();
+
+        List<LotteryBettingService.ParsedBet> hundredAndTen = service.parse(
+                "百3456789十3456789除双重各20", odds);
+        assertThat(hundredAndTen).hasSize(42);
+        assertThat(hundredAndTen.stream()
+                .filter(item -> service.isWinning(item, service.deriveDraw("66576")))
+                .map(LotteryBettingService.ParsedBet::selection))
+                .containsExactly("X57X");
 
         LotteryBettingService.ParsedBet fifth = service.parse("五位二定千1五2各1", odds).get(0);
         assertThat(fifth.selection()).isEqualTo("1XXX2");

@@ -121,7 +121,7 @@ public class LotteryBettingService {
         if (bet.play().endsWith("定位") || "五位二定".equals(bet.play())) {
             if (bet.selection().contains("X")) {
                 String positionedDigits = digits.length() == 5 && bet.selection().length() == 4
-                        ? digits.substring(0, 4) : digits;
+                        ? digits.substring(1) : digits;
                 if (positionedDigits.length() != bet.selection().length()) return false;
                 for (int i = 0; i < positionedDigits.length(); i++) {
                     char expected = bet.selection().charAt(i);

@@ -69,6 +69,7 @@ const router = useRouter()
             <span class="dashboard-info-card__label">启动状态</span>
             <el-checkbox
               :model-value="store.room.open"
+              :disabled="store.saving"
               @change="(value: boolean) => store.setRoomOpen(value)"
             />
           </div>

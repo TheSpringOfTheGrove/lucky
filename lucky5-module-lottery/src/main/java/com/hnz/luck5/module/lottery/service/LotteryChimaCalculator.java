@@ -1,6 +1,7 @@
 package com.hnz.luck5.module.lottery.service;
 
 import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import org.springframework.stereotype.Service;
 
@@ -19,9 +20,11 @@ public class LotteryChimaCalculator {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
-    public List<PeriodChima> calculate(List<OrderDO> orders, List<MemberDO> members, LocalDateTime chimaClearedAt) {
-        Set<String> eatMembers = members.stream().filter(item -> Boolean.TRUE.equals(item.getEatEnabled()))
+    public List<PeriodChima> calculate(List<OrderDO> orders, List<MemberDO> members, LocalDateTime chimaClearedAt,
+                                       boolean bossMode) {
+        Set<String> eatMembers = members.stream()
                 .filter(item -> !"BOT".equalsIgnoreCase(item.getMemberType()) && !Boolean.TRUE.equals(item.getAutoProxy()))
+                .filter(item -> bossMode || Boolean.TRUE.equals(item.getEatEnabled()))
                 .map(MemberDO::getId).collect(Collectors.toSet());
         Map<String, LocalDateTime> memberClearedAt = new HashMap<>();
         members.forEach(member -> memberClearedAt.put(member.getId(), member.getFlowClearedAt()));
@@ -36,6 +39,29 @@ public class LotteryChimaCalculator {
             BigDecimal[] totals = values.computeIfAbsent(order.getPeriod(), ignored -> new BigDecimal[]{ZERO, ZERO});
             totals[0] = totals[0].add(value(order.getAmount()));
             totals[1] = totals[1].add(value(order.getWin()));
+        }
+        return values.entrySet().stream().map(entry -> new PeriodChima(entry.getKey(), money(entry.getValue()[0]),
+                        money(entry.getValue()[1]), money(entry.getValue()[0].subtract(entry.getValue()[1]))))
+                .sorted(Comparator.comparing(PeriodChima::period).reversed()).toList();
+    }
+
+    public List<PeriodChima> calculateRoutes(List<OrderDO> orders, List<MemberDO> members,
+                                             List<MarketRouteItemDO> routes, LocalDateTime chimaClearedAt) {
+        Map<String, OrderDO> ordersById = orders.stream().collect(Collectors.toMap(OrderDO::getId, item -> item));
+        Map<String, LocalDateTime> memberClearedAt = new HashMap<>();
+        members.forEach(member -> memberClearedAt.put(member.getId(), member.getFlowClearedAt()));
+        Map<String, BigDecimal[]> values = new HashMap<>();
+        for (MarketRouteItemDO route : routes) {
+            OrderDO order = ordersById.get(route.getOrderId());
+            if (order == null || "已退码".equals(order.getStatus()) || "AUTO_PROXY".equals(order.getOrderType())
+                    || value(route.getLocalAmount()).signum() <= 0
+                    || before(order.getCreateTime(), chimaClearedAt)
+                    || before(order.getCreateTime(), memberClearedAt.get(order.getMemberId()))) {
+                continue;
+            }
+            BigDecimal[] totals = values.computeIfAbsent(order.getPeriod(), ignored -> new BigDecimal[]{ZERO, ZERO});
+            totals[0] = totals[0].add(value(route.getLocalAmount()));
+            totals[1] = totals[1].add(value(route.getLocalPayout()));
         }
         return values.entrySet().stream().map(entry -> new PeriodChima(entry.getKey(), money(entry.getValue()[0]),
                         money(entry.getValue()[1]), money(entry.getValue()[0].subtract(entry.getValue()[1]))))

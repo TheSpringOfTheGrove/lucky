@@ -26,7 +26,8 @@ public class LotteryUserDataPermissionRule implements DataPermissionRule {
     private static final Set<String> TABLE_NAMES = Set.of(
             "lucky5_config", "lucky5_system_state", "lucky5_market_connection", "lucky5_link_config",
             "lucky5_chima_config", "lucky5_switch_setting", "lucky5_integration", "lucky5_odd",
-            "lucky5_member", "lucky5_amount_record", "lucky5_balance_ledger", "lucky5_order", "lucky5_bet_item", "lucky5_draw",
+            "lucky5_member", "lucky5_amount_record", "lucky5_balance_ledger", "lucky5_order", "lucky5_bet_item",
+            "lucky5_market_route_item", "lucky5_draw",
             "lucky5_issue", "lucky5_issue_transition", "lucky5_preset_order", "lucky5_quick_command",
             "lucky5_follow_order", "lucky5_operation_log", "lucky5_message", "lucky5_rebate_record",
             "lucky5_chima_record", "lucky5_auto_proxy_execution");

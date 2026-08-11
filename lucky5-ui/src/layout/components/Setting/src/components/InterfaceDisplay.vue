@@ -38,39 +38,14 @@ const hamburgerChange = (show: boolean) => {
 }
 
 // 全屏图标
-const screenfull = ref(appStore.getScreenfull)
-
-const screenfullChange = (show: boolean) => {
-  appStore.setScreenfull(show)
-}
 
 // 尺寸图标
-const size = ref(appStore.getSize)
-
-const sizeChange = (show: boolean) => {
-  appStore.setSize(show)
-}
 
 // 多语言图标
-const locale = ref(appStore.getLocale)
-
-const localeChange = (show: boolean) => {
-  appStore.setLocale(show)
-}
 
 // 消息图标
-const message = ref(appStore.getMessage)
-
-const messageChange = (show: boolean) => {
-  appStore.setMessage(show)
-}
 
 // IM 即时通讯图标
-const im = ref(appStore.getIm)
-
-const imChange = (show: boolean) => {
-  appStore.setIm(show)
-}
 
 // 标签页
 const tagsView = ref(appStore.getTagsView)
@@ -169,31 +144,6 @@ watch(
     <div class="flex items-center justify-between">
       <span class="text-14px">{{ t('setting.hamburgerIcon') }}</span>
       <ElSwitch v-model="hamburger" @change="hamburgerChange" />
-    </div>
-
-    <div class="flex items-center justify-between">
-      <span class="text-14px">{{ t('setting.screenfullIcon') }}</span>
-      <ElSwitch v-model="screenfull" @change="screenfullChange" />
-    </div>
-
-    <div class="flex items-center justify-between">
-      <span class="text-14px">{{ t('setting.sizeIcon') }}</span>
-      <ElSwitch v-model="size" @change="sizeChange" />
-    </div>
-
-    <div class="flex items-center justify-between">
-      <span class="text-14px">{{ t('setting.localeIcon') }}</span>
-      <ElSwitch v-model="locale" @change="localeChange" />
-    </div>
-
-    <div class="flex items-center justify-between">
-      <span class="text-14px">{{ t('setting.messageIcon') }}</span>
-      <ElSwitch v-model="message" @change="messageChange" />
-    </div>
-
-    <div class="flex items-center justify-between">
-      <span class="text-14px">{{ t('setting.imIcon') }}</span>
-      <ElSwitch v-model="im" @change="imChange" />
     </div>
 
     <div class="flex items-center justify-between">

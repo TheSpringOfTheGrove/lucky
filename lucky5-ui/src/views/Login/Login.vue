@@ -21,9 +21,6 @@
           >
             <img key="1" alt="" class="w-350px" src="@/assets/svgs/login-box-bg.svg" />
             <div key="2" class="text-3xl text-white">{{ t('login.welcome') }}</div>
-            <div key="3" class="mt-5 text-14px font-normal text-white">
-              {{ t('login.message') }}
-            </div>
           </TransitionGroup>
         </div>
       </div>

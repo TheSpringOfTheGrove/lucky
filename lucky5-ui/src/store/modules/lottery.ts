@@ -249,7 +249,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
       return this.perform(() => setSwitchApi(key, value), '开关已保存')
     },
     setRoomOpen(value: boolean) {
-      return this.perform(() => setRoomApi(value), '启动状态已更新')
+      return this.perform(() => setRoomApi(value), value ? '启动成功' : '关闭成功')
     },
     saveConfig(payload: Record<string, any>) {
       return this.perform(() => saveConfigApi(payload), '配置已保存')
