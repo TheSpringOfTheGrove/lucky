@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   `win` decimal(18,2) NOT NULL DEFAULT 0, `status` varchar(30) NOT NULL, `source` varchar(30) NOT NULL DEFAULT '网页群',
   `order_type` varchar(30) NOT NULL DEFAULT 'PLAYER',
   `delivery_mode` varchar(30) NOT NULL DEFAULT 'LOCAL_ONLY', `market_status` varchar(30) NOT NULL DEFAULT 'NOT_REQUIRED',
-  `market_order_id` varchar(100) NOT NULL DEFAULT '', `market_error` varchar(1000) NOT NULL DEFAULT '',
+  `market_order_id` mediumtext NOT NULL, `market_error` varchar(1000) NOT NULL DEFAULT '',
   `market_attempts` int NOT NULL DEFAULT 0, `period_sequence` int NOT NULL DEFAULT 0, `version` int NOT NULL DEFAULT 0,
   `settled_at` datetime NULL, `cancelled_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,

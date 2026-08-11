@@ -31,7 +31,7 @@ public class LotteryMarketOrderDispatchService {
         try {
             Wa55MarketOrderClient.SubmissionBatch result = marketClient.submit(context.credentials(), context.period(),
                     context.requests());
-            stateService.applyConfirmations(userId, orderId, result.confirmations());
+            applySuccessfulConfirmations(userId, orderId, result.confirmations());
         } catch (Wa55MarketOrderClient.MarketProtocolException ex) {
             stateService.applyConfirmations(userId, orderId, ex.confirmations());
             if (ex.submissionUncertain()) {
@@ -59,15 +59,34 @@ public class LotteryMarketOrderDispatchService {
         LotteryMarketOrderStateService.CancelContext context = stateService.claimCancel(userId, orderId);
         if (context == null) return;
         if (context.requests().isEmpty()) {
-            stateService.finalizeCancel(userId, orderId, "system");
+            stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
             return;
         }
         try {
             marketClient.cancel(context.credentials(), context.period(), context.requests());
-            stateService.finalizeCancel(userId, orderId, "system");
+            stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
         } catch (RuntimeException ex) {
             stateService.markCancelFailed(userId, orderId, ex.getMessage());
         }
+    }
+
+    /**
+     * 外部已经明确受理后，本地确认必须优先落库。短暂数据库异常允许重试本地写入，绝不能重新向外部提交。
+     */
+    private void applySuccessfulConfirmations(Long userId, String orderId,
+                                              List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
+        RuntimeException lastError = null;
+        for (int attempt = 1; attempt <= MAX_AUTOMATIC_ATTEMPTS; attempt++) {
+            try {
+                if (stateService.applyConfirmations(userId, orderId, confirmations)) return;
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                LOGGER.warn("外部订单已成功，本地确认第 {} 次写入失败 user={} order={}", attempt, userId, orderId, ex);
+            }
+        }
+        String detail = lastError == null ? "本地确认状态未完整更新" : lastError.getMessage();
+        stateService.markManualReview(userId, orderId,
+                "外部订单已成功，但本地确认连续三次写入失败，请仅修复本地状态，禁止重新提交：" + detail);
     }
 
     @Scheduled(initialDelayString = "${lottery.market.order-recovery-initial-delay-ms:30000}",

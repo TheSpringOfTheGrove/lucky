@@ -45,12 +45,15 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String cancelPending(String orderId) {
-        return "退码申请已提交盘口核对：" + orderId + "，确认成功后自动退回积分";
+        return "";
     }
 
     public String marketBetPending(String memberName, String period, String content) {
-        return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content
-                + "\n【盘口提交中】请等待盘口确认，确认前不会显示下注成功";
+        return "";
+    }
+
+    public String betFailed(String memberName, BigDecimal refunded) {
+        return "@" + memberName + "\n下注失败\n下注金额" + number(refunded) + "已退回";
     }
 
     public String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
@@ -65,7 +68,10 @@ public class LotteryRobotReplyTemplate {
      * Group rooms may show that another player was accepted, but must not expose their balance or cancellation entry.
      */
     public String publicBetReceipt(String memberName, String receipt) {
-        if (receipt == null || receipt.isBlank() || receipt.contains("订单号")) {
+        if (receipt == null || receipt.isBlank()) {
+            return "";
+        }
+        if (receipt.contains("订单号")) {
             return "@" + memberName + "\n下注成功";
         }
         List<String> visible = new ArrayList<>();

@@ -197,7 +197,12 @@ const chatMessages = computed<ChatItem[]>(() => {
         senderName: message.member
       })
     }
-    if ((message.own !== false || showSharedRobotReply) && message.commandType !== 'CHAT') {
+    const waitingForFinalResult = Boolean(order?.processing) && !message.reply
+    if (
+      (message.own !== false || showSharedRobotReply) &&
+      message.commandType !== 'CHAT' &&
+      !waitingForFinalResult
+    ) {
       const robotReplyDelay =
         message.commandType === 'PAYOUT_SUMMARY'
           ? 3

@@ -335,6 +335,19 @@ public class LotteryServiceImpl implements LotteryService {
                 "items", bets.stream().map(this::betItemMap).toList());
     }
 
+    private Map<String, Object> roomOrderMap(OrderDO item, List<BetItemDO> bets) {
+        Map<String, Object> result = orderMap(item, bets);
+        boolean processing = Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "MANUAL_REVIEW",
+                "PARTIAL_CONFIRMED", "CANCEL_REQUESTED", "CANCEL_PENDING").contains(item.getMarketStatus());
+        result.put("processing", processing);
+        result.remove("deliveryMode");
+        result.remove("marketStatus");
+        result.remove("marketOrderId");
+        result.remove("marketError");
+        result.remove("marketAttempts");
+        return result;
+    }
+
     private Map<String, String> drawResultsForOrders(Long userId, List<OrderDO> orders) {
         Set<String> periods = orders.stream().map(OrderDO::getPeriod).filter(StrUtil::isNotBlank).collect(Collectors.toSet());
         if (userId == null || periods.isEmpty()) {
@@ -1305,7 +1318,7 @@ public class LotteryServiceImpl implements LotteryService {
         message.setMember(member.getName());
         message.setPeriod(order.getPeriod());
         message.setContent(order.getContent());
-        message.setStatus(realMarketOrder && "PENDING".equals(order.getMarketStatus()) ? "盘口提交中" : "已下单");
+        message.setStatus(realMarketOrder && "PENDING".equals(order.getMarketStatus()) ? "处理中" : "已下单");
         message.setOrderId(order.getId());
         message.setExternalId(reqVO.getExternalId());
         message.setError("");
@@ -2037,7 +2050,7 @@ public class LotteryServiceImpl implements LotteryService {
                     value.put("numbers", item.getResult().replaceAll("\\D", "").chars().mapToObj(c -> String.valueOf((char) c)).toList());
                     return value;
                 }).toList(),
-                "orders", orders.stream().map(item -> orderMap(item, items.getOrDefault(item.getId(), List.of()))).toList(),
+                "orders", orders.stream().map(item -> roomOrderMap(item, items.getOrDefault(item.getId(), List.of()))).toList(),
                 "amountRecords", amounts.stream().map(this::amountRecordMap).toList(),
                 "messages", messages.stream().sorted(Comparator.comparing(MessageDO::getCreateTime))
                         .map(item -> roomMessageMap(item, member)).toList(),
@@ -2087,12 +2100,23 @@ public class LotteryServiceImpl implements LotteryService {
         boolean sharedPayoutSummary = COMMAND_PAYOUT_SUMMARY.equals(item.getCommandType());
         boolean sharedSettlement = COMMAND_SETTLEMENT.equals(item.getCommandType());
         String sharedReply = sharedPayoutSummary || sharedSettlement ? item.getReply() : "";
+        String playerReply = normalizeCheckMarks(value(item.getReply(), ""));
+        if (playerReply.contains("盘口") || playerReply.contains("外盘")
+                || "BET".equals(item.getCommandType()) && Set.of("处理中", "盘口提交中", "待人工核对")
+                        .contains(item.getStatus())) {
+            playerReply = "";
+        }
         result.put("own", own);
+        result.put("error", "");
+        result.put("reply", playerReply);
+        if ("BET".equals(item.getCommandType())) {
+            result.put("status", playerReply.isBlank() ? "处理中"
+                    : playerReply.contains("下注失败") ? "失败" : "成功");
+        }
         if (!own) {
             result.put("orderId", "");
-            result.put("error", "");
             result.put("reply", "BET".equals(item.getCommandType())
-                    ? robotReplyTemplate.publicBetReceipt(item.getMember(), item.getReply())
+                    ? robotReplyTemplate.publicBetReceipt(item.getMember(), playerReply)
                     : sharedReply);
         }
         return result;

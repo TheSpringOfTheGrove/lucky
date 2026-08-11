@@ -26,6 +26,7 @@ export interface RoomOrder {
   createdAt: string
   itemCount: number
   items: RoomBetItem[]
+  processing?: boolean
 }
 
 export interface RoomAmountRecord {

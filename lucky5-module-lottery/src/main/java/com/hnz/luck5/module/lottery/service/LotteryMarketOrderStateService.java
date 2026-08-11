@@ -82,9 +82,9 @@ public class LotteryMarketOrderStateService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void applyConfirmations(Long userId, String orderId,
-                                   List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
-        if (confirmations == null || confirmations.isEmpty()) return;
+    public boolean applyConfirmations(Long userId, String orderId,
+                                      List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
+        if (confirmations == null || confirmations.isEmpty()) return false;
         LocalDateTime now = LocalDateTime.now();
         for (Wa55MarketOrderClient.BetConfirmation confirmation : confirmations) {
             routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
@@ -110,7 +110,10 @@ public class LotteryMarketOrderStateService {
                     .set(OrderDO::getMarketStatus, "CONFIRMED").set(OrderDO::getMarketOrderId, serials)
                     .set(OrderDO::getMarketError, ""));
             if (confirmed == 1) updateConfirmedMessage(userId, orderId);
+            OrderDO current = confirmed == 1 ? null : order(userId, orderId);
+            return confirmed == 1 || current != null && "CONFIRMED".equals(current.getMarketStatus());
         }
+        return false;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -146,16 +149,18 @@ public class LotteryMarketOrderStateService {
                 .set(MarketRouteItemDO::getStatus, "CANCEL_PENDING")));
         LotteryConfigDO config = config(userId);
         if (config == null) throw exception(BET_STATE_CHANGED);
-        return new CancelContext(orderId, order.getPeriod(), new Wa55MarketOrderClient.Credentials(
+        return new CancelContext(orderId, order.getPeriod(), "PARTIAL_CONFIRMED".equals(order.getMarketStatus()),
+                new Wa55MarketOrderClient.Credentials(
                 config.getUpstreamUrl(), config.getUpstreamAccount(),
-                credentialService.decrypt(config.getMarketPasswordEncrypted())), confirmed.stream()
+                        credentialService.decrypt(config.getMarketPasswordEncrypted())), confirmed.stream()
                 .map(item -> new Wa55MarketOrderClient.CancelRequest(item.getMarketBetId(),
                         Math.max(1, value(item.getMarketBetCount(), 1)))).toList());
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void finalizeCancel(Long userId, String orderId, String actor) {
-        refundAndClose(userId, orderId, "CANCELLED", "已退码", actor, "盘口退码成功");
+    public void finalizeCancel(Long userId, String orderId, String actor, boolean rejectedSubmission) {
+        refundAndClose(userId, orderId, "CANCELLED", "已退码", actor,
+                rejectedSubmission ? "外部订单部分受理后已全部撤销" : "会员退码成功", rejectedSubmission);
         routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                 .eq(MarketRouteItemDO::getUserId, userId).eq(MarketRouteItemDO::getOrderId, orderId)
                 .in(MarketRouteItemDO::getStatus, "CANCEL_PENDING", "CONFIRMED", "CANCEL_FAILED")
@@ -165,7 +170,7 @@ public class LotteryMarketOrderStateService {
 
     @Transactional(rollbackFor = Exception.class)
     public void failAndRefund(Long userId, String orderId, String error) {
-        refundAndClose(userId, orderId, "FAILED", "已退码", "system", "盘口提交失败：" + safe(error));
+        refundAndClose(userId, orderId, "FAILED", "已退码", "system", "外部订单提交失败：" + safe(error), true);
         routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                 .eq(MarketRouteItemDO::getUserId, userId).eq(MarketRouteItemDO::getOrderId, orderId)
                 .notIn(MarketRouteItemDO::getStatus, "CANCELLED", "LOCAL_CONFIRMED")
@@ -182,8 +187,8 @@ public class LotteryMarketOrderStateService {
                 .in(MarketRouteItemDO::getStatus, "SUBMITTING", "RETRY", "UNKNOWN", "CANCEL_PENDING")
                 .set(MarketRouteItemDO::getStatus, "MANUAL_REVIEW").set(MarketRouteItemDO::getLastError, safe(error)));
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
-                .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, "待人工核对")
-                .set(MessageDO::getError, safe(error)));
+                .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, "处理中")
+                .set(MessageDO::getReply, "").set(MessageDO::getError, safe(error)));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -196,8 +201,8 @@ public class LotteryMarketOrderStateService {
                 .in(MarketRouteItemDO::getStatus, "SUBMITTING", "RETRY", "UNKNOWN")
                 .set(MarketRouteItemDO::getStatus, "FAILED").set(MarketRouteItemDO::getLastError, safe(error)));
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
-                .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, "盘口部分拒绝，正在退码")
-                .set(MessageDO::getError, safe(error)));
+                .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, "处理中")
+                .set(MessageDO::getReply, "").set(MessageDO::getError, safe(error)));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -213,14 +218,25 @@ public class LotteryMarketOrderStateService {
 
     public List<OrderDO> recoverableOrders() {
         LocalDateTime stale = LocalDateTime.now().minusMinutes(2);
-        return DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
+        LocalDateTime now = LocalDateTime.now();
+        List<OrderDO> candidates = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .in(OrderDO::getMarketStatus, "PENDING", "RETRY", "SUBMITTING", "CANCEL_REQUESTED", "CANCEL_PENDING")
-                .and(wrapper -> wrapper.isNull(OrderDO::getUpdateTime).or().le(OrderDO::getUpdateTime, stale))
                 .orderByAsc(OrderDO::getCreateTime).last("LIMIT 200")));
+        return candidates.stream().filter(order -> {
+            if ("RETRY".equals(order.getMarketStatus())) {
+                return DataPermissionUtils.executeIgnore(() -> routeItemMapper.selectCount(
+                        new LambdaQueryWrapper<MarketRouteItemDO>().eq(MarketRouteItemDO::getUserId, order.getUserId())
+                                .eq(MarketRouteItemDO::getOrderId, order.getId())
+                                .eq(MarketRouteItemDO::getStatus, "RETRY")
+                                .and(wrapper -> wrapper.isNull(MarketRouteItemDO::getNextRetryAt)
+                                        .or().le(MarketRouteItemDO::getNextRetryAt, now)))) > 0;
+            }
+            return order.getUpdateTime() == null || !order.getUpdateTime().isAfter(stale);
+        }).toList();
     }
 
     private void refundAndClose(Long userId, String orderId, String marketStatus, String orderStatus,
-                                String actor, String reason) {
+                                String actor, String reason, boolean failedSubmission) {
         OrderDO order = order(userId, orderId);
         if (order == null || !"未开奖".equals(order.getStatus())) return;
         int version = value(order.getVersion(), 0);
@@ -246,9 +262,12 @@ public class LotteryMarketOrderStateService {
         member.setVersion(memberVersion + 1);
         balanceLedgerService.recordAppliedChange(member, before, after, LotteryBalanceLedgerService.BET_REFUND,
                 orderId, actor, reason);
+        String playerReply = failedSubmission
+                ? robotReplyTemplate.betFailed(member.getName(), order.getAmount())
+                : "@" + member.getName() + "\n" + robotReplyTemplate.cancelSucceeded(orderId, order.getAmount());
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
                 .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, orderStatus)
-                .set(MessageDO::getReply, "@" + member.getName() + "\n" + reason + "\n下注金额已退回")
+                .set(MessageDO::getReply, playerReply)
                 .set(MessageDO::getError, marketStatus.equals("FAILED") ? safe(reason) : ""));
     }
 
@@ -303,6 +322,7 @@ public class LotteryMarketOrderStateService {
                                   Wa55MarketOrderClient.Credentials credentials,
                                   List<Wa55MarketOrderClient.BetRequest> requests) {}
 
-    public record CancelContext(String orderId, String period, Wa55MarketOrderClient.Credentials credentials,
+    public record CancelContext(String orderId, String period, boolean rejectedSubmission,
+                                Wa55MarketOrderClient.Credentials credentials,
                                 List<Wa55MarketOrderClient.CancelRequest> requests) {}
 }

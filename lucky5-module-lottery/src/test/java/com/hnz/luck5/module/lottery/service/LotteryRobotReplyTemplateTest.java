@@ -30,6 +30,16 @@ class LotteryRobotReplyTemplateTest {
                 .doesNotContain("26764.45", "点击退码");
         assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001"))
                 .isEqualTo("@露露\n下注成功");
+        assertThat(template.publicBetReceipt("露露", "")).isEmpty();
+    }
+
+    @Test
+    void shouldOnlyExposeFinalBetOutcomeToPlayer() {
+        assertThat(template.marketBetPending("露露", "20260809194", "654倒二定各10")).isEmpty();
+        assertThat(template.betFailed("露露", new BigDecimal("360.00")))
+                .isEqualTo("@露露\n下注失败\n下注金额360已退回")
+                .doesNotContain("盘口", "外盘", "核对");
+        assertThat(template.cancelPending("O1001")).isEmpty();
     }
 
     @Test
