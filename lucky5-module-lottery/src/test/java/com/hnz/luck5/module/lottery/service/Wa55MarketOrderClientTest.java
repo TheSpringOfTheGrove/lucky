@@ -61,9 +61,11 @@ class Wa55MarketOrderClientTest {
         assertThat(result.confirmations()).hasSize(2);
         assertThat(result.confirmations().get(0).marketBetId()).isEqualTo("BET-1");
         assertThat(result.confirmations().get(1).serialNo()).isEqualTo("SERIAL-2");
-        assertThat(betForms.get(0)).containsEntry("betno", "X65X").containsEntry("isxian", "0")
+        assertThat(betForms.get(0)).containsEntry("betno", "X65X").containsEntry("is_xian", "0")
+                .containsEntry("isxian", "0")
                 .containsEntry("guid", "guid-1").containsEntry("betmoney", "10");
-        assertThat(betForms.get(1)).containsEntry("betno", "65").containsEntry("isxian", "1")
+        assertThat(betForms.get(1)).containsEntry("betno", "65").containsEntry("is_xian", "1")
+                .containsEntry("isxian", "1")
                 .containsEntry("betmoney", "2.5");
 
         client.cancel(credentials(), issuePeriod, result.confirmations().stream()

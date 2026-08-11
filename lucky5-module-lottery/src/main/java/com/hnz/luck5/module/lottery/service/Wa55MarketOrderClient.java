@@ -64,6 +64,7 @@ public class Wa55MarketOrderClient {
             try {
                 payload = postForm(session, "/Member/Bet", Map.of(
                         "betno", request.selection().toUpperCase(Locale.ROOT),
+                        "is_xian", request.xian() ? "1" : "0",
                         "isxian", request.xian() ? "1" : "0",
                         "way", "101",
                         "isfulltransform", "0",
