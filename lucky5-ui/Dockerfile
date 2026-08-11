@@ -3,7 +3,7 @@
 FROM node:20-bookworm-slim AS build
 
 ARG PNPM_VERSION=10.34.5
-ARG VITE_BASE_URL=http://localhost:8080
+ARG VITE_BASE_URL=
 ENV NODE_ENV=production
 ENV VITE_BASE_URL=${VITE_BASE_URL}
 
