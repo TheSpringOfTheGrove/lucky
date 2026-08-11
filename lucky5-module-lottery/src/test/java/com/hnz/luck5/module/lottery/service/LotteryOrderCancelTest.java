@@ -4,8 +4,10 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
+import com.hnz.luck5.module.lottery.dal.mysql.MarketRouteItemMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MemberMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OperationLogMapper;
@@ -20,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -35,6 +38,8 @@ class LotteryOrderCancelTest {
                 MemberDO.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "lottery-order-cancel-message-test"),
                 MessageDO.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "lottery-order-cancel-route-test"),
+                MarketRouteItemDO.class);
     }
 
     private LotteryServiceImpl service;
@@ -103,6 +108,39 @@ class LotteryOrderCancelTest {
                 .containsEntry("refunded", new BigDecimal("100.00"));
         assertThat(member.getBalance()).isEqualByComparingTo("100.00");
         assertThat(member.getTotalBet()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void confirmedMarketOrderWithoutExternalBetIdsCannotRefundLocally() {
+        OrderDO order = pendingOrder("PLAYER", "网页群");
+        order.setDeliveryMode("MARKET_ADAPTER");
+        order.setMarketStatus("CONFIRMED");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("玩家A");
+        member.setUserId(142L);
+        member.setBalance(new BigDecimal("50"));
+        member.setTotalBet(new BigDecimal("100"));
+        member.setVersion(0);
+        MarketRouteItemDO route = new MarketRouteItemDO();
+        route.setOrderId("O-1");
+        route.setUserId(142L);
+        route.setMarketAmount(new BigDecimal("100"));
+        route.setMarketBetId("");
+        MarketRouteItemMapper routeMapper = mock(MarketRouteItemMapper.class);
+        Wa55MarketOrderClient marketClient = mock(Wa55MarketOrderClient.class);
+        ReflectionTestUtils.setField(service, "marketRouteItemMapper", routeMapper);
+        ReflectionTestUtils.setField(service, "marketOrderClient", marketClient);
+        when(orderMapper.selectById("O-1")).thenReturn(order);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(marketClient.isRealWritesEnabled()).thenReturn(true);
+        when(routeMapper.selectList(any())).thenReturn(java.util.List.of(route));
+
+        assertThatThrownBy(() -> service.cancelOrder("O-1"))
+                .hasMessageContaining("订单正在核对");
+
+        assertThat(member.getBalance()).isEqualByComparingTo("50");
+        assertThat(member.getTotalBet()).isEqualByComparingTo("100");
     }
 
     private OrderDO pendingOrder(String orderType, String source) {

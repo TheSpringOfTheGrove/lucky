@@ -1381,6 +1381,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "CANCEL_REQUESTED", "CANCEL_PENDING")
                 .contains(order.getMarketStatus())) {
             if (!marketOrderClient.isRealWritesEnabled()) throw exception(MARKET_WRITE_DISABLED);
+            if (!hasCompleteMarketCancelReferences(order)) throw exception(MARKET_ORDER_RECONCILING);
             if (Set.of("CANCEL_REQUESTED", "CANCEL_PENDING").contains(order.getMarketStatus())) {
                 return new CancelResult(id, "退码处理中", ZERO);
             }
@@ -1436,6 +1437,16 @@ public class LotteryServiceImpl implements LotteryService {
         }
         logAs(member.getUserId(), actor, member.getName(), "退码订单 " + id);
         return new CancelResult(id, "已退码", money(order.getAmount()));
+    }
+
+    private boolean hasCompleteMarketCancelReferences(OrderDO order) {
+        List<MarketRouteItemDO> marketRoutes = DataPermissionUtils.executeIgnore(() ->
+                marketRouteItemMapper.selectList(new LambdaQueryWrapper<MarketRouteItemDO>()
+                        .eq(MarketRouteItemDO::getUserId, order.getUserId())
+                        .eq(MarketRouteItemDO::getOrderId, order.getId())))
+                .stream().filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+        return !marketRoutes.isEmpty() && marketRoutes.stream()
+                .allMatch(item -> StrUtil.isNotBlank(item.getMarketBetId()));
     }
 
     @Override

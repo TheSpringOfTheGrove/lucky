@@ -45,7 +45,7 @@ public interface ErrorCodeConstants {
     ErrorCode MARKET_ACCOUNT_NOT_READY = new ErrorCode(2_001_000_035,
             "当前老板的盘口账号尚未连接，无法提交外盘下注");
     ErrorCode MARKET_ORDER_RECONCILING = new ErrorCode(2_001_000_036,
-            "盘口订单正在核对，暂不能退码，请稍后重试或联系管理员人工核对");
+            "订单正在核对，暂不能退码，请稍后重试或联系管理员");
     ErrorCode MARKET_ROOM_START_NOT_READY = new ErrorCode(2_001_000_037,
             "盘口账号尚未连接，无法开启盘口模式");
 }
