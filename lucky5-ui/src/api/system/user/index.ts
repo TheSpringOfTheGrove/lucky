@@ -4,6 +4,7 @@ export interface UserVO {
   id: number
   username: string
   nickname: string
+  roleNames?: string[]
   deptId: number
   deptName?: string
   postIds: string[]

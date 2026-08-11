@@ -40,6 +40,7 @@ public class MemberDO extends LotteryUserBaseDO {
     private Boolean webOnly;
     private String blueWhalePassword;
     private Integer avatar;
+    private LocalDateTime lastSeenAt;
     private LocalDateTime flowClearedAt;
     private Integer version;
 

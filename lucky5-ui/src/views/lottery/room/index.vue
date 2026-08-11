@@ -91,6 +91,23 @@ const orderById = computed(() =>
   Object.fromEntries((session.value?.orders || []).map((order) => [order.id, order]))
 )
 const latestDraw = computed(() => session.value?.draws[0] || null)
+const pendingDrawPeriod = computed(() => {
+  const currentSession = session.value
+  if (!currentSession) return ''
+  const latestDrawPeriod = currentSession.draws[0]?.period || ''
+  const pendingPeriods = new Set(
+    (currentSession.issueTransitions || [])
+      .filter(
+        (transition) =>
+          transition.status === 'CLOSED' &&
+          (!latestDrawPeriod || transition.period > latestDrawPeriod) &&
+          (currentSession.issue.status !== 'OPEN' ||
+            transition.period < currentSession.issue.currentPeriod)
+      )
+      .map((transition) => transition.period)
+  )
+  return [...pendingPeriods].sort((left, right) => left.localeCompare(right))[0] || ''
+})
 const chatMessages = computed<ChatItem[]>(() => {
   if (!session.value) return localMessages.value
 
@@ -587,7 +604,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['chat-room', bottomPanel ? `has-panel-${bottomPanel}` : '']">
+  <div
+    :class="[
+      'chat-room',
+      bottomPanel ? `has-panel-${bottomPanel}` : '',
+      { 'has-pending-draw': pendingDrawPeriod }
+    ]"
+  >
     <div v-if="loading" class="room-state-page">
       <span class="room-loader"></span>
     </div>
@@ -660,6 +683,11 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="room-overview__history">
+          <div v-if="pendingDrawPeriod" class="room-pending-draw" role="status">
+            <Icon icon="ep:loading" :size="14" />
+            <strong>{{ pendingDrawPeriod }}期</strong>
+            <span>开奖中</span>
+          </div>
           <button
             v-if="latestDraw"
             class="room-history-latest"
@@ -905,6 +933,10 @@ onBeforeUnmount(() => {
   inset: 0;
 }
 
+.chat-room.has-pending-draw {
+  --room-overview-height: 162px;
+}
+
 .room-overview {
   position: fixed;
   z-index: 9;
@@ -1066,6 +1098,36 @@ onBeforeUnmount(() => {
   height: 40px;
   padding: 4px 8px;
   align-items: center;
+}
+
+.has-pending-draw .room-overview__history {
+  height: 74px;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.room-pending-draw {
+  display: flex;
+  width: 100%;
+  height: 27px;
+  padding: 0 9px;
+  align-items: center;
+  color: #b4232e;
+  background: #fff1f2;
+  border: 1px solid #ffd4d8;
+  border-radius: 6px;
+  box-sizing: border-box;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.room-pending-draw strong {
+  font-size: 12px;
+}
+
+.room-pending-draw span {
+  color: #d05b2d;
+  font-weight: 700;
 }
 
 .room-history-latest,

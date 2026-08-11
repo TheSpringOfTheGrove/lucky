@@ -82,7 +82,14 @@ public class LotteryDrawVerificationService {
     }
 
     public boolean isTrusted(String result) {
-        return result != null && result.matches("\\d{5}") && !ZERO_RESULT.equals(result);
+        if (result == null) {
+            return false;
+        }
+        String normalized = result.trim();
+        if (normalized.matches("\\d,\\d,\\d,\\d,\\d")) {
+            normalized = normalized.replace(",", "");
+        }
+        return normalized.matches("\\d{5}") && !ZERO_RESULT.equals(normalized);
     }
 
     private int value(Integer number) {

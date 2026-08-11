@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Set;
 
 @Schema(description = "管理后台 - 用户信息 Response VO")
@@ -27,6 +28,9 @@ public class UserRespVO{
     @Schema(description = "用户昵称", requiredMode = Schema.RequiredMode.REQUIRED, example = "芋艿")
     @ExcelProperty("用户昵称")
     private String nickname;
+
+    @Schema(description = "角色名称列表")
+    private List<String> roleNames;
 
     @Schema(description = "备注", example = "我是一个用户")
     private String remark;

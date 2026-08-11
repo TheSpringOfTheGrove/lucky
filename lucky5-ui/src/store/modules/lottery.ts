@@ -18,6 +18,7 @@ import {
   deleteMemberApi,
   getLucky5Bootstrap,
   getAmountRecordsApi,
+  getChimaRecordsApi,
   getOrdersApi,
   getMemberSnapshotsApi,
   getMemberDetailsApi,
@@ -92,7 +93,6 @@ const useLucky5StoreBase = defineStore('lucky5', {
     loaded: false,
     loadedUserId: 0,
     loading: false,
-    marketRefreshing: false,
     membersRefreshing: false,
     saving: false,
     operator: { username: '', expireAt: '' },
@@ -113,29 +113,19 @@ const useLucky5StoreBase = defineStore('lucky5', {
       password: '',
       hasPassword: false,
       alertValue: 0,
-      bossMode: true,
-      marketMode: 'OWNER',
-      realMarketWritesEnabled: false,
+      bossMode: false,
       playType: 2,
       useProxy: true
     },
     market: {
       connection: {
         status: '未配置',
-        mode: 'OWNER',
-        balanceSource: '只读盘口余额',
         lineUrl: '',
         displayAccount: '',
         balance: null as number | null,
         error: '',
         lastLoginAt: null as string | null,
-        lastSyncAt: null as string | null,
-        initialBalance: 0,
-        totalStake: 0,
-        totalPayout: 0,
-        totalRefund: 0,
-        realMarketWritesEnabled: false,
-        recentRoutes: [] as any[]
+        lastSyncAt: null as string | null
       },
       issue: null as Record<string, any> | null,
       recentIssues: [] as any[]
@@ -163,7 +153,8 @@ const useLucky5StoreBase = defineStore('lucky5', {
       yinKuiMax: 0,
       yinKuiMin: 0
     },
-    chimaRecords: [] as any[]
+    chimaRecords: [] as any[],
+    chimaRecordsRefreshing: false
   }),
   getters: {
     switchList: (state) =>
@@ -276,25 +267,6 @@ const useLucky5StoreBase = defineStore('lucky5', {
     syncMarket() {
       return this.perform(() => syncMarketApi(), '盘口数据已同步')
     },
-    async refreshMarketConnection() {
-      if (this.marketRefreshing || this.market.connection.mode !== 'SIMULATED') return false
-      this.marketRefreshing = true
-      try {
-        const connection = await syncMarketApi()
-        this.market = {
-          ...this.market,
-          connection: {
-            ...this.market.connection,
-            ...connection
-          }
-        }
-        return true
-      } catch {
-        return false
-      } finally {
-        this.marketRefreshing = false
-      }
-    },
     async refreshMembers() {
       if (this.membersRefreshing) return false
       this.membersRefreshing = true
@@ -310,6 +282,18 @@ const useLucky5StoreBase = defineStore('lucky5', {
         return false
       } finally {
         this.membersRefreshing = false
+      }
+    },
+    async refreshChimaRecords() {
+      if (this.chimaRecordsRefreshing) return false
+      this.chimaRecordsRefreshing = true
+      try {
+        this.chimaRecords = await getChimaRecordsApi()
+        return true
+      } catch {
+        return false
+      } finally {
+        this.chimaRecordsRefreshing = false
       }
     },
     saveLinks(payload: Record<string, any>) {

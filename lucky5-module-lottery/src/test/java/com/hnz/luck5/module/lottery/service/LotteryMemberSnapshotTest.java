@@ -10,6 +10,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -39,6 +40,7 @@ class LotteryMemberSnapshotTest {
         member.setTotalBet(new BigDecimal("125.50"));
         member.setProfitLoss(new BigDecimal("-25.00"));
         member.setStatus("ONLINE");
+        member.setLastSeenAt(LocalDateTime.now());
         member.setVersion(3);
         when(memberMapper.selectList(any())).thenReturn(List.of(member));
 
@@ -49,7 +51,20 @@ class LotteryMemberSnapshotTest {
             assertThat(snapshot.get("balance")).isEqualTo(new BigDecimal("75.00"));
             assertThat(snapshot.get("totalBet")).isEqualTo(new BigDecimal("125.50"));
             assertThat(snapshot.get("profitLoss")).isEqualTo(new BigDecimal("-25.00"));
+            assertThat(snapshot.get("status")).isEqualTo("在线");
             assertThat(snapshot.get("version")).isEqualTo(3);
         });
+    }
+
+    @Test
+    void snapshotTreatsStalePresenceAsOfflineEvenWhenLegacyStatusSaysOnline() {
+        MemberDO member = new MemberDO();
+        member.setId("M-2");
+        member.setStatus("在线");
+        member.setLastSeenAt(LocalDateTime.now().minusMinutes(2));
+        when(memberMapper.selectList(any())).thenReturn(List.of(member));
+
+        assertThat(service.getMemberSnapshots()).singleElement()
+                .satisfies(snapshot -> assertThat(snapshot.get("status")).isEqualTo("离线"));
     }
 }

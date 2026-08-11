@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
 import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.BET_CONTENT_INVALID;
 import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.BET_LIMIT_INVALID;
+import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.PLAY_TYPE_DISABLED;
 
 @Service
 public class LotteryBettingService {
@@ -394,7 +395,7 @@ public class LotteryBettingService {
     private OddDO configuredOdd(String code, BigDecimal amount, List<OddDO> odds) {
         OddDO odd = odds.stream().filter(item -> code.equals(item.getCode())).findFirst().orElse(null);
         if (odd == null || !"启用".equals(odd.getStatus()) || odd.getRate() == null || odd.getRate().signum() <= 0) {
-            throw exception(BET_LIMIT_INVALID);
+            throw exception(PLAY_TYPE_DISABLED);
         }
         if (odd.getMinLimit() != null && amount.compareTo(odd.getMinLimit()) < 0
                 || odd.getMaxLimit() != null && amount.compareTo(odd.getMaxLimit()) > 0) {

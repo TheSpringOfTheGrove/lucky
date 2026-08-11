@@ -24,6 +24,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static cn.hutool.core.collection.ListUtil.toList;
@@ -296,6 +297,18 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         Set<Long> result = permissionService.getUserRoleIdListByUserId(userId);
         // 断言
         assertEquals(asSet(10L, 20L), result);
+    }
+
+    @Test
+    public void testGetUserRoleIdMapByUserIds() {
+        userRoleMapper.insert(randomPojo(UserRoleDO.class, o -> o.setUserId(1L).setRoleId(10L)));
+        userRoleMapper.insert(randomPojo(UserRoleDO.class, o -> o.setUserId(1L).setRoleId(20L)));
+        userRoleMapper.insert(randomPojo(UserRoleDO.class, o -> o.setUserId(2L).setRoleId(30L)));
+
+        Map<Long, Set<Long>> result = permissionService.getUserRoleIdMapByUserIds(asSet(1L, 2L));
+
+        assertEquals(asSet(10L, 20L), result.get(1L));
+        assertEquals(asSet(30L), result.get(2L));
     }
 
     @Test

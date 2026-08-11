@@ -32,8 +32,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -102,7 +104,7 @@ class LotteryOwnerInitializationServiceTest {
         verify(lotteryConfigMapper).insert(configCaptor.capture());
         LotteryConfigDO config = configCaptor.getValue();
         assertThat(config.getUserId()).isEqualTo(ownerId);
-        assertThat(config.getRoomName()).isEqualTo("模板房间");
+        assertThat(config.getRoomName()).isEqualTo("boss200 幸运5房间");
         assertThat(config.getBossMode()).isTrue();
         assertThat(config.getUpstreamUrl()).isEmpty();
         assertThat(config.getUpstreamAccount()).isEmpty();
@@ -165,7 +167,7 @@ class LotteryOwnerInitializationServiceTest {
 
     @Test
     void automaticInitializationSkipsAccountWhenAnyInitializationMarkerAlreadyExists() {
-        when(ownerInitializationMapper.insertIfAbsent(1L, 202L, "AUTO", 202L)).thenReturn(0);
+        when(ownerInitializationMapper.insertIfAbsent(1L, 202L, "AUTO", 202L, 2)).thenReturn(0);
 
         boolean initialized = service.initializeAutomaticallyCurrentTenant(1L, 202L, "existing-owner");
 
@@ -175,14 +177,47 @@ class LotteryOwnerInitializationServiceTest {
     }
 
     @Test
+    void automaticInitializationRepairsAnOlderSchemaOnlyOnce() {
+        Long ownerId = 205L;
+        OwnerInitializationDO marker = new OwnerInitializationDO();
+        marker.setUserId(ownerId);
+        marker.setSchemaVersion(1);
+        marker.setInitializationCount(1);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 2)).thenReturn(0);
+        when(ownerInitializationMapper.selectOne(any())).thenReturn(marker);
+        when(roleService.getRoleList()).thenReturn(List.of());
+        LotteryConfigDO config = new LotteryConfigDO().setRoomName("旧房间").setCloseTime("23:55")
+                .setSettleDelay(8).setMinDeposit(new BigDecimal("100")).setMaxDeposit(new BigDecimal("50000"))
+                .setBossMode(true).setPlayType(0).setUseProxy(true).setAlertValue(BigDecimal.ZERO);
+        when(lotteryConfigMapper.selectOne(any())).thenReturn(config);
+        when(systemStateMapper.selectOne(any())).thenReturn(new SystemStateDO());
+        when(marketConnectionMapper.selectOne(any())).thenReturn(new MarketConnectionDO());
+        when(linkConfigMapper.selectOne(any())).thenReturn(new LinkConfigDO().setGroupLinkEnabled(true)
+                .setPrivateLinkEnabled(true).setDefaultRoomMode("GROUP"));
+        when(chimaConfigMapper.selectOne(any())).thenReturn(new ChimaConfigDO());
+        when(switchSettingMapper.selectList(any())).thenReturn(List.of());
+        when(integrationMapper.selectList(any())).thenReturn(List.of());
+        when(oddMapper.selectList(any())).thenReturn(List.of());
+        when(quickCommandMapper.selectList(any())).thenReturn(List.of());
+
+        boolean repaired = service.initializeAutomaticallyCurrentTenant(1L, ownerId, "old-owner");
+
+        assertThat(repaired).isTrue();
+        assertThat(marker.getSchemaVersion()).isEqualTo(2);
+        assertThat(marker.getLastSource()).isEqualTo("REPAIR");
+        verify(ownerInitializationMapper).updateById(marker);
+    }
+
+    @Test
     void manualInitializationCreatesMarkerAndPreventsLaterAutomaticInitialization() {
         Long ownerId = 203L;
         OwnerInitializationDO marker = new OwnerInitializationDO();
         marker.setUserId(ownerId);
         marker.setInitializationCount(1);
-        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "MANUAL", 1L)).thenReturn(1);
+        marker.setSchemaVersion(2);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "MANUAL", 1L, 2)).thenReturn(1);
         when(ownerInitializationMapper.selectOne(any())).thenReturn(marker);
-        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId)).thenReturn(0);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 2)).thenReturn(0);
         when(roleService.getRoleList()).thenReturn(List.of());
         when(lotteryConfigMapper.selectOne(any())).thenReturn(new LotteryConfigDO());
         when(systemStateMapper.selectOne(any())).thenReturn(new SystemStateDO());
@@ -225,6 +260,33 @@ class LotteryOwnerInitializationServiceTest {
         verify(switchSettingMapper).insert(captor.capture());
         assertThat(captor.getValue().getSettingKey()).isEqualTo("openCancel");
         assertThat(captor.getValue().getUserId()).isEqualTo(ownerId);
+    }
+
+    @Test
+    void initializationPreservesEditedQuickCommandWithStableId() {
+        Long tenantId = 1L;
+        Long ownerId = 206L;
+        String sourceId = "QC01";
+        String stableId = UUID.nameUUIDFromBytes((tenantId + ":" + ownerId + ":" + sourceId)
+                .getBytes(StandardCharsets.UTF_8)).toString();
+        QuickCommandDO edited = new QuickCommandDO().setId(stableId)
+                .setLabel("老板自定义名称").setContent("老板自定义内容").setSort(1).setEnabled(true);
+        QuickCommandDO template = new QuickCommandDO().setId(sourceId)
+                .setLabel("默认名称").setContent("默认内容").setSort(1).setEnabled(true);
+        when(roleService.getRoleList()).thenReturn(List.of());
+        when(lotteryConfigMapper.selectOne(any())).thenReturn(new LotteryConfigDO());
+        when(systemStateMapper.selectOne(any())).thenReturn(new SystemStateDO());
+        when(marketConnectionMapper.selectOne(any())).thenReturn(new MarketConnectionDO());
+        when(linkConfigMapper.selectOne(any())).thenReturn(new LinkConfigDO());
+        when(chimaConfigMapper.selectOne(any())).thenReturn(new ChimaConfigDO());
+        when(switchSettingMapper.selectList(any())).thenReturn(List.of());
+        when(integrationMapper.selectList(any())).thenReturn(List.of());
+        when(oddMapper.selectList(any())).thenReturn(List.of());
+        when(quickCommandMapper.selectList(any())).thenReturn(List.of(edited), List.of(template));
+
+        service.initializeCurrentTenant(tenantId, ownerId, "edited-command-owner");
+
+        verify(quickCommandMapper, never()).insert(any(QuickCommandDO.class));
     }
 
 }

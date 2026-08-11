@@ -42,6 +42,7 @@ export interface RoomDraw {
   period: string
   result: string
   numbers: string[]
+  valid?: boolean
   bigSmall: string
   oddEven: string
   dragonTiger: string

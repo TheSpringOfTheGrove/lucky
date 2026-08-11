@@ -27,6 +27,7 @@ import org.springframework.validation.annotation.Validated;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -63,6 +64,8 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
     private static final String CHANNEL_WEB_GROUP = "网页群";
     private static final String CHANNEL_WEB_PRIVATE = "网页私聊";
+    private static final Duration MEMBER_HEARTBEAT_WRITE_INTERVAL = Duration.ofSeconds(15);
+    private static final Duration MEMBER_ONLINE_TIMEOUT = Duration.ofSeconds(90);
 
     private record BetResult(Long messageId, String orderId, String member, String period, BigDecimal amount,
                              BigDecimal balance, int itemCount, int periodSequence,
@@ -108,10 +111,10 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryRebateCalculator rebateCalculator;
     @Resource private LotteryChimaCalculator chimaCalculator;
     @Resource private LotteryOwnerInitializationService ownerInitializationService;
+    @Resource private LotteryDrawVerificationService drawVerificationService;
     @Resource private LotteryBalanceLedgerService balanceLedgerService;
     @Resource private MarketCredentialService marketCredentialService;
     @Resource private LotteryMarketSyncService marketSyncService;
-    @Resource private LotterySimulatedMarketService simulatedMarketService;
     @Resource private SecurityFrameworkService securityFrameworkService;
     @Resource private AdminUserService adminUserService;
     @Resource private ApplicationEventPublisher eventPublisher;
@@ -129,8 +132,6 @@ public class LotteryServiceImpl implements LotteryService {
         LotteryConfigDO config = findUserConfig(loginUserId);
         SystemStateDO state = first(systemStateMapper.selectList(null));
         MarketConnectionDO market = findUserMarket(loginUserId);
-        LotterySimulatedMarketService.Snapshot simulatedMarket = loginUserId != null && config != null
-                && !bool(config.getBossMode()) ? simulatedMarketService.snapshot(loginUserId) : null;
         IssueDO currentIssue = loginUserId == null ? null : DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, loginUserId)
                         .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
@@ -157,8 +158,6 @@ public class LotteryServiceImpl implements LotteryService {
         Set<String> orderIds = orders.stream().map(OrderDO::getId).collect(Collectors.toSet());
         List<BetItemDO> items = orderIds.isEmpty() ? List.of() : betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds));
-        List<MarketRouteItemDO> marketRoutes = orderIds.isEmpty() ? List.of()
-                : simulatedMarketService.listByOrderIds(new ArrayList<>(orderIds));
         Map<String, List<BetItemDO>> itemsByOrder = items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
         Map<String, String> drawResultsByPeriod = drawResultsForOrders(loginUserId, orders);
         List<DrawDO> draws = drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
@@ -173,14 +172,16 @@ public class LotteryServiceImpl implements LotteryService {
         List<RebateRecordDO> rebates = rebateRecordMapper.selectList(null);
 
         Map<String, Object> result = new LinkedHashMap<>();
+        List<MemberDO> realMembers = members.stream().filter(item -> !isAutoProxy(item)).toList();
+        LocalDateTime onlineCutoff = LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT);
+        long onlineMembers = realMembers.stream().filter(item -> isMemberOnline(item, onlineCutoff)).count();
         boolean dashboard = has("lottery:dashboard:query");
         result.put("operator", dashboard ? map("username", state == null ? loginName() : state.getOperatorUsername(),
                 "expireAt", state == null ? "" : date(state.getExpireAt())) : map("username", "", "expireAt", ""));
         result.put("room", dashboard ? map("open", state != null && bool(state.getRoomOpen()),
-                "online", state == null ? 0 : value(state.getOnline(), 0)) : map("open", false, "online", 0));
-        List<MemberDO> realMembers = members.stream().filter(item -> !isAutoProxy(item)).toList();
+                "online", onlineMembers) : map("open", false, "online", 0));
         result.put("dashboardStats", dashboard ? map("totalMembers", realMembers.size(),
-                "onlineMembers", realMembers.stream().filter(item -> "在线".equals(item.getStatus())).count(),
+                "onlineMembers", onlineMembers,
                 "pendingDeposits", amountRecords.stream().filter(item -> "上分".equals(item.getType())
                         && "待审核".equals(item.getStatus())).count())
                 : map("totalMembers", 0, "onlineMembers", 0, "pendingDeposits", 0));
@@ -194,8 +195,7 @@ public class LotteryServiceImpl implements LotteryService {
                 (a, b) -> b, LinkedHashMap::new)) : Map.of());
 
         result.put("config", has("lottery:config:manage") ? configMap(config) : Map.of());
-        result.put("market", has("lottery:config:manage")
-                ? marketMap(market, simulatedMarket, config) : null);
+        result.put("market", has("lottery:config:manage") ? marketMap(market) : null);
         result.put("issue", has("lottery:draw:manage") && currentIssue != null ? issueMap(currentIssue) : null);
         result.put("drawAlerts", has("lottery:draw:manage")
                 ? drawAlerts.stream().map(this::issueMap).toList() : List.of());
@@ -223,7 +223,7 @@ public class LotteryServiceImpl implements LotteryService {
         result.put("messages", List.of());
         result.put("chimaConfig", has("lottery:chima-config:manage") ? chimaConfigMap(chimaConfig) : Map.of());
         result.put("chimaRecords", has("lottery:chima-record:manage")
-                ? calculatePeriodChima(orders, members, marketRoutes, state) : List.of());
+                ? calculatePeriodChima(orders, members, state) : List.of());
         return result;
     }
 
@@ -233,38 +233,15 @@ public class LotteryServiceImpl implements LotteryService {
                 "hasPassword", item != null && StrUtil.isNotBlank(item.getMarketPasswordEncrypted()),
                 "alertValue", item == null ? ZERO : money(item.getAlertValue()),
                 "bossMode", item != null && bool(item.getBossMode()), "playType", item == null ? 2 : value(item.getPlayType(), 2),
-                "marketMode", item != null && !bool(item.getBossMode()) ? "SIMULATED" : "OWNER",
-                "realMarketWritesEnabled", false,
                 "useProxy", item == null || bool(item.getUseProxy()), "bound", item != null);
     }
 
-    private Map<String, Object> marketMap(MarketConnectionDO item, LotterySimulatedMarketService.Snapshot simulated,
-                                          LotteryConfigDO config) {
-        if (config != null && !bool(config.getBossMode())) {
-            SimulatedMarketAccountDO account = simulated.account();
-            return map("status", "模拟已连接", "mode", "SIMULATED", "balanceSource", "本地模拟余额",
-                    "lineUrl", "local://simulated-market", "displayAccount", "SIM-" + account.getUserId(),
-                    "balance", money(account.getBalance()), "initialBalance", money(account.getInitialBalance()),
-                    "totalStake", money(account.getTotalStake()), "totalPayout", money(account.getTotalPayout()),
-                    "totalRefund", money(account.getTotalRefund()), "error", "",
-                    "realMarketWritesEnabled", false, "lastLoginAt", "", "lastSyncAt", date(account.getUpdateTime()),
-                    "recentRoutes", simulated.recentRoutes().stream().map(this::marketRouteMap).toList());
-        }
+    private Map<String, Object> marketMap(MarketConnectionDO item) {
         return map("status", item == null ? "未配置" : value(item.getStatus(), "未配置"),
-                "mode", "OWNER", "balanceSource", "只读盘口余额",
                 "lineUrl", item == null ? "" : value(item.getLineUrl(), ""),
                 "displayAccount", item == null ? "" : value(item.getDisplayAccount(), ""),
                 "balance", item == null ? null : money(item.getBalance()), "error", item == null ? "" : value(item.getError(), ""),
-                "realMarketWritesEnabled", false, "recentRoutes", List.of(),
                 "lastLoginAt", item == null ? "" : date(item.getLastLoginAt()), "lastSyncAt", item == null ? "" : date(item.getLastSyncAt()));
-    }
-
-    private Map<String, Object> marketRouteMap(MarketRouteItemDO item) {
-        return map("id", item.getId(), "orderId", item.getOrderId(), "period", item.getPeriod(),
-                "play", item.getPlay(), "selection", item.getSelection(), "routeType", item.getRouteType(),
-                "localAmount", money(item.getLocalAmount()), "simulatedAmount", money(item.getSimulatedAmount()),
-                "simulatedPayout", money(item.getSimulatedPayout()), "status", item.getStatus(),
-                "createdAt", date(item.getCreateTime()));
     }
 
     private Map<String, Object> oddMap(OddDO item) {
@@ -274,8 +251,11 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> memberMap(MemberDO item, LotteryRebateCalculator.RebateResult rebate) {
+        String displayStatus = isAutoProxy(item) ? value(item.getStatus(), "离线")
+                : isMemberOnline(item, LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT)) ? "在线" : "离线";
         Map<String, Object> result = map("id", item.getId(), "name", item.getName(), "balance", money(item.getBalance()),
-                "status", item.getStatus(), "partner", item.getPartner(), "normalRate", money(item.getNormalRate()),
+                "status", displayStatus, "lastSeenAt", date(item.getLastSeenAt()),
+                "partner", item.getPartner(), "normalRate", money(item.getNormalRate()),
                 "lhhRate", money(item.getLhhRate()), "partnerNormalRate", money(item.getPartnerNormalRate()),
                 "partnerLhhRate", money(item.getPartnerLhhRate()), "tag", item.getTag(),
                 "isPuller", "拉手".equals(item.getTag()), "externalNickname", item.getExternalNickname(),
@@ -295,10 +275,13 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public List<Map<String, Object>> getMemberSnapshots() {
+        LocalDateTime onlineCutoff = LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT);
         return memberMapper.selectList(new LambdaQueryWrapper<MemberDO>().orderByAsc(MemberDO::getId)).stream()
                 .map(item -> map("id", item.getId(), "balance", money(item.getBalance()),
                         "totalBet", money(item.getTotalBet()), "profitLoss", money(item.getProfitLoss()),
-                        "status", item.getStatus(), "version", value(item.getVersion(), 0)))
+                        "status", isAutoProxy(item) ? value(item.getStatus(), "离线")
+                                : isMemberOnline(item, onlineCutoff) ? "在线" : "离线",
+                        "lastSeenAt", date(item.getLastSeenAt()), "version", value(item.getVersion(), 0)))
                 .toList();
     }
 
@@ -312,7 +295,8 @@ public class LotteryServiceImpl implements LotteryService {
                 TenantContextHolder.getRequiredTenantId(), userId, user.getUsername(),
                 SecurityFrameworkUtils.getLoginUserId());
         return map("userId", result.userId(), "username", user.getUsername(),
-                "initializationCount", result.initializationCount(), "source", result.source());
+                "initializationCount", result.initializationCount(), "source", result.source(),
+                "schemaVersion", result.schemaVersion());
     }
 
     private Map<String, Object> amountRecordMap(AmountRecordDO item) {
@@ -353,7 +337,8 @@ public class LotteryServiceImpl implements LotteryService {
         }
         return drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                         .eq(DrawDO::getUserId, userId).in(DrawDO::getPeriod, periods))
-                .stream().collect(Collectors.toMap(DrawDO::getPeriod, item -> value(item.getResult(), ""),
+                .stream().filter(item -> drawVerificationService.isTrusted(item.getResult()))
+                .collect(Collectors.toMap(DrawDO::getPeriod, item -> value(item.getResult(), ""),
                         (first, ignored) -> first));
     }
 
@@ -363,9 +348,11 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> drawMap(DrawDO item) {
+        boolean trusted = drawVerificationService.isTrusted(item.getResult());
         return map("period", item.getPeriod(), "result", item.getResult(), "bigSmall", item.getBigSmall(),
-                "oddEven", item.getOddEven(), "dragonTiger", item.getDragonTiger(), "status", item.getStatus(),
-                "settledAt", date(item.getSettledAt()));
+                "oddEven", item.getOddEven(), "dragonTiger", item.getDragonTiger(),
+                "status", trusted ? item.getStatus() : "异常", "valid", trusted,
+                "settledAt", trusted ? date(item.getSettledAt()) : "");
     }
 
     private Map<String, Object> presetMap(PresetOrderDO item, List<OddDO> odds) {
@@ -462,6 +449,15 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void setRoom(Boolean open) {
+        if (Boolean.TRUE.equals(open)) {
+            LotteryConfigDO config = requireConfig();
+            if (!Boolean.TRUE.equals(config.getBossMode())
+                    && (StrUtil.isBlank(config.getUpstreamUrl())
+                    || StrUtil.isBlank(config.getUpstreamAccount())
+                    || StrUtil.isBlank(config.getMarketPasswordEncrypted()))) {
+                throw exception(MARKET_CONFIG_REQUIRED);
+            }
+        }
         SystemStateDO state = requireState();
         state.setRoomOpen(open);
         systemStateMapper.updateById(state);
@@ -490,23 +486,12 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public Map<String, Object> testConfig(LotteryReqVO.Config reqVO) {
-        if (!Boolean.TRUE.equals(reqVO.getBossMode())) {
-            LotterySimulatedMarketService.Snapshot snapshot = simulatedMarketService.snapshot(
-                    Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID));
-            return map("status", "模拟已连接", "balance", money(snapshot.account().getBalance()),
-                    "mode", "SIMULATED", "realMarketWritesEnabled", false);
-        }
         return marketSyncService.test(reqVO, findUserConfig(SecurityFrameworkUtils.getLoginUserId()));
     }
 
     @Override
     public Map<String, Object> syncMarket() {
         Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
-        LotteryConfigDO config = requireConfig(userId);
-        if (!bool(config.getBossMode())) {
-            LotterySimulatedMarketService.Snapshot snapshot = simulatedMarketService.snapshot(userId);
-            return marketMap(findUserMarket(userId), snapshot, config);
-        }
         return marketSyncService.syncCurrent(TenantContextHolder.getRequiredTenantId(), userId);
     }
 
@@ -1200,6 +1185,9 @@ public class LotteryServiceImpl implements LotteryService {
         if (CHANNEL_WEB_GROUP.equals(channel) && !enabled("pullEnable", member.getUserId())) throw exception(ROOM_CLOSED);
 
         LotteryConfigDO config = requireConfig(member.getUserId());
+        if (!TYPE_AUTO_PROXY.equals(orderType) && !bool(config.getBossMode())) {
+            throw exception(MARKET_ORDER_UNAVAILABLE);
+        }
         if (bool(member.getWebOnly()) && !Set.of(CHANNEL_WEB_GROUP, CHANNEL_WEB_PRIVATE).contains(channel)) {
             throw exception(ROOM_CLOSED);
         }
@@ -1275,7 +1263,6 @@ public class LotteryServiceImpl implements LotteryService {
         balanceLedgerService.recordAppliedChange(member, balanceBefore, balance,
                 LotteryBalanceLedgerService.BET_DEBIT, order.getId(), actor,
                 "期号 " + order.getPeriod() + " 下注 " + order.getContent());
-        List<BetItemDO> createdItems = new ArrayList<>(parsed.size());
         for (LotteryBettingService.ParsedBet value : parsed) {
             BetItemDO item = new BetItemDO();
             item.setId(id());
@@ -1287,15 +1274,6 @@ public class LotteryServiceImpl implements LotteryService {
             item.setPayout(ZERO);
             item.setUserId(order.getUserId());
             betItemMapper.insert(item);
-            createdItems.add(item);
-        }
-        if (!TYPE_AUTO_PROXY.equals(orderType) && !bool(config.getBossMode())) {
-            LotterySimulatedMarketService.RoutingResult routing = simulatedMarketService.reserve(member.getUserId(),
-                    order.getId(), order.getPeriod(), member, createdItems);
-            order.setDeliveryMode(routing.deliveryMode());
-            order.setMarketStatus(routing.marketStatus());
-            order.setMarketOrderId(routing.simulatedAmount().signum() > 0 ? "SIM-" + order.getId() : "");
-            orderMapper.updateById(order);
         }
         MessageDO message = new MessageDO();
         message.setChannel(channel);
@@ -1331,6 +1309,16 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
+    public List<Map<String, Object>> getChimaRecords() {
+        List<MemberDO> members = memberMapper.selectList(new LambdaQueryWrapper<MemberDO>()
+                .orderByAsc(MemberDO::getId));
+        List<OrderDO> orders = orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
+                .orderByDesc(OrderDO::getCreateTime).last("LIMIT 1000"));
+        SystemStateDO state = first(systemStateMapper.selectList(null));
+        return calculatePeriodChima(orders, members, state);
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> cancelOrder(String id) {
         return cancelResultMap(cancelOrderInternal(id, null, loginName(), false, true));
@@ -1348,10 +1336,6 @@ public class LotteryServiceImpl implements LotteryService {
                 && Set.of("SUBMITTED", "CONFIRMED").contains(order.getMarketStatus())) throw exception(ORDER_CAN_NOT_CANCEL);
         MemberDO member = requireMember(order.getMemberId());
         if (requireCancelEnabled && !enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
-        if (isSimulatedDelivery(order.getDeliveryMode())) {
-            simulatedMarketService.refund(order.getUserId(), order.getId());
-            order.setMarketStatus("SIMULATED_REFUNDED");
-        }
         order.setStatus("已退码");
         order.setCancelledAt(LocalDateTime.now());
         int orderVersion = value(order.getVersion(), 0);
@@ -1463,15 +1447,10 @@ public class LotteryServiceImpl implements LotteryService {
                 }
             }
             payout = money(payout);
-            LotterySimulatedMarketService.SettlementResult simulatedSettlement =
-                    simulatedMarketService.settle(userId, order.getId(), items);
             int orderVersion = value(order.getVersion(), 0);
             order.setWin(payout);
             order.setStatus(payout.signum() > 0 ? "已中奖" : "未中奖");
             order.setSettledAt(LocalDateTime.now());
-            if (simulatedSettlement.routed()) {
-                order.setMarketStatus("SIMULATED_SETTLED");
-            }
             order.setVersion(orderVersion + 1);
             int settled = orderMapper.update(order, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, order.getId())
                     .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
@@ -1556,23 +1535,25 @@ public class LotteryServiceImpl implements LotteryService {
             message.setUserId(userId);
             messageMapper.insert(message);
         }
-        MessageDO payoutSummary = new MessageDO();
-        payoutSummary.setChannel(CHANNEL_WEB_GROUP);
-        payoutSummary.setMemberId(null);
-        payoutSummary.setMember("");
-        payoutSummary.setPeriod(period);
-        payoutSummary.setContent("");
-        payoutSummary.setStatus("已结算");
-        payoutSummary.setExternalId("payout-summary:" + period);
-        payoutSummary.setCommandType(COMMAND_PAYOUT_SUMMARY);
-        payoutSummary.setMessageType(TYPE_PLAYER);
-        payoutSummary.setReply(robotReplyTemplate.payoutSummary(money(totalPayout)));
-        payoutSummary.setProcessedAt(LocalDateTime.now());
-        payoutSummary.setUserId(userId);
-        messageMapper.insert(payoutSummary);
-        logAs(userId, actor, "-", "结算期号 " + period + "，真实订单 " + details.size() + " 笔，投额 "
-                + money(totalAmount) + "，派彩 " + money(totalPayout) + "，原因 "
-                + StrUtil.blankToDefault(reason, "开奖API二次确认"));
+        if (shouldPublishSettlementArtifacts(actor, !orders.isEmpty(), issue.getOpenedAt())) {
+            MessageDO payoutSummary = new MessageDO();
+            payoutSummary.setChannel(CHANNEL_WEB_GROUP);
+            payoutSummary.setMemberId(null);
+            payoutSummary.setMember("");
+            payoutSummary.setPeriod(period);
+            payoutSummary.setContent("");
+            payoutSummary.setStatus("已结算");
+            payoutSummary.setExternalId("payout-summary:" + period);
+            payoutSummary.setCommandType(COMMAND_PAYOUT_SUMMARY);
+            payoutSummary.setMessageType(TYPE_PLAYER);
+            payoutSummary.setReply(robotReplyTemplate.payoutSummary(money(totalPayout)));
+            payoutSummary.setProcessedAt(LocalDateTime.now());
+            payoutSummary.setUserId(userId);
+            messageMapper.insert(payoutSummary);
+            logAs(userId, actor, "-", "结算期号 " + period + "，真实订单 " + details.size() + " 笔，投额 "
+                    + money(totalAmount) + "，派彩 " + money(totalPayout) + "，原因 "
+                    + StrUtil.blankToDefault(reason, "开奖API二次确认"));
+        }
         Map<String, Object> result = map("period", period, "result", record.getResult(), "bigSmall", record.getBigSmall(),
                 "oddEven", record.getOddEven(), "dragonTiger", record.getDragonTiger(), "orders", details.size(),
                 "totalBet", money(totalAmount), "totalPayout", money(totalPayout), "details", details,
@@ -1913,6 +1894,7 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> getRoomSession(LotteryRoomReqVO.Credential reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             RoomAccess access = requireRoomAccess(reqVO);
+            touchMemberPresence(access.member());
             return getRoomSessionInternal(access.member(), access.mode());
         });
     }
@@ -1920,6 +1902,10 @@ public class LotteryServiceImpl implements LotteryService {
     private Map<String, Object> getRoomSessionInternal(MemberDO member, String roomMode) {
         LotteryConfigDO config = requireConfig(member.getUserId());
         SystemStateDO state = requireState(member.getUserId());
+        LocalDateTime onlineCutoff = LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT);
+        long onlineMembers = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
+                        new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, member.getUserId())))
+                .stream().filter(item -> !isAutoProxy(item) && isMemberOnline(item, onlineCutoff)).count();
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, member.getUserId()).eq(OrderDO::getMemberId, member.getId())
                 .orderByDesc(OrderDO::getCreateTime).last("LIMIT 30")));
@@ -1932,7 +1918,8 @@ public class LotteryServiceImpl implements LotteryService {
                         .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20")));
         List<MessageDO> messages = roomMessages(member, roomMode);
         List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
-                .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 20")));
+                .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
+                .stream().filter(item -> drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
         IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, member.getUserId())
                 .orderByDesc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
@@ -1951,7 +1938,7 @@ public class LotteryServiceImpl implements LotteryService {
                         "totalBet", money(member.getTotalBet()), "profitLoss", money(member.getProfitLoss()), "avatar", member.getAvatar()),
                 "room", map("name", value(config.getRoomName(), "幸运5"), "announcement", value(config.getAnnouncement(), ""),
                         "mode", roomMode, "modeName", ROOM_MODE_PRIVATE.equals(roomMode) ? "私聊" : "群聊",
-                        "open", bool(state.getRoomOpen()), "online", value(state.getOnline(), 0),
+                        "open", bool(state.getRoomOpen()), "online", onlineMembers,
                         "bettingEnabled", ROOM_MODE_PRIVATE.equals(roomMode)
                                 || switches.getOrDefault("pullEnable", false),
                         "cancelEnabled", switches.getOrDefault("openCancel", false),
@@ -2288,19 +2275,15 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private List<Map<String, Object>> calculatePeriodChima(List<OrderDO> orders, List<MemberDO> members,
-                                                            List<MarketRouteItemDO> routes, SystemStateDO state) {
+                                                            SystemStateDO state) {
         LocalDateTime clearedAt = state == null ? null : state.getChimaClearedAt();
-        return chimaCalculator.calculate(orders, members, routes, clearedAt).stream()
+        return chimaCalculator.calculate(orders, members, clearedAt).stream()
                 .map(item -> map("periods", item.period(), "fakeAmount", item.fakeAmount(),
                         "totalWin", item.totalWin(), "net", item.net())).toList();
     }
 
     private LotteryConfigDO requireConfig() {
         return requireConfig(Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID));
-    }
-
-    private boolean isSimulatedDelivery(String deliveryMode) {
-        return Set.of("SIMULATED_MARKET", "MIXED_SIMULATED", "LOCAL_EAT").contains(deliveryMode);
     }
 
     private LotteryConfigDO requireConfig(Long userId) {
@@ -2544,6 +2527,32 @@ public class LotteryServiceImpl implements LotteryService {
     private boolean isAutoProxyOrder(OrderDO order) {
         return order != null && (TYPE_AUTO_PROXY.equals(value(order.getOrderType(), TYPE_PLAYER))
                 || "自动托".equals(order.getSource()));
+    }
+
+    private void touchMemberPresence(MemberDO member) {
+        if (member == null || isAutoProxy(member)) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (member.getLastSeenAt() != null
+                && !member.getLastSeenAt().isBefore(now.minus(MEMBER_HEARTBEAT_WRITE_INTERVAL))) {
+            return;
+        }
+        DataPermissionUtils.executeIgnore(() -> memberMapper.update(null, new LambdaUpdateWrapper<MemberDO>()
+                .eq(MemberDO::getUserId, member.getUserId())
+                .eq(MemberDO::getId, member.getId())
+                .set(MemberDO::getLastSeenAt, now)
+                .set(MemberDO::getStatus, "在线")));
+        member.setLastSeenAt(now);
+        member.setStatus("在线");
+    }
+
+    private boolean isMemberOnline(MemberDO member, LocalDateTime cutoff) {
+        return member != null && member.getLastSeenAt() != null && !member.getLastSeenAt().isBefore(cutoff);
+    }
+
+    static boolean shouldPublishSettlementArtifacts(String actor, boolean hasOrders, LocalDateTime openedAt) {
+        return !"system".equals(actor) || hasOrders || openedAt != null;
     }
 
     private boolean bool(Boolean value) {

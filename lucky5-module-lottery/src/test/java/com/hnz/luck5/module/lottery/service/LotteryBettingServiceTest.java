@@ -86,6 +86,13 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void reportsDisabledPlaySeparatelyFromAmountLimit() {
+        assertThatThrownBy(() -> service.parse("龙100", odds))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("当前配置未开放该玩法");
+    }
+
+    @Test
     void derivesAndSettlesDraws() {
         LotteryBettingService.DrawResult draw = service.deriveDraw("1379");
         assertThat(service.isWinning(new LotteryBettingService.ParsedBet(

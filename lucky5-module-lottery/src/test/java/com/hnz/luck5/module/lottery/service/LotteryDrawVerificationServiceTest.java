@@ -69,4 +69,12 @@ class LotteryDrawVerificationServiceTest {
         assertThat(decision.result()).isEqualTo("17254");
         assertThat(decision.error()).contains("不一致");
     }
+
+    @Test
+    void trustsCanonicalAndPersistedCommaSeparatedFiveDigitResults() {
+        assertThat(service.isTrusted("17254")).isTrue();
+        assertThat(service.isTrusted("1,7,2,5,4")).isTrue();
+        assertThat(service.isTrusted("0,0,0,0,0")).isFalse();
+        assertThat(service.isTrusted("5,6,8")).isFalse();
+    }
 }

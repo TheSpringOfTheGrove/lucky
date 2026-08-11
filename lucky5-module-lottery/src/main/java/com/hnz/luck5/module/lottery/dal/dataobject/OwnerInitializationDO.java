@@ -18,6 +18,7 @@ public class OwnerInitializationDO extends LotteryUserBaseDO {
     private String firstSource;
     private String lastSource;
     private Integer initializationCount;
+    private Integer schemaVersion;
     private LocalDateTime firstInitializedAt;
     private LocalDateTime lastInitializedAt;
     private Long lastOperatorUserId;

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_config` (
 CREATE TABLE IF NOT EXISTS `lucky5_owner_initialization` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL,
   `first_source` varchar(20) NOT NULL, `last_source` varchar(20) NOT NULL,
-  `initialization_count` int NOT NULL DEFAULT 1,
+  `initialization_count` int NOT NULL DEFAULT 1, `schema_version` int NOT NULL DEFAULT 2,
   `first_initialized_at` datetime(6) NOT NULL, `last_initialized_at` datetime(6) NOT NULL,
   `last_operator_user_id` bigint NOT NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -26,6 +26,14 @@ CREATE TABLE IF NOT EXISTS `lucky5_owner_initialization` (
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_owner_initialization` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 老板账号初始化标记';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_owner_initialization' AND column_name='schema_version')=0,
+  'ALTER TABLE `lucky5_owner_initialization` ADD COLUMN `schema_version` int NOT NULL DEFAULT 1 AFTER `initialization_count`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_system_state` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `operator_username` varchar(100) NOT NULL DEFAULT '',
@@ -47,43 +55,6 @@ CREATE TABLE IF NOT EXISTS `lucky5_market_connection` (
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_market_user` (`tenant_id`,`user_id`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 盘口连接';
-
--- 模拟网盘完全使用本地数据，不包含、也不调用任何真实盘口写接口。
-CREATE TABLE IF NOT EXISTS `lucky5_simulated_market_account` (
-  `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL,
-  `initial_balance` decimal(18,2) NOT NULL DEFAULT 100000, `balance` decimal(18,2) NOT NULL DEFAULT 100000,
-  `total_stake` decimal(18,2) NOT NULL DEFAULT 0, `total_payout` decimal(18,2) NOT NULL DEFAULT 0,
-  `total_refund` decimal(18,2) NOT NULL DEFAULT 0, `version` int NOT NULL DEFAULT 0,
-  `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `updater` varchar(64) DEFAULT '', `update_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_sim_market_user` (`tenant_id`,`user_id`,`deleted`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 模拟网盘账户';
-
-CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
-  `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `order_id` varchar(64) NOT NULL,
-  `bet_item_id` varchar(64) NOT NULL, `period` varchar(40) NOT NULL, `play` varchar(100) NOT NULL,
-  `selection` varchar(100) NOT NULL, `route_type` varchar(30) NOT NULL,
-  `local_amount` decimal(18,2) NOT NULL DEFAULT 0, `simulated_amount` decimal(18,2) NOT NULL DEFAULT 0,
-  `odds` decimal(12,4) NOT NULL, `local_payout` decimal(18,2) NOT NULL DEFAULT 0,
-  `simulated_payout` decimal(18,2) NOT NULL DEFAULT 0, `status` varchar(30) NOT NULL,
-  `settled_at` datetime(6) NULL, `cancelled_at` datetime(6) NULL,
-  `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  `updater` varchar(64) DEFAULT '', `update_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
-  PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_route_bet_item` (`tenant_id`,`user_id`,`bet_item_id`,`deleted`),
-  KEY `idx_lucky5_route_order` (`tenant_id`,`user_id`,`order_id`),
-  KEY `idx_lucky5_route_period` (`tenant_id`,`user_id`,`period`,`status`),
-  KEY `idx_lucky5_route_recent` (`tenant_id`,`user_id`,`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 本地吃码与模拟网盘路由快照';
-
-SET @lucky5_ddl = IF(
-  (SELECT COUNT(*) FROM information_schema.statistics
-   WHERE table_schema=DATABASE() AND table_name='lucky5_market_route_item' AND index_name='idx_lucky5_route_recent')=0,
-  'ALTER TABLE `lucky5_market_route_item` ADD KEY `idx_lucky5_route_recent` (`tenant_id`,`user_id`,`create_time`)',
-  'SELECT 1'
-);
-PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns
@@ -214,7 +185,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `searchable` bit(1) NOT NULL DEFAULT b'1', `open_id` varchar(100) NULL, `fingerprint` varchar(200) NOT NULL DEFAULT '',
   `private_chat` bit(1) NOT NULL DEFAULT b'0', `web_only` bit(1) NOT NULL DEFAULT b'0',
   `blue_whale_password` varchar(200) NOT NULL DEFAULT '', `avatar` int NOT NULL DEFAULT 1,
-  `flow_cleared_at` datetime NULL, `version` int NOT NULL DEFAULT 0,
+  `last_seen_at` datetime(6) NULL, `flow_cleared_at` datetime NULL, `version` int NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
@@ -434,6 +405,10 @@ SET @lucky5_ddl = IF(
   'ALTER TABLE `lucky5_member` ADD COLUMN `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 1000 AFTER `auto_bet_enabled`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='last_seen_at')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `last_seen_at` datetime(6) NULL AFTER `avatar`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_order' AND column_name='order_type')=0,
   'ALTER TABLE `lucky5_order` ADD COLUMN `order_type` varchar(30) NOT NULL DEFAULT ''PLAYER'' AFTER `source`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
@@ -509,7 +484,7 @@ BEGIN
       'lucky5_member','lucky5_amount_record','lucky5_balance_ledger','lucky5_order','lucky5_bet_item','lucky5_draw',
       'lucky5_issue','lucky5_issue_transition','lucky5_preset_order','lucky5_quick_command',
       'lucky5_follow_order','lucky5_operation_log','lucky5_message','lucky5_rebate_record','lucky5_chima_record',
-      'lucky5_auto_proxy_execution','lucky5_simulated_market_account','lucky5_market_route_item'
+      'lucky5_auto_proxy_execution'
     );
   DECLARE CONTINUE HANDLER FOR NOT FOUND SET finished=1;
 

@@ -130,6 +130,9 @@ export const applyRebatesApi = () => request.post({ url: `${base}/rebates/apply`
 export const clearChimaRecordsApi = (password: string) =>
   request.post({ url: `${base}/chima-records/clear`, data: { password } })
 
+export const getChimaRecordsApi = () =>
+  request.get<Record<string, any>[]>({ url: `${base}/chima-records` })
+
 export const saveOddsApi = (odds: Record<string, any>[]) =>
   request.put({ url: `${base}/odds`, data: { odds } })
 

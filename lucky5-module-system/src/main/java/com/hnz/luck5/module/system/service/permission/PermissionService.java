@@ -3,6 +3,7 @@ package com.hnz.luck5.module.system.service.permission;
 import com.hnz.luck5.framework.common.biz.system.permission.dto.DeptDataPermissionRespDTO;
 
 import java.util.Collection;
+import java.util.Map;
 import java.util.Set;
 
 import static java.util.Collections.singleton;
@@ -115,6 +116,14 @@ public interface PermissionService {
      * @return 角色编号集合
      */
     Set<Long> getUserRoleIdListByUserId(Long userId);
+
+    /**
+     * 获得多个用户拥有的角色编号集合
+     *
+     * @param userIds 用户编号集合
+     * @return 用户编号与角色编号集合的映射
+     */
+    Map<Long, Set<Long>> getUserRoleIdMapByUserIds(Collection<Long> userIds);
 
     /**
      * 获得用户拥有的角色编号集合，从缓存中获取

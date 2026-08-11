@@ -205,6 +205,12 @@ public class LotteryController {
         return success(lotteryService.applyRebates());
     }
 
+    @GetMapping("/chima-records")
+    @PreAuthorize("@ss.hasPermission('lottery:chima-record:manage')")
+    public CommonResult<List<Map<String, Object>>> getChimaRecords() {
+        return success(lotteryService.getChimaRecords());
+    }
+
     @PostMapping("/chima-records/clear")
     @PreAuthorize("@ss.hasPermission('lottery:chima-record:manage')")
     public CommonResult<Boolean> clearChimaRecords(@Valid @RequestBody LotteryReqVO.Password reqVO) {

@@ -66,6 +66,8 @@ public interface LotteryService {
 
     Map<String, Object> applyRebates();
 
+    List<Map<String, Object>> getChimaRecords();
+
     void clearChimaRecords(String password);
 
     void auditAmount(String id, LotteryReqVO.Audit reqVO);

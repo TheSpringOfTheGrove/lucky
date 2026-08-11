@@ -11,9 +11,12 @@ import com.hnz.luck5.framework.excel.core.util.ExcelUtils;
 import com.hnz.luck5.module.system.controller.admin.user.vo.user.*;
 import com.hnz.luck5.module.system.convert.user.UserConvert;
 import com.hnz.luck5.module.system.dal.dataobject.dept.DeptDO;
+import com.hnz.luck5.module.system.dal.dataobject.permission.RoleDO;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.enums.common.SexEnum;
 import com.hnz.luck5.module.system.service.dept.DeptService;
+import com.hnz.luck5.module.system.service.permission.PermissionService;
+import com.hnz.luck5.module.system.service.permission.RoleService;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -22,7 +25,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
-import java.util.Collections;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -31,8 +33,12 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static com.hnz.luck5.framework.apilog.core.enums.OperateTypeEnum.EXPORT;
 import static com.hnz.luck5.framework.common.pojo.CommonResult.success;
@@ -49,6 +55,10 @@ public class UserController {
     private AdminUserService userService;
     @Resource
     private DeptService deptService;
+    @Resource
+    private PermissionService permissionService;
+    @Resource
+    private RoleService roleService;
 
     @PostMapping("/create")
     @Operation(summary = "新增用户")
@@ -112,8 +122,25 @@ public class UserController {
         // 拼接数据
         Map<Long, DeptDO> deptMap = deptService.getDeptMap(
                 convertList(pageResult.getList(), AdminUserDO::getDeptId));
-        return success(new PageResult<>(UserConvert.INSTANCE.convertList(pageResult.getList(), deptMap),
-                pageResult.getTotal()));
+        List<UserRespVO> users = UserConvert.INSTANCE.convertList(pageResult.getList(), deptMap);
+        Map<Long, Set<Long>> userRoleIdMap = permissionService.getUserRoleIdMapByUserIds(
+                convertSet(pageResult.getList(), AdminUserDO::getId));
+        Set<Long> roleIds = userRoleIdMap.values().stream()
+                .flatMap(Set::stream)
+                .collect(Collectors.toSet());
+        Map<Long, RoleDO> roleMap = roleService.getRoleList(roleIds).stream()
+                .collect(Collectors.toMap(RoleDO::getId, role -> role));
+        Comparator<RoleDO> roleComparator = Comparator
+                .comparing(RoleDO::getSort, Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(RoleDO::getId);
+        users.forEach(user -> user.setRoleNames(userRoleIdMap
+                .getOrDefault(user.getId(), Collections.emptySet()).stream()
+                .map(roleMap::get)
+                .filter(Objects::nonNull)
+                .sorted(roleComparator)
+                .map(RoleDO::getName)
+                .toList()));
+        return success(new PageResult<>(users, pageResult.getTotal()));
     }
 
     @GetMapping("/list")

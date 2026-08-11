@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  ref
+} from 'vue'
 import { ElMessage } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -12,6 +19,21 @@ const totalBet = computed(() =>
 const totalWin = computed(() =>
   store.chimaRecords.reduce((sum, item) => sum + Number(item.totalWin || 0), 0)
 )
+
+let refreshTimer: ReturnType<typeof setInterval> | undefined
+const startRefresh = () => {
+  if (refreshTimer) return
+  void store.refreshChimaRecords()
+  refreshTimer = setInterval(() => void store.refreshChimaRecords(), 2_000)
+}
+const stopRefresh = () => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = undefined
+}
+onMounted(startRefresh)
+onActivated(startRefresh)
+onDeactivated(stopRefresh)
+onBeforeUnmount(stopRefresh)
 
 const clear = async () => {
   if (!password.value) {

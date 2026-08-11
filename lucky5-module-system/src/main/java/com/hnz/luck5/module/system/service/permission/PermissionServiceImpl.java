@@ -239,6 +239,18 @@ public class PermissionServiceImpl implements PermissionService {
     }
 
     @Override
+    public Map<Long, Set<Long>> getUserRoleIdMapByUserIds(Collection<Long> userIds) {
+        if (CollUtil.isEmpty(userIds)) {
+            return Collections.emptyMap();
+        }
+        Map<Long, Set<Long>> result = new HashMap<>();
+        userRoleMapper.selectListByUserIds(userIds).forEach(userRole -> result
+                .computeIfAbsent(userRole.getUserId(), ignored -> new HashSet<>())
+                .add(userRole.getRoleId()));
+        return result;
+    }
+
+    @Override
     @Cacheable(value = RedisKeyConstants.USER_ROLE_ID_LIST, key = "#userId")
     public Set<Long> getUserRoleIdListByUserIdFromCache(Long userId) {
         return getUserRoleIdListByUserId(userId);

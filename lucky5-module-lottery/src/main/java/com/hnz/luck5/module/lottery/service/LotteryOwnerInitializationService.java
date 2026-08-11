@@ -54,8 +54,14 @@ public class LotteryOwnerInitializationService {
 
     private static final Long SUPER_ADMIN_USER_ID = 1L;
     private static final BigDecimal ZERO = BigDecimal.ZERO;
+    private static final BigDecimal DEFAULT_MIN_DEPOSIT = new BigDecimal("100");
+    private static final BigDecimal DEFAULT_MAX_DEPOSIT = new BigDecimal("50000");
     private static final String SOURCE_AUTO = "AUTO";
     private static final String SOURCE_MANUAL = "MANUAL";
+    private static final String SOURCE_REPAIR = "REPAIR";
+    private static final int CURRENT_SCHEMA_VERSION = 2;
+    private static final String DEFAULT_CLOSE_TIME = "23:55";
+    private static final int DEFAULT_SETTLE_DELAY = 8;
     private static final LocalDateTime DEFAULT_EXPIRE_AT = LocalDateTime.of(2099, 12, 31, 23, 59, 59);
 
     private final LotteryConfigMapper lotteryConfigMapper;
@@ -86,11 +92,22 @@ public class LotteryOwnerInitializationService {
     }
 
     boolean initializeAutomaticallyCurrentTenant(Long tenantId, Long userId, String username) {
-        int inserted = ownerInitializationMapper.insertIfAbsent(tenantId, userId, SOURCE_AUTO, userId);
-        if (inserted == 0) {
+        int inserted = ownerInitializationMapper.insertIfAbsent(tenantId, userId, SOURCE_AUTO, userId,
+                CURRENT_SCHEMA_VERSION);
+        if (inserted == 1) {
+            initializeCurrentTenant(tenantId, userId, username);
+            return true;
+        }
+        OwnerInitializationDO marker = findInitializationMarker(userId, false);
+        if (marker == null || value(marker.getSchemaVersion(), 1) >= CURRENT_SCHEMA_VERSION) {
             return false;
         }
         initializeCurrentTenant(tenantId, userId, username);
+        marker.setSchemaVersion(CURRENT_SCHEMA_VERSION);
+        marker.setLastSource(SOURCE_REPAIR);
+        marker.setLastInitializedAt(LocalDateTime.now());
+        marker.setLastOperatorUserId(userId);
+        ownerInitializationMapper.updateById(marker);
         return true;
     }
 
@@ -110,25 +127,25 @@ public class LotteryOwnerInitializationService {
 
     InitializationResult initializeManuallyCurrentTenant(Long tenantId, Long userId, String username,
                                                            Long operatorUserId) {
-        int inserted = ownerInitializationMapper.insertIfAbsent(tenantId, userId, SOURCE_MANUAL, operatorUserId);
-        OwnerInitializationDO marker = ownerInitializationMapper.selectOne(
-                new LambdaQueryWrapper<OwnerInitializationDO>().eq(OwnerInitializationDO::getUserId, userId)
-                        .last("LIMIT 1 FOR UPDATE"));
+        int inserted = ownerInitializationMapper.insertIfAbsent(tenantId, userId, SOURCE_MANUAL, operatorUserId,
+                CURRENT_SCHEMA_VERSION);
+        OwnerInitializationDO marker = findInitializationMarker(userId, true);
         initializeCurrentTenant(tenantId, userId, username);
         if (inserted == 0) {
             marker.setLastSource(SOURCE_MANUAL);
             marker.setInitializationCount(value(marker.getInitializationCount(), 1) + 1);
+            marker.setSchemaVersion(CURRENT_SCHEMA_VERSION);
             marker.setLastInitializedAt(LocalDateTime.now());
             marker.setLastOperatorUserId(operatorUserId);
             ownerInitializationMapper.updateById(marker);
         }
         int count = inserted == 1 ? 1 : marker.getInitializationCount();
-        return new InitializationResult(userId, count, SOURCE_MANUAL);
+        return new InitializationResult(userId, count, SOURCE_MANUAL, CURRENT_SCHEMA_VERSION);
     }
 
     void initializeCurrentTenant(Long tenantId, Long userId, String username) {
         initializeOwnerRole(userId);
-        initializeConfig(userId);
+        initializeConfig(userId, username);
         initializeState(userId, username);
         initializeMarketConnection(userId);
         initializeLinkConfig(userId);
@@ -154,18 +171,59 @@ public class LotteryOwnerInitializationService {
         }
     }
 
-    private void initializeConfig(Long userId) {
-        if (findConfig(userId) != null) {
+    private void initializeConfig(Long userId, String username) {
+        LotteryConfigDO config = findConfig(userId);
+        LotteryConfigDO template = findConfig(SUPER_ADMIN_USER_ID);
+        if (config != null) {
+            boolean changed = false;
+            if (isMissingRoomName(config.getRoomName())) {
+                config.setRoomName(defaultRoomName(username));
+                changed = true;
+            }
+            if (isBlank(config.getCloseTime())) {
+                config.setCloseTime(positiveText(template == null ? null : template.getCloseTime(), DEFAULT_CLOSE_TIME));
+                changed = true;
+            }
+            if (value(config.getSettleDelay(), 0) <= 0) {
+                config.setSettleDelay(positive(template == null ? null : template.getSettleDelay(), DEFAULT_SETTLE_DELAY));
+                changed = true;
+            }
+            if (notPositive(config.getMinDeposit())) {
+                config.setMinDeposit(positive(template == null ? null : template.getMinDeposit(), DEFAULT_MIN_DEPOSIT));
+                changed = true;
+            }
+            if (notPositive(config.getMaxDeposit())) {
+                config.setMaxDeposit(positive(template == null ? null : template.getMaxDeposit(), DEFAULT_MAX_DEPOSIT));
+                changed = true;
+            }
+            if (config.getBossMode() == null) {
+                config.setBossMode(true);
+                changed = true;
+            }
+            if (config.getPlayType() == null || config.getPlayType() < 0 || config.getPlayType() > 2) {
+                config.setPlayType(value(template == null ? null : template.getPlayType(), 2));
+                changed = true;
+            }
+            if (config.getUseProxy() == null) {
+                config.setUseProxy(value(template == null ? null : template.getUseProxy(), true));
+                changed = true;
+            }
+            if (config.getAlertValue() == null) {
+                config.setAlertValue(value(template == null ? null : template.getAlertValue(), ZERO));
+                changed = true;
+            }
+            if (changed) {
+                lotteryConfigMapper.updateById(config);
+            }
             return;
         }
-        LotteryConfigDO template = findConfig(SUPER_ADMIN_USER_ID);
-        LotteryConfigDO config = new LotteryConfigDO();
+        config = new LotteryConfigDO();
         config.setUserId(userId);
-        config.setRoomName(value(template == null ? null : template.getRoomName(), "幸运5"));
-        config.setCloseTime(value(template == null ? null : template.getCloseTime(), ""));
-        config.setSettleDelay(value(template == null ? null : template.getSettleDelay(), 0));
-        config.setMinDeposit(value(template == null ? null : template.getMinDeposit(), ZERO));
-        config.setMaxDeposit(value(template == null ? null : template.getMaxDeposit(), ZERO));
+        config.setRoomName(defaultRoomName(username));
+        config.setCloseTime(positiveText(template == null ? null : template.getCloseTime(), DEFAULT_CLOSE_TIME));
+        config.setSettleDelay(positive(template == null ? null : template.getSettleDelay(), DEFAULT_SETTLE_DELAY));
+        config.setMinDeposit(positive(template == null ? null : template.getMinDeposit(), DEFAULT_MIN_DEPOSIT));
+        config.setMaxDeposit(positive(template == null ? null : template.getMaxDeposit(), DEFAULT_MAX_DEPOSIT));
         config.setAnnouncement(value(template == null ? null : template.getAnnouncement(), ""));
         config.setServiceUrl(value(template == null ? null : template.getServiceUrl(), ""));
         config.setChatUrl(value(template == null ? null : template.getChatUrl(), ""));
@@ -207,6 +265,22 @@ public class LotteryOwnerInitializationService {
         LinkConfigDO existing = linkConfigMapper.selectOne(new LambdaQueryWrapper<LinkConfigDO>()
                 .eq(LinkConfigDO::getUserId, userId).last("LIMIT 1"));
         if (existing != null) {
+            boolean changed = false;
+            if (existing.getGroupLinkEnabled() == null) {
+                existing.setGroupLinkEnabled(true);
+                changed = true;
+            }
+            if (existing.getPrivateLinkEnabled() == null) {
+                existing.setPrivateLinkEnabled(true);
+                changed = true;
+            }
+            if (!"GROUP".equals(existing.getDefaultRoomMode()) && !"PRIVATE".equals(existing.getDefaultRoomMode())) {
+                existing.setDefaultRoomMode("GROUP");
+                changed = true;
+            }
+            if (changed) {
+                linkConfigMapper.updateById(existing);
+            }
             return;
         }
         LinkConfigDO linkConfig = new LinkConfigDO().setDeviceId("").setDealerUrl("")
@@ -295,7 +369,11 @@ public class LotteryOwnerInitializationService {
     }
 
     private void initializeQuickCommands(Long tenantId, Long userId) {
-        Set<String> existingCommands = findQuickCommands(userId).stream().map(this::commandKey)
+        List<QuickCommandDO> existingCommands = findQuickCommands(userId);
+        Set<String> existingIds = existingCommands.stream().map(QuickCommandDO::getId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toSet());
+        Set<String> existingContents = existingCommands.stream().map(this::commandContentKey)
                 .collect(Collectors.toSet());
         List<QuickCommandTemplate> templates = findQuickCommands(SUPER_ADMIN_USER_ID).stream()
                 .map(item -> new QuickCommandTemplate(item.getId(), item.getLabel(), item.getContent(),
@@ -304,9 +382,13 @@ public class LotteryOwnerInitializationService {
         if (templates.isEmpty()) {
             templates = defaultQuickCommands();
         }
-        templates.stream().filter(template -> !existingCommands.contains(commandKey(template))).forEach(template -> {
+        templates.forEach(template -> {
+            String commandId = stableCommandId(tenantId, userId, template.sourceId());
+            if (existingIds.contains(commandId) || existingContents.contains(commandContentKey(template))) {
+                return;
+            }
             QuickCommandDO command = new QuickCommandDO()
-                    .setId(stableCommandId(tenantId, userId, template.sourceId()))
+                    .setId(commandId)
                     .setLabel(template.label()).setContent(template.content())
                     .setSort(value(template.sort(), 0)).setEnabled(Boolean.TRUE.equals(template.enabled()));
             command.setUserId(userId);
@@ -317,6 +399,45 @@ public class LotteryOwnerInitializationService {
     private LotteryConfigDO findConfig(Long userId) {
         return lotteryConfigMapper.selectOne(new LambdaQueryWrapper<LotteryConfigDO>()
                 .eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1"));
+    }
+
+    private OwnerInitializationDO findInitializationMarker(Long userId, boolean forUpdate) {
+        LambdaQueryWrapper<OwnerInitializationDO> query = new LambdaQueryWrapper<OwnerInitializationDO>()
+                .eq(OwnerInitializationDO::getUserId, userId);
+        query.last(forUpdate ? "LIMIT 1 FOR UPDATE" : "LIMIT 1");
+        return ownerInitializationMapper.selectOne(query);
+    }
+
+    private String defaultRoomName(String username) {
+        return (isBlank(username) ? "老板" : username.trim()) + " 幸运5房间";
+    }
+
+    private boolean isMissingRoomName(String roomName) {
+        if (isBlank(roomName)) {
+            return true;
+        }
+        long invalidChars = roomName.chars().filter(ch -> ch == '?' || ch == '？' || ch == '�').count();
+        return invalidChars >= 2;
+    }
+
+    private boolean isBlank(String text) {
+        return text == null || text.isBlank();
+    }
+
+    private String positiveText(String text, String fallback) {
+        return isBlank(text) ? fallback : text;
+    }
+
+    private boolean notPositive(BigDecimal number) {
+        return number == null || number.signum() <= 0;
+    }
+
+    private int positive(Integer number, int fallback) {
+        return number == null || number <= 0 ? fallback : number;
+    }
+
+    private BigDecimal positive(BigDecimal number, BigDecimal fallback) {
+        return notPositive(number) ? fallback : number;
     }
 
     private List<SwitchSettingDO> findSwitches(Long userId) {
@@ -345,12 +466,12 @@ public class LotteryOwnerInitializationService {
         return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
     }
 
-    private String commandKey(QuickCommandDO command) {
-        return value(command.getLabel(), "") + "\u0000" + value(command.getContent(), "");
+    private String commandContentKey(QuickCommandDO command) {
+        return value(command.getContent(), "");
     }
 
-    private String commandKey(QuickCommandTemplate command) {
-        return value(command.label(), "") + "\u0000" + value(command.content(), "");
+    private String commandContentKey(QuickCommandTemplate command) {
+        return value(command.content(), "");
     }
 
     private BigDecimal chimaValue(BigDecimal value) {
@@ -426,7 +547,7 @@ public class LotteryOwnerInitializationService {
     private record QuickCommandTemplate(String sourceId, String label, String content, Integer sort, Boolean enabled) {
     }
 
-    public record InitializationResult(Long userId, int initializationCount, String source) {
+    public record InitializationResult(Long userId, int initializationCount, String source, int schemaVersion) {
     }
 
 }
