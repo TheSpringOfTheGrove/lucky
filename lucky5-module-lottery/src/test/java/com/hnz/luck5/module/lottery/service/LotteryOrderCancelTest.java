@@ -7,6 +7,8 @@ import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
+import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketRouteItemMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MemberMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
@@ -25,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class LotteryOrderCancelTest {
@@ -46,6 +49,7 @@ class LotteryOrderCancelTest {
     private OrderMapper orderMapper;
     private MemberMapper memberMapper;
     private MessageMapper messageMapper;
+    private IssueMapper issueMapper;
 
     @BeforeEach
     void setUp() {
@@ -53,9 +57,12 @@ class LotteryOrderCancelTest {
         orderMapper = mock(OrderMapper.class);
         memberMapper = mock(MemberMapper.class);
         messageMapper = mock(MessageMapper.class);
+        issueMapper = mock(IssueMapper.class);
         ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
         ReflectionTestUtils.setField(service, "memberMapper", memberMapper);
         ReflectionTestUtils.setField(service, "messageMapper", messageMapper);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
         ReflectionTestUtils.setField(service, "operationLogMapper", mock(OperationLogMapper.class));
         ReflectionTestUtils.setField(service, "balanceLedgerService", mock(LotteryBalanceLedgerService.class));
     }
@@ -139,6 +146,32 @@ class LotteryOrderCancelTest {
         assertThatThrownBy(() -> service.cancelOrder("O-1"))
                 .hasMessageContaining("订单正在核对");
 
+        assertThat(member.getBalance()).isEqualByComparingTo("50");
+        assertThat(member.getTotalBet()).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void drawnOrderCancellationFailsWithoutReplacingOriginalReceipt() {
+        OrderDO order = pendingOrder("PLAYER", "网页群");
+        order.setPeriod("20260812132");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("玩家A");
+        member.setUserId(142L);
+        member.setBalance(new BigDecimal("50"));
+        member.setTotalBet(new BigDecimal("100"));
+        member.setVersion(0);
+        IssueDO issue = new IssueDO();
+        issue.setPeriod(order.getPeriod());
+        issue.setStatus("DRAWN");
+        when(orderMapper.selectById("O-1")).thenReturn(order);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+
+        assertThatThrownBy(() -> service.cancelOrder("O-1"))
+                .hasMessageContaining("未开奖订单");
+
+        verifyNoInteractions(messageMapper);
         assertThat(member.getBalance()).isEqualByComparingTo("50");
         assertThat(member.getTotalBet()).isEqualByComparingTo("100");
     }

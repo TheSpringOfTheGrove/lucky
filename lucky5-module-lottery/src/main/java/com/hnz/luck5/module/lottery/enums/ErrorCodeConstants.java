@@ -48,4 +48,5 @@ public interface ErrorCodeConstants {
             "订单正在核对，暂不能退码，请稍后重试或联系管理员");
     ErrorCode MARKET_ROOM_START_NOT_READY = new ErrorCode(2_001_000_037,
             "盘口账号尚未连接，无法开启盘口模式");
+    ErrorCode MARKET_BALANCE_NOT_ENOUGH = new ErrorCode(2_001_000_038, "余额不足");
 }

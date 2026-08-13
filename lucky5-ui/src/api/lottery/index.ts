@@ -34,12 +34,15 @@ export const setSwitchApi = (key: string, value: boolean) =>
 export const setRoomApi = (open: boolean) => request.patch({ url: `${base}/room`, data: { open } })
 
 export const saveConfigApi = (data: Record<string, any>) =>
-  request.put({ url: `${base}/config`, data })
+  request.put<Record<string, any>>({ url: `${base}/config`, data })
 
 export const testConfigApi = (data: Record<string, any>) =>
   request.post<Record<string, any>>({ url: `${base}/config/test`, data })
 
 export const syncMarketApi = () => request.post<Record<string, any>>({ url: `${base}/config/sync` })
+
+export const getMarketConnectionSnapshotApi = () =>
+  request.get<Record<string, any>>({ url: `${base}/config/snapshot` })
 
 export const saveLinksApi = (data: Record<string, any>) =>
   request.put({ url: `${base}/links`, data })
@@ -72,8 +75,7 @@ export const createAmountRequestApi = (
 export const getAmountRecordsApi = () =>
   request.get<Record<string, any>[]>({ url: `${base}/amount-records` })
 
-export const getOrdersApi = () =>
-  request.get<Record<string, any>[]>({ url: `${base}/orders` })
+export const getOrdersApi = () => request.get<Record<string, any>[]>({ url: `${base}/orders` })
 
 export const getMessagesApi = (params: LotteryMessagePageParams) =>
   request.get<PageResult<LotteryMessageRow[]>>({ url: `${base}/messages`, params })

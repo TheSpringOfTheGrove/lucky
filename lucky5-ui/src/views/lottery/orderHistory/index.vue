@@ -30,6 +30,8 @@ const stopAutoRefresh = () => {
   refreshTimer = undefined
 }
 
+const money = (value: unknown) => Number(value || 0).toFixed(2)
+
 onMounted(startAutoRefresh)
 onActivated(startAutoRefresh)
 onDeactivated(stopAutoRefresh)
@@ -47,13 +49,19 @@ const rows = computed(() => {
       zhongJiang: 0,
       yinKui: 0,
       shiTou: 0,
-      betMoney: 0
+      betMoney: 0,
+      marketWin: 0,
+      marketProfit: 0,
+      marketRebate: 0
     }
     current.zongTou += Number(item.amount || 0)
     current.zhongJiang += Number(item.win || 0)
     current.yinKui = current.zhongJiang - current.zongTou
     current.shiTou += Number(item.amount || 0)
-    current.betMoney += Number(item.amount || 0)
+    current.betMoney += Number(item.marketBet || 0)
+    current.marketWin += Number(item.marketWin || 0)
+    current.marketRebate += Number(item.marketRebate || 0)
+    current.marketProfit = current.marketWin + current.marketRebate - current.betMoney
     groups.set(item.period, current)
   })
   return [...groups.values()]
@@ -64,9 +72,13 @@ const totals = computed(() =>
       bet: sum.bet + row.zongTou,
       win: sum.win + row.zhongJiang,
       profit: sum.profit + row.yinKui,
-      real: sum.real + row.shiTou
+      real: sum.real + row.shiTou,
+      marketBet: sum.marketBet + row.betMoney,
+      marketWin: sum.marketWin + row.marketWin,
+      marketProfit: sum.marketProfit + row.marketProfit,
+      marketRebate: sum.marketRebate + row.marketRebate
     }),
-    { bet: 0, win: 0, profit: 0, real: 0 }
+    { bet: 0, win: 0, profit: 0, real: 0, marketBet: 0, marketWin: 0, marketProfit: 0, marketRebate: 0 }
   )
 )
 </script>
@@ -77,11 +89,15 @@ const totals = computed(() =>
     <el-card shadow="never">
       <div class="lucky-summary">
         <p
-          >总盈亏：{{ totals.profit }}，总中奖：{{ totals.win }}，总投分：{{
-            totals.bet
-          }}，总实投：{{ totals.real }}</p
+          >总盈亏：{{ money(totals.profit) }}，总中奖：{{ money(totals.win) }}，总投分：{{
+            money(totals.bet)
+          }}，总实投：{{ money(totals.real) }}</p
         >
-        <p>网盈亏：，网中：，网投：，回水：</p>
+        <p
+          >网盈亏：{{ money(totals.marketProfit) }}，网中：{{ money(totals.marketWin) }}，网投：{{
+            money(totals.marketBet)
+          }}，回水：{{ money(totals.marketRebate) }}</p
+        >
       </div>
       <div class="lucky-toolbar">
         <div class="lucky-toolbar__filters">
@@ -100,13 +116,13 @@ const totals = computed(() =>
           <div class="lucky-mobile-card__title">
             <span>{{ row.periods }}</span>
             <span :class="Number(row.yinKui) >= 0 ? 'lucky-danger' : ''">
-              盈亏 {{ row.yinKui }}
+              盈亏 {{ money(row.yinKui) }}
             </span>
           </div>
           <div class="lucky-mobile-card__meta">
-            <span>投额：{{ row.zongTou }}</span>
-            <span>中奖：{{ row.zhongJiang }}</span>
-            <span>实投：{{ row.shiTou }}</span>
+            <span>投额：{{ money(row.zongTou) }}</span>
+            <span>中奖：{{ money(row.zhongJiang) }}</span>
+            <span>实投：{{ money(row.shiTou) }}</span>
           </div>
         </template>
         <el-table-column prop="periods" label="期号" min-width="160" />

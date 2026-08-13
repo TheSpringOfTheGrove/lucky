@@ -22,7 +22,11 @@ public interface LotteryService {
 
     Map<String, Object> testConfig(LotteryReqVO.Config reqVO);
 
+    Map<String, Object> verifyMarketConnection();
+
     Map<String, Object> syncMarket();
+
+    Map<String, Object> getMarketConnectionSnapshot();
 
     void saveLinks(LotteryReqVO.LinkConfig reqVO);
 

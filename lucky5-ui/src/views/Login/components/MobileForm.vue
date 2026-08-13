@@ -90,12 +90,13 @@ import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
 import { useIcon } from '@/hooks/web/useIcon'
 
-import { setTenantId, setToken } from '@/utils/auth'
+import { setToken } from '@/utils/auth'
 import { usePermissionStore } from '@/store/modules/permission'
-import { getTenantIdByName, sendSmsCode, smsLogin } from '@/api/login'
+import { sendSmsCode, smsLogin } from '@/api/login'
 import LoginFormTitle from './LoginFormTitle.vue'
 import { LoginStateEnum, useFormValid, useLoginState } from './useLogin'
 import { ElLoading } from 'element-plus'
+import { resolveLoginTenant } from '../resolveTenant'
 
 defineOptions({ name: 'MobileForm' })
 
@@ -126,7 +127,7 @@ const loginData = reactive({
   },
   loginForm: {
     uuid: '',
-    tenantName: '芋道源码',
+    tenantName: '',
     mobileNumber: '',
     code: ''
   }
@@ -169,10 +170,7 @@ watch(
 )
 // 获取租户 ID
 const getTenantId = async () => {
-  if (loginData.tenantEnable === 'true') {
-    const res = await getTenantIdByName(loginData.loginForm.tenantName)
-    setTenantId(res)
-  }
+  await resolveLoginTenant(loginData.loginForm.tenantName)
 }
 // 登录
 const signIn = async () => {

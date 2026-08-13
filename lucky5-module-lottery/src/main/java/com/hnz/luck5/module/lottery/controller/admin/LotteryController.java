@@ -7,6 +7,7 @@ import com.hnz.luck5.module.lottery.service.LotteryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
@@ -56,9 +57,9 @@ public class LotteryController {
 
     @PutMapping("/config")
     @PreAuthorize("@ss.hasPermission('lottery:config:manage')")
-    public CommonResult<Boolean> saveConfig(@Valid @RequestBody LotteryReqVO.Config reqVO) {
+    public CommonResult<Map<String, Object>> saveConfig(@Valid @RequestBody LotteryReqVO.Config reqVO) {
         lotteryService.saveConfig(reqVO);
-        return success(true);
+        return success(lotteryService.verifyMarketConnection());
     }
 
     @PostMapping("/config/test")
@@ -71,6 +72,12 @@ public class LotteryController {
     @PreAuthorize("@ss.hasPermission('lottery:config:manage')")
     public CommonResult<Map<String, Object>> syncMarket() {
         return success(lotteryService.syncMarket());
+    }
+
+    @GetMapping("/config/snapshot")
+    @PreAuthorize("@ss.hasPermission('lottery:config:manage')")
+    public CommonResult<Map<String, Object>> getMarketConnectionSnapshot() {
+        return success(lotteryService.getMarketConnectionSnapshot());
     }
 
     @PutMapping("/links")
@@ -142,15 +149,42 @@ public class LotteryController {
     @GetMapping("/members/{id}/links")
     @PreAuthorize("@ss.hasPermission('lottery:member:manage')")
     public CommonResult<Map<String, String>> getMemberLinks(@PathVariable String id,
-                                                             @RequestHeader(value = "Origin", required = false) String origin) {
-        return success(lotteryService.getMemberLinks(id, origin));
+                                                             HttpServletRequest request) {
+        return success(lotteryService.getMemberLinks(id, resolveRequestOrigin(request)));
     }
 
     @PostMapping("/members/{id}/rotate-link")
     @PreAuthorize("@ss.hasPermission('lottery:member:manage')")
     public CommonResult<Map<String, String>> rotateMemberLink(@PathVariable String id,
-                                                               @RequestHeader(value = "Origin", required = false) String origin) {
-        return success(lotteryService.rotateMemberLink(id, origin));
+                                                               HttpServletRequest request) {
+        return success(lotteryService.rotateMemberLink(id, resolveRequestOrigin(request)));
+    }
+
+    static String resolveRequestOrigin(HttpServletRequest request) {
+        String scheme = firstForwardedValue(request.getHeader("X-Forwarded-Proto"));
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            scheme = request.getScheme();
+        }
+        String host = firstForwardedValue(request.getHeader("X-Forwarded-Host"));
+        if (host == null || host.isBlank()) {
+            host = firstForwardedValue(request.getHeader("Host"));
+        }
+        if (host == null || host.isBlank()) {
+            host = request.getServerName();
+            int port = request.getServerPort();
+            if (port > 0 && !("http".equalsIgnoreCase(scheme) && port == 80)
+                    && !("https".equalsIgnoreCase(scheme) && port == 443)) {
+                host += ":" + port;
+            }
+        }
+        return scheme.toLowerCase() + "://" + host;
+    }
+
+    private static String firstForwardedValue(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.split(",", 2)[0].trim();
     }
 
     @PostMapping("/members/{id}/clear-fingerprint")

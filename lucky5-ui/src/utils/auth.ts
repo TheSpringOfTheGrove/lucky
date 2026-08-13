@@ -1,6 +1,5 @@
 import { useCache, CACHE_KEY } from '@/hooks/web/useCache'
 import { TokenType } from '@/api/login/types'
-import { decrypt, encrypt } from '@/utils/jsencrypt'
 
 const { wsCache } = useCache()
 
@@ -52,15 +51,21 @@ export type LoginFormType = {
 
 export const getLoginForm = () => {
   const loginForm: LoginFormType = wsCache.get(CACHE_KEY.LoginForm)
-  if (loginForm) {
-    loginForm.password = decrypt(loginForm.password) as string
+  if (!loginForm) {
+    return loginForm
   }
-  return loginForm
+  // Never restore a password into the login form. This also migrates old browser caches that may still contain
+  // a reversibly encrypted password from the former implementation.
+  const sanitizedLoginForm = { ...loginForm, password: '' }
+  if (loginForm.password) {
+    wsCache.set(CACHE_KEY.LoginForm, sanitizedLoginForm, { exp: 30 * 24 * 60 * 60 })
+  }
+  return sanitizedLoginForm
 }
 
 export const setLoginForm = (loginForm: LoginFormType) => {
-  loginForm.password = encrypt(loginForm.password) as string
-  wsCache.set(CACHE_KEY.LoginForm, loginForm, { exp: 30 * 24 * 60 * 60 })
+  // "Remember me" stores only the account metadata in this browser. Passwords must never enter web storage.
+  wsCache.set(CACHE_KEY.LoginForm, { ...loginForm, password: '' }, { exp: 30 * 24 * 60 * 60 })
 }
 
 export const removeLoginForm = () => {

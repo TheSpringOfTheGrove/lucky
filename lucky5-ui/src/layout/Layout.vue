@@ -6,6 +6,7 @@ import { Setting } from '@/layout/components/Setting'
 import { useRenderLayout } from './components/useRenderLayout'
 import { useDesign } from '@/hooks/web/useDesign'
 import { getLayoutRenderMode } from '@/utils/layout'
+import MarketBalanceAlarm from './components/MarketBalanceAlarm.vue'
 
 const { getPrefixCls } = useDesign()
 
@@ -64,6 +65,8 @@ export default defineComponent({
         ) : undefined}
 
         {renderLayout()}
+
+        <MarketBalanceAlarm></MarketBalanceAlarm>
 
         <Backtop></Backtop>
 

@@ -17,6 +17,7 @@ import {
   deleteFollowOrderApi,
   deleteMemberApi,
   getLucky5Bootstrap,
+  getMarketConnectionSnapshotApi,
   getAmountRecordsApi,
   getChimaRecordsApi,
   getOrdersApi,
@@ -94,6 +95,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     loadedUserId: 0,
     loading: false,
     membersRefreshing: false,
+    marketConnectionRefreshing: false,
     saving: false,
     operator: { username: '', expireAt: '' },
     room: { open: false, online: 0 },
@@ -164,8 +166,11 @@ const useLucky5StoreBase = defineStore('lucky5', {
         value: state.switches[key as SwitchKey]
       })),
     stats: (state) => ({
-      totalMembers: state.dashboardStats.totalMembers,
-      onlineMembers: state.dashboardStats.onlineMembers,
+      totalMembers: state.members.filter((item) => item.memberType !== 'BOT' && !item.autoProxy)
+        .length,
+      onlineMembers: state.members.filter(
+        (item) => item.memberType !== 'BOT' && !item.autoProxy && item.status === '在线'
+      ).length,
       pendingDeposits: state.dashboardStats.pendingDeposits,
       totalBalance: state.members
         .filter((item) => item.memberType !== 'BOT' && !item.autoProxy)
@@ -251,8 +256,30 @@ const useLucky5StoreBase = defineStore('lucky5', {
     setRoomOpen(value: boolean) {
       return this.perform(() => setRoomApi(value), value ? '启动成功' : '关闭成功')
     },
-    saveConfig(payload: Record<string, any>) {
-      return this.perform(() => saveConfigApi(payload), '配置已保存')
+    async saveConfig(payload: Record<string, any>) {
+      this.saving = true
+      try {
+        const connection = await saveConfigApi(payload)
+        this.market.connection = { ...this.market.connection, ...connection }
+        await this.initialize(true)
+        const current = this.market.connection
+        if (current.status === '已连接') {
+          ElMessage.success('配置已保存，盘口验证成功')
+        } else if (current.status === '连接失败') {
+          ElMessage.error(`配置已保存，但盘口验证失败：${current.error || '请检查账号配置'}`)
+        } else {
+          ElMessage.success('配置已保存')
+        }
+        return connection
+      } catch (error: any) {
+        if (error !== 'error') {
+          ElMessage.error(error?.message || '配置保存或验证失败')
+        }
+        await this.initialize(true)
+        return false
+      } finally {
+        this.saving = false
+      }
     },
     async testConfig(payload: Record<string, any>) {
       try {
@@ -266,6 +293,19 @@ const useLucky5StoreBase = defineStore('lucky5', {
     },
     syncMarket() {
       return this.perform(() => syncMarketApi(), '盘口数据已同步')
+    },
+    async refreshMarketConnection() {
+      if (this.marketConnectionRefreshing) return false
+      this.marketConnectionRefreshing = true
+      try {
+        const connection = await getMarketConnectionSnapshotApi()
+        this.market.connection = { ...this.market.connection, ...connection }
+        return true
+      } catch {
+        return false
+      } finally {
+        this.marketConnectionRefreshing = false
+      }
     },
     async refreshMembers() {
       if (this.membersRefreshing) return false

@@ -76,6 +76,8 @@ import * as authUtil from '@/utils/auth'
 import { usePermissionStore } from '@/store/modules/permission'
 import * as LoginApi from '@/api/login'
 import { LoginStateEnum, useFormValid, useLoginState } from './useLogin'
+import { resolveLoginTenant } from '../resolveTenant'
+import { unlockMarketBalanceAlarmAudio } from '@/utils/marketBalanceAlarmAudio'
 
 defineOptions({ name: 'LoginForm' })
 
@@ -104,16 +106,18 @@ const loginData = reactive({
   captchaEnable: import.meta.env.VITE_APP_CAPTCHA_ENABLE,
   tenantEnable: import.meta.env.VITE_APP_TENANT_ENABLE,
   loginForm: {
-    tenantName: import.meta.env.VITE_APP_DEFAULT_LOGIN_TENANT || '',
-    username: import.meta.env.VITE_APP_DEFAULT_LOGIN_USERNAME || '',
-    password: import.meta.env.VITE_APP_DEFAULT_LOGIN_PASSWORD || '',
+    tenantName: '',
+    username: '',
+    password: '',
     captchaVerification: '',
-    rememberMe: true // 默认记录我。如果不需要，可手动修改
+    rememberMe: false
   }
 })
 
 // 获取验证码
 const getCode = async () => {
+  // 必须在登录按钮或回车的原始用户手势内解锁，登录后的余额报警才能自动发声。
+  void unlockMarketBalanceAlarmAudio()
   // 情况一，未开启：则直接登录
   if (loginData.captchaEnable === 'false') {
     await handleLogin({})
@@ -125,10 +129,7 @@ const getCode = async () => {
 }
 // 获取租户 ID
 const getTenantId = async () => {
-  if (loginData.tenantEnable === 'true') {
-    const res = await LoginApi.getTenantIdByName(loginData.loginForm.tenantName)
-    authUtil.setTenantId(res)
-  }
+  await resolveLoginTenant(loginData.loginForm.tenantName)
 }
 // 记住我
 const getLoginFormCache = () => {
@@ -145,14 +146,7 @@ const getLoginFormCache = () => {
 }
 // 根据域名，获得租户信息
 const getTenantByWebsite = async () => {
-  if (loginData.tenantEnable === 'true') {
-    const website = location.host
-    const res = await LoginApi.getTenantByWebsite(website)
-    if (res) {
-      loginData.loginForm.tenantName = res.name
-      authUtil.setTenantId(res.id)
-    }
-  }
+  await resolveLoginTenant(loginData.loginForm.tenantName)
 }
 const loading = ref() // ElLoading.service 返回的实例
 // 登录

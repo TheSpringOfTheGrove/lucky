@@ -18,7 +18,6 @@ public class LotteryRoomMessagePolicy {
 
     private static final Pattern AMOUNT_COMMAND = Pattern.compile("^(上|下)(?:分)?(\\d+(?:\\.\\d+)?)$");
     private static final Pattern CANCEL_COMMAND = Pattern.compile("^退(?:码)?\\s*([A-Za-z0-9_-]+)$");
-
     public enum MessageType {
         CHAT,
         BALANCE,
@@ -49,11 +48,21 @@ public class LotteryRoomMessagePolicy {
             return MessageType.BET;
         } catch (ServiceException ex) {
             if (BET_CONTENT_INVALID.getCode().equals(ex.getCode())) {
-                return MessageType.CHAT;
+                // The room input is command-only. Every unrecognized message must enter the rejection flow so
+                // the original text remains visible and the player receives an explicit "指令错误" reply.
+                return MessageType.BET;
             }
             // The parser recognized a bet but rejected a limit or configuration. It is still an operation.
             return MessageType.BET;
         }
+    }
+
+    /**
+     * The room input is command-only, so every non-blank message is an operation intent.
+     */
+    public boolean looksLikeBetIntent(String rawContent) {
+        String content = rawContent == null ? "" : rawContent.trim();
+        return !content.isEmpty();
     }
 
 }

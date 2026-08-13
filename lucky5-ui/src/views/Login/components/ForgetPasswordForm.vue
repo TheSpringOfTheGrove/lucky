@@ -121,8 +121,7 @@ import { sendSmsCode, smsResetPassword } from '@/api/login'
 import LoginFormTitle from './LoginFormTitle.vue'
 import { LoginStateEnum, useFormValid, useLoginState } from './useLogin'
 import { ElLoading } from 'element-plus'
-import * as authUtil from '@/utils/auth'
-import * as LoginApi from '@/api/login'
+import { resolveLoginTenant } from '../resolveTenant'
 defineOptions({ name: 'ForgetPasswordForm' })
 const verify = ref()
 
@@ -227,14 +226,7 @@ watch(
 )
 
 const getTenantId = async () => {
-  if (resetPasswordData.tenantEnable === 'true') {
-    const res = await LoginApi.getTenantIdByName(resetPasswordData.tenantName)
-    if (res == null) {
-      message.error(t('login.invalidTenantName'))
-      throw t('login.invalidTenantName')
-    }
-    authUtil.setTenantId(res)
-  }
+  await resolveLoginTenant(resetPasswordData.tenantName)
 }
 
 // 重置密码

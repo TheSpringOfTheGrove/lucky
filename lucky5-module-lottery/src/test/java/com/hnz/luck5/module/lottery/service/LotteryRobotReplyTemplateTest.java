@@ -34,17 +34,44 @@ class LotteryRobotReplyTemplateTest {
     }
 
     @Test
+    void shouldKeepOriginalBetReceiptAndReplaceCancelActionAfterCancellation() {
+        String receipt = template.betReceipt("玩家2", "20260812153", "三现全倒112各2", 4, 1,
+                new BigDecimal("2"), new BigDecimal("43"));
+
+        assertThat(template.cancelSucceeded(receipt))
+                .isEqualTo("@玩家2\n[挂牌时间]153\n三现全倒112各2\n【户型审核成功】✓✓"
+                        + "\n【编号】：4\n【套内】：1\n【套外】：2\n【面积】：43\n已退码")
+                .doesNotContain("退码成功：", "点击退码");
+        assertThat(template.cancelSucceeded(template.cancelSucceeded(receipt)))
+                .isEqualTo(template.cancelSucceeded(receipt));
+    }
+
+    @Test
     void shouldOnlyExposeFinalBetOutcomeToPlayer() {
         assertThat(template.marketBetPending("露露", "20260809194", "654倒二定各10")).isEmpty();
         assertThat(template.betFailed("露露", new BigDecimal("360.00")))
                 .isEqualTo("@露露\n下注失败\n下注金额360已退回")
                 .doesNotContain("盘口", "外盘", "核对");
         assertThat(template.cancelPending("O1001")).isEmpty();
+        assertThat(template.cancelRejected("露露"))
+                .isEqualTo("@露露\n退码失败，当前订单不能退码")
+                .doesNotContain("盘口", "外盘");
+        assertThat(template.cancelReview("露露"))
+                .isEqualTo("@露露\n退码结果待确认，请联系管理员")
+                .doesNotContain("盘口", "外盘");
+        assertThat(template.balanceNotEnough("露露")).isEqualTo("@露露\n余额不足")
+                .doesNotContain("盘口", "外盘");
+        assertThat(template.betRejected("露露", "当前玩法暂不可用"))
+                .isEqualTo("@露露\n下注失败\n当前玩法暂不可用")
+                .doesNotContain("盘口", "外盘");
+        assertThat(template.betRejected("露露", "指令错误"))
+                .isEqualTo("@露露\n指令错误");
     }
 
     @Test
     void shouldFormatClosedAndAmountReplies() {
         assertThat(template.roomClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n当前未开盘");
+        assertThat(template.periodClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n封盘中");
         assertThat(template.amountPending("旺旺杀米米")).isEqualTo("@旺旺杀米米\n请稍后");
         assertThat(template.amountAudited("旺旺杀米米", "上分", new BigDecimal("100.00"),
                 "已通过", new BigDecimal("65393.87")))

@@ -33,26 +33,20 @@ public class LotteryMarketRoutingService {
     @Resource private MarketRouteItemMapper routeItemMapper;
     @Resource private LotteryMarketRoutingPolicy routingPolicy;
 
-    public RoutingResult prepare(Long userId, String orderId, String period, MemberDO member, List<BetItemDO> items) {
-        ChimaConfigDO config = DataPermissionUtils.executeIgnore(() -> chimaConfigMapper.selectOne(
-                new LambdaQueryWrapper<ChimaConfigDO>().eq(ChimaConfigDO::getUserId, userId).last("LIMIT 1")));
-        List<MarketRouteItemDO> existing = DataPermissionUtils.executeIgnore(() -> routeItemMapper.selectList(
-                new LambdaQueryWrapper<MarketRouteItemDO>().eq(MarketRouteItemDO::getUserId, userId)
-                        .eq(MarketRouteItemDO::getPeriod, period)
-                        .notIn(MarketRouteItemDO::getStatus, "CANCELLED", "FAILED", "REFUNDED")));
-        Map<String, BigDecimal> retained = new HashMap<>();
-        existing.forEach(item -> retained.merge(item.getPlay(), money(item.getLocalAmount()), BigDecimal::add));
+    /**
+     * Calculates the amount that would actually be sent to the external market without persisting an order route.
+     * The caller holds the owner finance row lock, so the retained-cap snapshot used here remains stable until the
+     * matching {@link #prepare(Long, String, String, MemberDO, List)} call completes.
+     */
+    public BigDecimal previewMarketAmount(Long userId, String period, MemberDO member, List<BetItemDO> items) {
+        return allocationPlan(userId, period, member, items).marketTotal();
+    }
 
-        List<LotteryMarketRoutingPolicy.Allocation> allocations = routingPolicy.allocate(member, config, items, retained);
-        for (LotteryMarketRoutingPolicy.Allocation allocation : allocations) {
-            if (allocation.marketAmount().signum() > 0 && !supportsMarket(allocation.item())) {
-                throw exception(MARKET_PLAY_UNSUPPORTED, allocation.item().getPlay(), allocation.item().getSelection());
-            }
-        }
-        BigDecimal localTotal = money(allocations.stream().map(LotteryMarketRoutingPolicy.Allocation::localAmount)
-                .reduce(ZERO, BigDecimal::add));
-        BigDecimal marketTotal = money(allocations.stream().map(LotteryMarketRoutingPolicy.Allocation::marketAmount)
-                .reduce(ZERO, BigDecimal::add));
+    public RoutingResult prepare(Long userId, String orderId, String period, MemberDO member, List<BetItemDO> items) {
+        AllocationPlan plan = allocationPlan(userId, period, member, items);
+        List<LotteryMarketRoutingPolicy.Allocation> allocations = plan.allocations();
+        BigDecimal localTotal = plan.localTotal();
+        BigDecimal marketTotal = plan.marketTotal();
         for (LotteryMarketRoutingPolicy.Allocation allocation : allocations) {
             MarketRouteItemDO route = new MarketRouteItemDO();
             route.setId(IdUtil.fastSimpleUUID());
@@ -81,6 +75,29 @@ public class LotteryMarketRoutingService {
                 : localTotal.signum() == 0 ? "MARKET_ADAPTER" : "MIXED_MARKET";
         return new RoutingResult(localTotal, marketTotal, deliveryMode,
                 marketTotal.signum() == 0 ? "NOT_REQUIRED" : "PENDING");
+    }
+
+    private AllocationPlan allocationPlan(Long userId, String period, MemberDO member, List<BetItemDO> items) {
+        ChimaConfigDO config = DataPermissionUtils.executeIgnore(() -> chimaConfigMapper.selectOne(
+                new LambdaQueryWrapper<ChimaConfigDO>().eq(ChimaConfigDO::getUserId, userId).last("LIMIT 1")));
+        List<MarketRouteItemDO> existing = DataPermissionUtils.executeIgnore(() -> routeItemMapper.selectList(
+                new LambdaQueryWrapper<MarketRouteItemDO>().eq(MarketRouteItemDO::getUserId, userId)
+                        .eq(MarketRouteItemDO::getPeriod, period)
+                        .notIn(MarketRouteItemDO::getStatus, "CANCELLED", "FAILED", "REFUNDED")));
+        Map<String, BigDecimal> retained = new HashMap<>();
+        existing.forEach(item -> retained.merge(item.getPlay(), money(item.getLocalAmount()), BigDecimal::add));
+
+        List<LotteryMarketRoutingPolicy.Allocation> allocations = routingPolicy.allocate(member, config, items, retained);
+        for (LotteryMarketRoutingPolicy.Allocation allocation : allocations) {
+            if (allocation.marketAmount().signum() > 0 && !supportsMarket(allocation.item())) {
+                throw exception(MARKET_PLAY_UNSUPPORTED, allocation.item().getPlay(), allocation.item().getSelection());
+            }
+        }
+        BigDecimal localTotal = money(allocations.stream().map(LotteryMarketRoutingPolicy.Allocation::localAmount)
+                .reduce(ZERO, BigDecimal::add));
+        BigDecimal marketTotal = money(allocations.stream().map(LotteryMarketRoutingPolicy.Allocation::marketAmount)
+                .reduce(ZERO, BigDecimal::add));
+        return new AllocationPlan(allocations, localTotal, marketTotal);
     }
 
     boolean supportsMarket(BetItemDO item) {
@@ -115,4 +132,7 @@ public class LotteryMarketRoutingService {
 
     public record RoutingResult(BigDecimal localAmount, BigDecimal marketAmount, String deliveryMode,
                                 String marketStatus) {}
+
+    private record AllocationPlan(List<LotteryMarketRoutingPolicy.Allocation> allocations,
+                                  BigDecimal localTotal, BigDecimal marketTotal) {}
 }

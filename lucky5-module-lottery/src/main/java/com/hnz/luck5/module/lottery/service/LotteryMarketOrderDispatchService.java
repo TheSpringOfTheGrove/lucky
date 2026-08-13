@@ -1,6 +1,7 @@
 package com.hnz.luck5.module.lottery.service;
 
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
+import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import com.hnz.luck5.framework.tenant.core.util.TenantUtils;
 import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import lombok.RequiredArgsConstructor;
@@ -9,8 +10,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
@@ -22,6 +25,8 @@ public class LotteryMarketOrderDispatchService {
 
     private final Wa55MarketOrderClient marketClient;
     private final LotteryMarketOrderStateService stateService;
+    private final LotteryMarketSyncService marketSyncService;
+    private final LotteryMarketBalanceRefreshService balanceRefreshService;
     private final AtomicBoolean recovering = new AtomicBoolean();
 
     public void submit(Long userId, String orderId) {
@@ -31,7 +36,13 @@ public class LotteryMarketOrderDispatchService {
         try {
             Wa55MarketOrderClient.SubmissionBatch result = marketClient.submit(context.credentials(), context.period(),
                     context.requests());
-            applySuccessfulConfirmations(userId, orderId, result.confirmations());
+            if (applySuccessfulConfirmations(userId, orderId, result.confirmations())) {
+                BigDecimal acceptedAmount = result.confirmations().stream()
+                        .map(Wa55MarketOrderClient.BetConfirmation::acceptedAmount)
+                        .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+                marketSyncService.recordSuccessfulSubmission(userId, result.balance(), acceptedAmount);
+                balanceRefreshService.refresh(TenantContextHolder.getRequiredTenantId(), userId);
+            }
         } catch (Wa55MarketOrderClient.MarketProtocolException ex) {
             stateService.applyConfirmations(userId, orderId, ex.confirmations());
             if (ex.submissionUncertain()) {
@@ -65,6 +76,12 @@ public class LotteryMarketOrderDispatchService {
         try {
             marketClient.cancel(context.credentials(), context.period(), context.requests());
             stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
+        } catch (Wa55MarketOrderClient.MarketProtocolException ex) {
+            if (ex.submissionUncertain()) {
+                stateService.markCancelFailed(userId, orderId, ex.getMessage());
+            } else {
+                stateService.markCancelRejected(userId, orderId, ex.getMessage());
+            }
         } catch (RuntimeException ex) {
             stateService.markCancelFailed(userId, orderId, ex.getMessage());
         }
@@ -73,12 +90,12 @@ public class LotteryMarketOrderDispatchService {
     /**
      * 外部已经明确受理后，本地确认必须优先落库。短暂数据库异常允许重试本地写入，绝不能重新向外部提交。
      */
-    private void applySuccessfulConfirmations(Long userId, String orderId,
-                                              List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
+    private boolean applySuccessfulConfirmations(Long userId, String orderId,
+                                                 List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= MAX_AUTOMATIC_ATTEMPTS; attempt++) {
             try {
-                if (stateService.applyConfirmations(userId, orderId, confirmations)) return;
+                if (stateService.applyConfirmations(userId, orderId, confirmations)) return true;
             } catch (RuntimeException ex) {
                 lastError = ex;
                 LOGGER.warn("外部订单已成功，本地确认第 {} 次写入失败 user={} order={}", attempt, userId, orderId, ex);
@@ -87,6 +104,7 @@ public class LotteryMarketOrderDispatchService {
         String detail = lastError == null ? "本地确认状态未完整更新" : lastError.getMessage();
         stateService.markManualReview(userId, orderId,
                 "外部订单已成功，但本地确认连续三次写入失败，请仅修复本地状态，禁止重新提交：" + detail);
+        return false;
     }
 
     @Scheduled(initialDelayString = "${lottery.market.order-recovery-initial-delay-ms:30000}",

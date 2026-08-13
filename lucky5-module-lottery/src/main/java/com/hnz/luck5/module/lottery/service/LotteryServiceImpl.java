@@ -5,6 +5,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.hnz.luck5.framework.common.exception.ServiceException;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.framework.security.core.service.SecurityFrameworkService;
@@ -118,6 +119,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private MarketCredentialService marketCredentialService;
     @Resource private LotteryMarketSyncService marketSyncService;
     @Resource private LotteryMarketRoutingService marketRoutingService;
+    @Resource private LotteryMarketBalanceService marketBalanceService;
     @Resource private Wa55MarketOrderClient marketOrderClient;
     @Resource private SecurityFrameworkService securityFrameworkService;
     @Resource private AdminUserService adminUserService;
@@ -335,11 +337,48 @@ public class LotteryServiceImpl implements LotteryService {
                 "items", bets.stream().map(this::betItemMap).toList());
     }
 
+    private Map<String, Object> orderMapWithMarketStatistics(OrderDO order, List<BetItemDO> bets, String drawResult,
+                                                              List<MarketRouteItemDO> routes) {
+        Map<String, Object> result = orderMap(order, bets, drawResult);
+        Map<String, BetItemDO> itemsById = bets.stream().collect(Collectors.toMap(BetItemDO::getId,
+                Function.identity(), (first, ignored) -> first));
+        BigDecimal marketBet = ZERO;
+        BigDecimal marketWin = ZERO;
+        for (MarketRouteItemDO route : routes) {
+            BigDecimal amount = money(route.getMarketAmount());
+            if (amount.signum() <= 0 || !isSuccessfulMarketRoute(route)) continue;
+            marketBet = marketBet.add(amount);
+            BetItemDO bet = itemsById.get(route.getBetItemId());
+            if (bet == null || !Boolean.TRUE.equals(bet.getWon())) continue;
+            BigDecimal odds = route.getMarketOdds() != null && route.getMarketOdds().signum() > 0
+                    ? route.getMarketOdds() : route.getOdds();
+            marketWin = marketWin.add(amount.multiply(value(odds, ZERO)));
+        }
+        marketBet = money(marketBet);
+        marketWin = money(marketWin);
+        BigDecimal marketRebate = ZERO;
+        result.put("marketBet", marketBet);
+        result.put("marketWin", marketWin);
+        result.put("marketRebate", marketRebate);
+        result.put("marketProfit", money(marketWin.add(marketRebate).subtract(marketBet)));
+        return result;
+    }
+
+    private boolean isSuccessfulMarketRoute(MarketRouteItemDO route) {
+        return Set.of("CONFIRMED", "SETTLED", "CANCEL_PENDING", "CANCEL_FAILED")
+                .contains(value(route.getStatus(), ""))
+                || StrUtil.isNotBlank(route.getMarketBetId());
+    }
+
     private Map<String, Object> roomOrderMap(OrderDO item, List<BetItemDO> bets) {
         Map<String, Object> result = orderMap(item, bets);
         boolean processing = Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "MANUAL_REVIEW",
-                "PARTIAL_CONFIRMED", "CANCEL_REQUESTED", "CANCEL_PENDING").contains(item.getMarketStatus());
+                "PARTIAL_CONFIRMED", "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
+                .contains(item.getMarketStatus());
         result.put("processing", processing);
+        result.put("cancelable", "未开奖".equals(item.getStatus()) && !Set.of("PENDING", "SUBMITTING", "RETRY",
+                "UNKNOWN", "MANUAL_REVIEW", "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
+                .contains(item.getMarketStatus()) && StrUtil.isBlank(item.getMarketError()));
         result.remove("deliveryMode");
         result.remove("marketStatus");
         result.remove("marketOrderId");
@@ -500,7 +539,7 @@ public class LotteryServiceImpl implements LotteryService {
         if (credentialsChanged) {
             marketConnectionMapper.update(null, new LambdaUpdateWrapper<MarketConnectionDO>()
                     .eq(MarketConnectionDO::getUserId, config.getUserId())
-                    .set(MarketConnectionDO::getStatus, "待验证").set(MarketConnectionDO::getError, ""));
+                    .set(MarketConnectionDO::getStatus, "连接中").set(MarketConnectionDO::getError, ""));
         }
         log("-", "保存配置管理");
     }
@@ -511,9 +550,21 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
+    public Map<String, Object> verifyMarketConnection() {
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        return marketSyncService.verifyCurrentConnection(TenantContextHolder.getRequiredTenantId(), userId);
+    }
+
+    @Override
     public Map<String, Object> syncMarket() {
         Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
         return marketSyncService.syncCurrent(TenantContextHolder.getRequiredTenantId(), userId);
+    }
+
+    @Override
+    public Map<String, Object> getMarketConnectionSnapshot() {
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        return marketSyncService.connectionSnapshot(TenantContextHolder.getRequiredTenantId(), userId);
     }
 
     @Override
@@ -759,9 +810,14 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, List<BetItemDO>> itemsByOrder = orderIds.isEmpty() ? Map.of()
                 : betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds))
                         .stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        Map<String, List<MarketRouteItemDO>> routesByOrder = orderIds.isEmpty() ? Map.of()
+                : marketRouteItemMapper.selectList(new LambdaQueryWrapper<MarketRouteItemDO>()
+                        .in(MarketRouteItemDO::getOrderId, orderIds)).stream()
+                        .collect(Collectors.groupingBy(MarketRouteItemDO::getOrderId));
         Map<String, String> drawResultsByPeriod = drawResultsForOrders(SecurityFrameworkUtils.getLoginUserId(), orders);
-        return orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()),
-                drawResultsByPeriod.get(item.getPeriod()))).toList();
+        return orders.stream().map(item -> orderMapWithMarketStatistics(item,
+                itemsByOrder.getOrDefault(item.getId(), List.of()), drawResultsByPeriod.get(item.getPeriod()),
+                routesByOrder.getOrDefault(item.getId(), List.of()))).toList();
     }
 
     @Override
@@ -1240,6 +1296,19 @@ public class LotteryServiceImpl implements LotteryService {
         if (playType == 0 && hasDragonTiger || playType == 1 && hasNormal) throw exception(PLAY_TYPE_DISABLED);
         BigDecimal total = money(parsed.stream().map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
         if (value(member.getBalance(), ZERO).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
+        if (realMarketOrder) {
+            List<BetItemDO> previewItems = parsed.stream().map(value -> {
+                BetItemDO item = new BetItemDO();
+                item.setPlay(value.play());
+                item.setSelection(value.selection());
+                item.setAmount(value.amount());
+                item.setOdds(value.odds());
+                return item;
+            }).toList();
+            BigDecimal marketAmount = marketRoutingService.previewMarketAmount(member.getUserId(),
+                    reqVO.getPeriod().trim(), member, previewItems);
+            marketBalanceService.requireSufficient(config, marketAmount);
+        }
 
         int oldSequence = value(issue.getOrderSequence(), 0);
         int periodSequence = oldSequence + 1;
@@ -1376,6 +1445,9 @@ public class LotteryServiceImpl implements LotteryService {
         if (!allowAutoProxy && isAutoProxyOrder(order)) throw exception(ORDER_CAN_NOT_CANCEL);
         MemberDO member = requireMember(order.getMemberId());
         if (requireCancelEnabled && !enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
+        if (hasDrawResult(order.getUserId(), order.getPeriod())) {
+            throw exception(ORDER_CAN_NOT_CANCEL);
+        }
         boolean realMarketDelivery = Set.of("MARKET_ADAPTER", "MIXED_MARKET").contains(order.getDeliveryMode());
         if (realMarketDelivery && Set.of("CONFIRMED", "PARTIAL_CONFIRMED", "CANCEL_FAILED",
                 "CANCEL_REQUESTED", "CANCEL_PENDING")
@@ -1396,7 +1468,6 @@ public class LotteryServiceImpl implements LotteryService {
             messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>()
                     .eq(MessageDO::getUserId, order.getUserId()).eq(MessageDO::getOrderId, order.getId())
                     .set(MessageDO::getStatus, "退码处理中")
-                    .set(MessageDO::getReply, robotReplyTemplate.cancelPending(order.getId()))
                     .set(MessageDO::getError, ""));
             eventPublisher.publishEvent(new LotteryMarketOrderDispatchEvent(
                     TenantContextHolder.getRequiredTenantId(), order.getUserId(), order.getId(),
@@ -1425,8 +1496,14 @@ public class LotteryServiceImpl implements LotteryService {
         if (refunded != 1) throw exception(BET_STATE_CHANGED);
         balanceLedgerService.recordAppliedChange(member, balanceBefore, member.getBalance(),
                 LotteryBalanceLedgerService.BET_REFUND, order.getId(), actor, "退码订单 " + order.getId());
+        MessageDO orderMessage = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                        .eq(MessageDO::getOrderId, id).eq(MessageDO::getCommandType, "BET")
+                        .orderByAsc(MessageDO::getCreateTime).last("LIMIT 1")));
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                .eq(MessageDO::getOrderId, id).set(MessageDO::getStatus, "已退码"));
+                .eq(MessageDO::getOrderId, id).set(MessageDO::getStatus, "已退码")
+                .set(MessageDO::getReply,
+                        robotReplyTemplate.cancelSucceeded(orderMessage == null ? "" : orderMessage.getReply())));
         if (realMarketDelivery) {
             marketRouteItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                     .eq(MarketRouteItemDO::getUserId, order.getUserId())
@@ -1437,6 +1514,13 @@ public class LotteryServiceImpl implements LotteryService {
         }
         logAs(member.getUserId(), actor, member.getName(), "退码订单 " + id);
         return new CancelResult(id, "已退码", money(order.getAmount()));
+    }
+
+    private boolean hasDrawResult(Long userId, String period) {
+        IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getPeriod, period).last("LIMIT 1")));
+        return issue != null && Set.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus());
     }
 
     private boolean hasCompleteMarketCancelReferences(OrderDO order) {
@@ -1776,6 +1860,13 @@ public class LotteryServiceImpl implements LotteryService {
         LotteryRoomMessagePolicy.MessageType messageType = roomMessagePolicy.classify(content,
                 getEffectiveOdds(member.getUserId()));
         if (messageType == LotteryRoomMessagePolicy.MessageType.CHAT) {
+            if (roomMessagePolicy.looksLikeBetIntent(content)) {
+                if (!roomOperationAvailable(member.getUserId(), reqVO.getChannel())) {
+                    return roomClosedReply(member, reqVO);
+                }
+                Map<String, Object> unavailable = issueUnavailableReply(member, reqVO);
+                if (unavailable != null) return unavailable;
+            }
             MessageDO message = saveCommandMessage(member, reqVO, "CHAT", "");
             return map("messageId", message.getId(), "reply", "", "commandType", "CHAT");
         }
@@ -1814,12 +1905,9 @@ public class LotteryServiceImpl implements LotteryService {
         if (cancel.matches()) {
             String orderId = cancel.group(1);
             CancelResult result = cancelOrderInternal(orderId, member.getId(), actor, true, false);
-            String reply = "退码处理中".equals(result.status())
-                    ? robotReplyTemplate.cancelPending(result.id())
-                    : robotReplyTemplate.cancelSucceeded(result.id(), result.refunded());
+            String reply = Set.of("已退码", "退码处理中").contains(result.status())
+                    ? "" : "@" + member.getName() + "\n" + result.status();
             MessageDO message = saveCommandMessage(member, reqVO, "CANCEL", reply);
-            message.setOrderId(orderId);
-            messageMapper.updateById(message);
             return map("messageId", message.getId(), "orderId", orderId, "reply", reply, "commandType", "CANCEL",
                     "refunded", result.refunded());
         }
@@ -1831,7 +1919,7 @@ public class LotteryServiceImpl implements LotteryService {
             IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                     .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getStatus, "OPEN")
                     .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
-            if (issue == null) return roomClosedReply(member, reqVO);
+            if (issue == null) return periodClosedReply(member, reqVO);
             if (issueFreshnessPolicy.isStale(issue)) return drawSourceStaleReply(member, reqVO);
             period = issue.getPeriod();
         } else {
@@ -1839,7 +1927,7 @@ public class LotteryServiceImpl implements LotteryService {
             IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                     .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getPeriod, requestedPeriod)
                     .eq(IssueDO::getStatus, "OPEN").last("LIMIT 1")));
-            if (issue == null) return roomClosedReply(member, reqVO);
+            if (issue == null) return periodClosedReply(member, reqVO);
             if (issueFreshnessPolicy.isStale(issue)) return drawSourceStaleReply(member, reqVO);
         }
         LotteryReqVO.PlaceBet bet = new LotteryReqVO.PlaceBet();
@@ -1848,7 +1936,17 @@ public class LotteryServiceImpl implements LotteryService {
         bet.setContent(reqVO.getContent());
         bet.setChannel(reqVO.getChannel());
         bet.setExternalId(reqVO.getExternalId());
-        BetResult result = placeBetInternal(bet, actor);
+        BetResult result;
+        try {
+            result = placeBetInternal(bet, actor);
+        } catch (ServiceException ex) {
+            if (isBalanceNotEnough(ex)) return balanceNotEnoughReply(member, reqVO);
+            if (ISSUE_SOURCE_STALE.getCode().equals(ex.getCode())) return drawSourceStaleReply(member, reqVO);
+            if (ROOM_CLOSED.getCode().equals(ex.getCode())) return roomClosedReply(member, reqVO);
+            if (isPeriodClosed(ex)) return periodClosedReply(member, reqVO);
+            if (isSafeBetRejection(ex)) return betRejectedReply(member, reqVO, ex);
+            throw ex;
+        }
         String reply = Set.of("PENDING", "SUBMITTING", "RETRY").contains(result.marketStatus())
                 ? robotReplyTemplate.marketBetPending(result.member(), result.period(), content)
                 : robotReplyTemplate.betReceipt(result.member(), result.period(), content,
@@ -2121,8 +2219,10 @@ public class LotteryServiceImpl implements LotteryService {
         result.put("error", "");
         result.put("reply", playerReply);
         if ("BET".equals(item.getCommandType())) {
-            result.put("status", playerReply.isBlank() ? "处理中"
-                    : playerReply.contains("下注失败") ? "失败" : "成功");
+            String messageStatus = value(item.getStatus(), "");
+            result.put("status", Set.of("退码处理中", "退码待确认", "退码失败").contains(messageStatus)
+                    ? messageStatus
+                    : playerReply.isBlank() ? "处理中" : playerReply.contains("下注失败") ? "失败" : "成功");
         }
         if (!own) {
             result.put("orderId", "");
@@ -2146,7 +2246,20 @@ public class LotteryServiceImpl implements LotteryService {
             bet.setChannel(access.channel());
             bet.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null
                     : "room:" + access.mode() + ":" + member.getId() + ":" + reqVO.getExternalId());
-            return betResultMap(placeBetInternal(bet, member.getName()));
+            try {
+                return betResultMap(placeBetInternal(bet, member.getName()));
+            } catch (ServiceException ex) {
+                LotteryReqVO.IncomingMessage rejected = new LotteryReqVO.IncomingMessage();
+                rejected.setMemberId(member.getId());
+                rejected.setMemberName(member.getName());
+                rejected.setPeriod(reqVO.getPeriod());
+                rejected.setContent(reqVO.getContent());
+                rejected.setChannel(access.channel());
+                rejected.setExternalId(bet.getExternalId());
+                if (isBalanceNotEnough(ex)) return balanceNotEnoughReply(member, rejected);
+                if (isSafeBetRejection(ex)) return betRejectedReply(member, rejected, ex);
+                throw ex;
+            }
         });
     }
 
@@ -2251,6 +2364,26 @@ public class LotteryServiceImpl implements LotteryService {
         return map("messageId", message.getId(), "reply", reply, "commandType", "ROOM_CLOSED");
     }
 
+    private Map<String, Object> periodClosedReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
+        String reply = robotReplyTemplate.periodClosed(member.getName());
+        MessageDO message = saveCommandMessage(member, reqVO, "PERIOD_CLOSED", reply);
+        message.setStatus("已拒绝");
+        message.setError("封盘中");
+        messageMapper.updateById(message);
+        return map("messageId", message.getId(), "reply", reply, "commandType", "PERIOD_CLOSED");
+    }
+
+    private Map<String, Object> issueUnavailableReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
+        String requestedPeriod = StrUtil.trim(reqVO.getPeriod());
+        IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, member.getUserId())
+                        .eq(StrUtil.isNotBlank(requestedPeriod), IssueDO::getPeriod, requestedPeriod)
+                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        if (issue == null || !"OPEN".equals(issue.getStatus())) return periodClosedReply(member, reqVO);
+        if (issueFreshnessPolicy.isStale(issue)) return drawSourceStaleReply(member, reqVO);
+        return null;
+    }
+
     private Map<String, Object> drawSourceStaleReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
         String reply = robotReplyTemplate.drawSourceStale(member.getName());
         MessageDO message = saveCommandMessage(member, reqVO, "SOURCE_STALE", reply);
@@ -2258,6 +2391,55 @@ public class LotteryServiceImpl implements LotteryService {
         message.setError("开奖数据已过期");
         messageMapper.updateById(message);
         return map("messageId", message.getId(), "reply", reply, "commandType", "SOURCE_STALE");
+    }
+
+    private Map<String, Object> balanceNotEnoughReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
+        String reply = robotReplyTemplate.balanceNotEnough(member.getName());
+        MessageDO message = saveCommandMessage(member, reqVO, "BET_REJECTED", reply);
+        message.setStatus("已拒绝");
+        message.setError("余额不足");
+        messageMapper.updateById(message);
+        return map("messageId", message.getId(), "reply", reply, "commandType", "BET_REJECTED",
+                "status", "失败");
+    }
+
+    private Map<String, Object> betRejectedReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO,
+                                                  ServiceException ex) {
+        String reason = playerFacingBetRejection(ex);
+        String reply = robotReplyTemplate.betRejected(member.getName(), reason);
+        MessageDO message = saveCommandMessage(member, reqVO, "BET_REJECTED", reply);
+        message.setStatus("已拒绝");
+        message.setError(value(ex.getMessage(), reason));
+        messageMapper.updateById(message);
+        return map("messageId", message.getId(), "reply", reply, "commandType", "BET_REJECTED",
+                "status", "失败");
+    }
+
+    private boolean isSafeBetRejection(ServiceException ex) {
+        return Set.of(BET_CONTENT_INVALID.getCode(), BET_LIMIT_INVALID.getCode(), PLAY_TYPE_DISABLED.getCode(),
+                PRIVATE_BET_DISABLED.getCode(), INTEGRATION_NOT_READY.getCode(), MARKET_ORDER_UNAVAILABLE.getCode(),
+                MARKET_CONFIG_REQUIRED.getCode(), MARKET_PLAY_UNSUPPORTED.getCode(), MARKET_WRITE_DISABLED.getCode(),
+                MARKET_ACCOUNT_NOT_READY.getCode()).contains(ex.getCode());
+    }
+
+    private String playerFacingBetRejection(ServiceException ex) {
+        if (BET_CONTENT_INVALID.getCode().equals(ex.getCode())) return "指令错误";
+        if (BET_LIMIT_INVALID.getCode().equals(ex.getCode())) return "下注金额不符合玩法限额";
+        if (PLAY_TYPE_DISABLED.getCode().equals(ex.getCode())) return "当前玩法未开启";
+        if (PRIVATE_BET_DISABLED.getCode().equals(ex.getCode())) return "当前会员未开启私聊下注";
+        if (INTEGRATION_NOT_READY.getCode().equals(ex.getCode())) return "当前渠道暂不可用";
+        if (MARKET_PLAY_UNSUPPORTED.getCode().equals(ex.getCode())) return "当前玩法暂不可用";
+        return "当前暂时无法下注，请联系管理员";
+    }
+
+    private boolean isBalanceNotEnough(ServiceException ex) {
+        return MEMBER_BALANCE_NOT_ENOUGH.getCode().equals(ex.getCode())
+                || MARKET_BALANCE_NOT_ENOUGH.getCode().equals(ex.getCode());
+    }
+
+    private boolean isPeriodClosed(ServiceException ex) {
+        return ISSUE_NOT_OPEN.getCode().equals(ex.getCode())
+                || PERIOD_ALREADY_SETTLED.getCode().equals(ex.getCode());
     }
 
     private void updateAmountRequestReply(AmountRecordDO record, MemberDO member) {

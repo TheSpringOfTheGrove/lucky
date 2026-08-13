@@ -1,5 +1,6 @@
 package com.hnz.luck5.module.lottery.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
@@ -46,6 +47,7 @@ public class LotteryMarketSyncService {
     @Resource private MarketConnectionMapper marketConnectionMapper;
     @Resource private IssueMapper issueMapper;
     @Resource private IssueTransitionMapper issueTransitionMapper;
+    @Resource private ObjectMapper objectMapper;
     @Resource private MarketCredentialService credentialService;
     @Resource private Wa55MarketClient marketClient;
     @Resource private LotteryDrawVerificationService drawVerificationService;
@@ -137,10 +139,63 @@ public class LotteryMarketSyncService {
                                 .isNotNull(LotteryConfigDO::getUserId))));
                 syncGlobalDraws(configs);
             } else {
-                syncOwnerConnection(config);
+                try {
+                    syncOwnerConnection(config);
+                } catch (RuntimeException ex) {
+                    LOGGER.warn("盘口账户立即验证失败 tenant={} user={}: {}", tenantId, userId, rootMessage(ex));
+                }
             }
             return connectionMap(findConnection(userId));
         });
+    }
+
+    /**
+     * Verifies only the current owner's freshly persisted credentials. Unlike {@link #syncCurrent(Long, Long)},
+     * this method does not distribute draw snapshots or trigger settlement when the owner is the shared draw source.
+     */
+    public Map<String, Object> verifyCurrentConnection(Long tenantId, Long userId) {
+        return TenantUtils.execute(tenantId, () -> {
+            LotteryConfigDO config = DataPermissionUtils.executeIgnore(() -> lotteryConfigMapper.selectOne(
+                    new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
+            if (config == null || !configured(config)) {
+                updateConnection(userId, config != null && Boolean.TRUE.equals(config.getBossMode())
+                        ? "老板模式（使用系统开奖源）" : "未配置", "", "", null, "", false);
+                return connectionMap(findConnection(userId));
+            }
+            try {
+                syncOwnerConnection(config);
+            } catch (RuntimeException ex) {
+                LOGGER.warn("盘口账户保存后验证失败 tenant={} user={}: {}", tenantId, userId, rootMessage(ex));
+            }
+            return connectionMap(findConnection(userId));
+        });
+    }
+
+    /**
+     * Updates the cached balance immediately from the pre-submit market snapshot. An asynchronous read follows and
+     * replaces this estimate with the exact external balance, so this method never performs network I/O.
+     */
+    public void recordSuccessfulSubmission(Long userId, BigDecimal balanceBefore, BigDecimal acceptedAmount) {
+        if (balanceBefore == null || acceptedAmount == null) return;
+        BigDecimal estimated = balanceBefore.subtract(acceptedAmount).max(BigDecimal.ZERO);
+        updateConnection(userId, "已连接", null, null, estimated, "", true);
+    }
+
+    /** Reads only the owner's account snapshot after a successful external order. */
+    public void refreshOwnerBalance(Long tenantId, Long userId) {
+        TenantUtils.execute(tenantId, () -> {
+            LotteryConfigDO config = DataPermissionUtils.executeIgnore(() -> lotteryConfigMapper.selectOne(
+                    new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
+            if (!configured(config)) return;
+            Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
+            updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
+                    snapshot.account().balance(), "", true);
+        });
+    }
+
+    /** Returns the persisted connection snapshot and never contacts the external market. */
+    public Map<String, Object> connectionSnapshot(Long tenantId, Long userId) {
+        return TenantUtils.execute(tenantId, () -> connectionMap(findConnection(userId)));
     }
 
     private void syncGlobalDraws(List<LotteryConfigDO> configs) {
@@ -384,8 +439,18 @@ public class LotteryMarketSyncService {
         transition.setFromStatus(from == null ? "" : from);
         transition.setToStatus(to);
         transition.setSource(source);
-        transition.setDetail(detail == null || detail.isBlank() ? "{}" : detail);
+        transition.setDetail(normalizeTransitionDetail(detail));
         issueTransitionMapper.insert(transition);
+    }
+
+    String normalizeTransitionDetail(String detail) {
+        if (detail == null || detail.isBlank()) return "{}";
+        try {
+            objectMapper.readTree(detail);
+            return detail;
+        } catch (Exception ignored) {
+            return objectMapper.createObjectNode().put("message", detail).toString();
+        }
     }
 
     private boolean configured(LotteryConfigDO config) {

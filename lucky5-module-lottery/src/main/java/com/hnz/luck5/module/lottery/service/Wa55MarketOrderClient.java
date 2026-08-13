@@ -106,9 +106,11 @@ public class Wa55MarketOrderClient {
     public CancelResult cancel(Credentials credentials, String expectedPeriod, List<CancelRequest> requests) {
         requireEnabled();
         if (requests == null || requests.isEmpty()) return new CancelResult(true, "无需退码");
+        if (expectedPeriod == null || expectedPeriod.isBlank()) {
+            throw new MarketProtocolException("退码期号不能为空", false, List.of());
+        }
+        requests.forEach(this::validateCancelRequest);
         Session session = connect(credentials);
-        MemberPrint member = memberPrint(session);
-        assertExpectedOpenPeriod(session, expectedPeriod, member.period());
         String ids = requests.stream().map(item -> item.marketBetId() + "|" + item.betCount())
                 .reduce((left, right) -> left + "," + right).orElse("");
         JsonNode payload;
@@ -121,6 +123,15 @@ public class Wa55MarketOrderClient {
         }
         assertSuccess(payload, "盘口拒绝退码");
         return new CancelResult(true, text(first(payload, "Data", "data")));
+    }
+
+    private void validateCancelRequest(CancelRequest request) {
+        if (request == null || request.marketBetId() == null || request.marketBetId().isBlank()) {
+            throw new MarketProtocolException("退码注单标识不能为空", false, List.of());
+        }
+        if (request.betCount() <= 0) {
+            throw new MarketProtocolException("退码注数必须大于零", false, List.of());
+        }
     }
 
     private void validateRequest(String expectedPeriod, BetRequest request) {

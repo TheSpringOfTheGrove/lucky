@@ -75,6 +75,20 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
+    void cancelsUsingOriginalOrderPeriodAfterMarketHasAdvanced() {
+        Wa55MarketOrderClient client = client(true);
+        String originalPeriod = issuePeriod;
+        memberPeriod = "20260811002";
+        issuePeriod = "20260811002";
+
+        client.cancel(credentials(), originalPeriod,
+                List.of(new Wa55MarketOrderClient.CancelRequest("BET-OLD", 2)));
+
+        assertThat(cancelForm).containsEntry("period_no", originalPeriod)
+                .containsEntry("ids", "BET-OLD|2");
+    }
+
+    @Test
     void refusesAnyNetworkWriteWhenSafetySwitchIsOff() {
         Wa55MarketOrderClient client = client(false);
 

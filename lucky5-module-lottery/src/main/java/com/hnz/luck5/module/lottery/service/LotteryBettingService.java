@@ -28,6 +28,7 @@ import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.PLAY_TYPE_DI
 public class LotteryBettingService {
 
     private static final String DIGITS = "0123456789";
+    private static final int SETTLEMENT_BALL_COUNT = 4;
     private static final String POSITION_LABELS = "头千百十尾个";
     private static final Map<Character, Integer> POSITION_INDEX = Map.of(
             '头', 0, '千', 0, '百', 1, '十', 2, '尾', 3, '个', 3);
@@ -104,10 +105,11 @@ public class LotteryBettingService {
         if (digits.size() < 3 || digits.size() > 5) {
             throw exception(BET_CONTENT_INVALID);
         }
-        int sum = digits.stream().mapToInt(Integer::intValue).sum();
-        int threshold = (int) Math.ceil(digits.size() * 4.5);
-        int first = digits.get(0);
-        int last = digits.get(digits.size() - 1);
+        List<Integer> settlementDigits = digits.stream().limit(SETTLEMENT_BALL_COUNT).toList();
+        int sum = settlementDigits.stream().mapToInt(Integer::intValue).sum();
+        int threshold = (int) Math.ceil(settlementDigits.size() * 4.5);
+        int first = settlementDigits.get(0);
+        int last = settlementDigits.get(settlementDigits.size() - 1);
         return new DrawResult(digits.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse(""),
                 digits, sum >= threshold ? "大" : "小", sum % 2 == 0 ? "双" : "单",
                 first == last ? "和" : first > last ? "龙" : "虎");
@@ -117,15 +119,14 @@ public class LotteryBettingService {
         if ("大小".equals(bet.play())) return bet.selection().equals(draw.bigSmall());
         if ("单双".equals(bet.play())) return bet.selection().equals(draw.oddEven());
         if ("龙虎".equals(bet.play())) return bet.selection().equals(draw.dragonTiger());
-        String digits = draw.digits().stream().map(String::valueOf).reduce("", String::concat);
+        String digits = draw.digits().stream().limit(SETTLEMENT_BALL_COUNT)
+                .map(String::valueOf).reduce("", String::concat);
         if (bet.play().endsWith("定位") || "五位二定".equals(bet.play())) {
             if (bet.selection().contains("X")) {
-                String positionedDigits = digits.length() == 5 && bet.selection().length() == 4
-                        ? digits.substring(1) : digits;
-                if (positionedDigits.length() != bet.selection().length()) return false;
-                for (int i = 0; i < positionedDigits.length(); i++) {
+                if (digits.length() != bet.selection().length()) return false;
+                for (int i = 0; i < digits.length(); i++) {
                     char expected = bet.selection().charAt(i);
-                    if (expected != 'X' && expected != positionedDigits.charAt(i)) return false;
+                    if (expected != 'X' && expected != digits.charAt(i)) return false;
                 }
                 return true;
             }

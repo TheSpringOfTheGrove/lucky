@@ -104,11 +104,31 @@ class LotteryBettingServiceTest {
     }
 
     @Test
-    void matchesFourPositionBetsAgainstLastFourDigitsOfLucky5Draw() {
+    void excludesFifthBallFromEverySettlementRule() {
+        LotteryBettingService.DrawResult xianDraw = service.deriveDraw("74958");
+        assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
+                "三字现", "985", BigDecimal.ONE, BigDecimal.ONE), xianDraw)).isFalse();
+        assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
+                "三字现", "795", BigDecimal.ONE, BigDecimal.ONE), xianDraw)).isTrue();
+
+        LotteryBettingService.DrawResult repeatedDraw = service.deriveDraw("11121");
+        assertThat(service.isWinning(new LotteryBettingService.ParsedBet(
+                "四条", "1111", BigDecimal.ONE, BigDecimal.ONE), repeatedDraw)).isFalse();
+
+        assertThat(service.deriveDraw("44449"))
+                .extracting(LotteryBettingService.DrawResult::bigSmall,
+                        LotteryBettingService.DrawResult::oddEven,
+                        LotteryBettingService.DrawResult::dragonTiger)
+                .containsExactly("小", "双", "和");
+        assertThat(service.deriveDraw("10090").dragonTiger()).isEqualTo("虎");
+    }
+
+    @Test
+    void matchesFourPositionBetsAgainstFirstFourDigitsOfLucky5Draw() {
         LotteryBettingService.ParsedBet regular = service.parse("千1各1", odds).get(0);
         assertThat(regular.selection()).isEqualTo("1XXX");
-        assertThat(service.isWinning(regular, service.deriveDraw("01000"))).isTrue();
-        assertThat(service.isWinning(regular, service.deriveDraw("10000"))).isFalse();
+        assertThat(service.isWinning(regular, service.deriveDraw("10000"))).isTrue();
+        assertThat(service.isWinning(regular, service.deriveDraw("01000"))).isFalse();
 
         List<LotteryBettingService.ParsedBet> hundredAndTen = service.parse(
                 "百3456789十3456789除双重各20", odds);
@@ -116,11 +136,11 @@ class LotteryBettingServiceTest {
         assertThat(hundredAndTen.stream()
                 .filter(item -> service.isWinning(item, service.deriveDraw("66576")))
                 .map(LotteryBettingService.ParsedBet::selection))
-                .containsExactly("X57X");
+                .containsExactly("X65X");
 
         LotteryBettingService.ParsedBet fifth = service.parse("五位二定千1五2各1", odds).get(0);
         assertThat(fifth.selection()).isEqualTo("1XXX2");
-        assertThat(service.isWinning(fifth, service.deriveDraw("10002"))).isTrue();
+        assertThat(service.isWinning(fifth, service.deriveDraw("10002"))).isFalse();
         assertThat(service.isWinning(fifth, service.deriveDraw("10003"))).isFalse();
     }
 

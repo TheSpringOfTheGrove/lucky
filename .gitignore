@@ -56,3 +56,7 @@ application-my.yaml
 /lucky5-ui-app/unpackage/
 .DS_Store
 **/.DS_Store
+
+# Local deployment bundles (keep reusable scripts and Dockerfiles tracked)
+/.codex-deploy/*.tar
+/.codex-deploy/*.tar.gz

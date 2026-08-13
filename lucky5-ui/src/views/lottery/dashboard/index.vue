@@ -4,6 +4,16 @@ import { useLucky5Store, type SwitchKey } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
 const router = useRouter()
+let dashboardRefreshTimer: number | undefined
+
+onMounted(() => {
+  void store.refreshMembers()
+  dashboardRefreshTimer = window.setInterval(() => void store.refreshMembers(), 5_000)
+})
+
+onBeforeUnmount(() => {
+  if (dashboardRefreshTimer) window.clearInterval(dashboardRefreshTimer)
+})
 </script>
 
 <template>

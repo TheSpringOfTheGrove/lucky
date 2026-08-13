@@ -26,9 +26,11 @@ class LotteryRoomMessagePolicyTest {
     }
 
     @Test
-    void classifiesPlainTextAsChat() {
-        assertThat(policy.classify("老板晚上好", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.CHAT);
-        assertThat(policy.classify("今天是9号", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.CHAT);
+    void classifiesEveryUnrecognizedMessageAsBetSoItGetsARejectionReply() {
+        assertThat(policy.classify("123456", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
+        assertThat(policy.classify("老板晚上好", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
+        assertThat(policy.classify("今天是9号", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
+        assertThat(policy.looksLikeBetIntent("123456")).isTrue();
     }
 
     @Test
@@ -38,6 +40,14 @@ class LotteryRoomMessagePolicyTest {
         assertThat(policy.classify("退码L5-100", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.CANCEL);
         assertThat(policy.classify("大100 单50", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
         assertThat(policy.classify("千12百34二定各10", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
+    }
+
+    @Test
+    void classifiesMalformedBetIntentAsBetSoItGetsARejectionReply() {
+        assertThat(policy.classify("兄弟2", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
+        assertThat(policy.looksLikeBetIntent("兄弟2")).isTrue();
+        assertThat(policy.classify("452现456个0.56", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
+        assertThat(policy.looksLikeBetIntent("452现456个0.56")).isTrue();
     }
 
     private OddDO odd(String code, String play, String rate) {

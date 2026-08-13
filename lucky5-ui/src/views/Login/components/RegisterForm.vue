@@ -101,6 +101,7 @@ import * as authUtil from '@/utils/auth'
 import { usePermissionStore } from '@/store/modules/permission'
 import * as LoginApi from '@/api/login'
 import { LoginStateEnum, useLoginState, useFormValid } from './useLogin'
+import { resolveLoginTenant } from '../resolveTenant'
 
 defineOptions({ name: 'RegisterForm' })
 
@@ -156,7 +157,7 @@ const registerData = reactive({
   captchaEnable: import.meta.env.VITE_APP_CAPTCHA_ENABLE,
   tenantEnable: import.meta.env.VITE_APP_TENANT_ENABLE,
   registerForm: {
-    tenantName: import.meta.env.VITE_APP_DEFAULT_LOGIN_TENANT || '',
+    tenantName: '',
     nickname: '',
     tenantId: 0,
     username: '',
@@ -227,22 +228,12 @@ const getCode = async () => {
 
 // 获取租户 ID
 const getTenantId = async () => {
-  if (registerData.tenantEnable === 'true') {
-    const res = await LoginApi.getTenantIdByName(registerData.registerForm.tenantName)
-    authUtil.setTenantId(res)
-  }
+  await resolveLoginTenant(registerData.registerForm.tenantName)
 }
 
 // 根据域名，获得租户信息
 const getTenantByWebsite = async () => {
-  if (registerData.tenantEnable === 'true') {
-    const website = location.host
-    const res = await LoginApi.getTenantByWebsite(website)
-    if (res) {
-      registerData.registerForm.tenantName = res.name
-      authUtil.setTenantId(res.id)
-    }
-  }
+  await resolveLoginTenant(registerData.registerForm.tenantName)
 }
 
 watch(

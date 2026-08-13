@@ -287,8 +287,25 @@ watch(
   width: min(1220px, 100%);
   min-height: 100%;
   margin: auto;
+  color: #202124;
+  color-scheme: light;
   background: #f8f8fa;
   border: 1px solid #aaa;
+}
+
+.quick-picker input,
+.quick-picker textarea,
+.quick-picker select {
+  color: #202124 !important;
+  -webkit-text-fill-color: #202124 !important;
+  background: #fff !important;
+}
+
+.quick-picker input::placeholder,
+.quick-picker textarea::placeholder {
+  color: #8a8f98 !important;
+  opacity: 1;
+  -webkit-text-fill-color: #8a8f98 !important;
 }
 .quick-picker header {
   position: relative;
@@ -461,5 +478,4 @@ watch(
   }
 }
 </style>
-
 

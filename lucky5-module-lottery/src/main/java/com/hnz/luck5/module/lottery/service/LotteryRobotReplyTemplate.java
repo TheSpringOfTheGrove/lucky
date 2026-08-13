@@ -19,6 +19,10 @@ public class LotteryRobotReplyTemplate {
         return "@" + memberName + "\n当前未开盘";
     }
 
+    public String periodClosed(String memberName) {
+        return "@" + memberName + "\n封盘中";
+    }
+
     public String balance(String memberName, String currentOrders, BigDecimal balance) {
         return "@" + memberName + "\n【目前房源】：\n" + currentOrders
                 + "\n\n【您目前】：\n" + number(balance);
@@ -40,12 +44,30 @@ public class LotteryRobotReplyTemplate {
                 + ("上分".equals(type) ? "上" : "下") + amountText + "]";
     }
 
-    public String cancelSucceeded(String orderId, BigDecimal refunded) {
-        return "退码成功：" + orderId + "，退回 " + number(refunded);
+    public String cancelSucceeded(String originalReceipt) {
+        if (originalReceipt == null || originalReceipt.isBlank()) {
+            return "已退码";
+        }
+        String receipt = originalReceipt.stripTrailing();
+        if (receipt.endsWith("已退码")) {
+            return receipt;
+        }
+        if (receipt.endsWith("点击退码")) {
+            receipt = receipt.substring(0, receipt.length() - "点击退码".length()).stripTrailing();
+        }
+        return receipt + "\n已退码";
     }
 
     public String cancelPending(String orderId) {
         return "";
+    }
+
+    public String cancelRejected(String memberName) {
+        return "@" + memberName + "\n退码失败，当前订单不能退码";
+    }
+
+    public String cancelReview(String memberName) {
+        return "@" + memberName + "\n退码结果待确认，请联系管理员";
     }
 
     public String marketBetPending(String memberName, String period, String content) {
@@ -54,6 +76,17 @@ public class LotteryRobotReplyTemplate {
 
     public String betFailed(String memberName, BigDecimal refunded) {
         return "@" + memberName + "\n下注失败\n下注金额" + number(refunded) + "已退回";
+    }
+
+    public String balanceNotEnough(String memberName) {
+        return "@" + memberName + "\n余额不足";
+    }
+
+    public String betRejected(String memberName, String reason) {
+        if ("指令错误".equals(reason)) {
+            return "@" + memberName + "\n指令错误";
+        }
+        return "@" + memberName + "\n下注失败\n" + reason;
     }
 
     public String betReceipt(String memberName, String period, String content, int sequence, int itemCount,

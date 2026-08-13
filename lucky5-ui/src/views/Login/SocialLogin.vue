@@ -167,6 +167,7 @@ import { LocaleDropdown } from '@/layout/components/LocaleDropdown'
 import { LoginStateEnum, useFormValid, useLoginState } from './components/useLogin'
 import LoginFormTitle from './components/LoginFormTitle.vue'
 import router from '@/router'
+import { resolveLoginTenant } from './resolveTenant'
 
 defineOptions({ name: 'SocialLogin' })
 
@@ -200,9 +201,9 @@ const loginData = reactive({
   captchaEnable: import.meta.env.VITE_APP_CAPTCHA_ENABLE !== 'false',
   tenantEnable: import.meta.env.VITE_APP_TENANT_ENABLE !== 'false',
   loginForm: {
-    tenantName: '芋道源码',
-    username: 'admin',
-    password: 'admin123',
+    tenantName: '',
+    username: '',
+    password: '',
     captchaVerification: '',
     rememberMe: false
   }
@@ -221,10 +222,7 @@ const getCode = async () => {
 }
 //获取租户ID
 const getTenantId = async () => {
-  if (loginData.tenantEnable) {
-    const res = await LoginApi.getTenantIdByName(loginData.loginForm.tenantName)
-    authUtil.setTenantId(res)
-  }
+  await resolveLoginTenant(loginData.loginForm.tenantName)
 }
 // 记住我
 const getCookie = () => {
@@ -320,6 +318,7 @@ const handleLogin = async (params) => {
 
 onMounted(() => {
   getCookie()
+  void resolveLoginTenant(loginData.loginForm.tenantName)
   tryLogin()
 })
 </script>

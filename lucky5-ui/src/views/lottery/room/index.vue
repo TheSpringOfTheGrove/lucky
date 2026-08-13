@@ -43,6 +43,7 @@ const error = ref('')
 const composer = ref('')
 const chatRef = ref<HTMLElement>()
 const composerRef = ref<HTMLTextAreaElement>()
+const composerPanelRef = ref<HTMLElement>()
 const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
@@ -198,9 +199,11 @@ const chatMessages = computed<ChatItem[]>(() => {
       })
     }
     const waitingForFinalResult = Boolean(order?.processing) && !message.reply
+    const silentCancelCommand = message.commandType === 'CANCEL' && !message.reply
     if (
       (message.own !== false || showSharedRobotReply) &&
       message.commandType !== 'CHAT' &&
+      !silentCancelCommand &&
       !waitingForFinalResult
     ) {
       const robotReplyDelay =
@@ -359,6 +362,10 @@ const loadSession = async (quiet = false) => {
   if (!quiet) loading.value = true
   try {
     const previousDrawPeriod = session.value?.draws[0]?.period || ''
+    const previousMessageStatus = new Map(
+      (session.value?.messages || []).map((message) => [message.id, message.status])
+    )
+    const hadSession = Boolean(session.value)
     const nextSession = await getRoomSessionApi(credential.value)
     if (requestSequence !== sessionRequestSequence) return
     const nextDrawPeriod = nextSession.draws[0]?.period || ''
@@ -372,6 +379,17 @@ const loadSession = async (quiet = false) => {
       visibleDrawPeriods.value = [...visibleDrawPeriods.value, nextDrawPeriod]
     }
     session.value = nextSession
+    if (hadSession) {
+      for (const message of nextSession.messages) {
+        if (message.own === false || message.commandType !== 'BET') continue
+        const previousStatus = previousMessageStatus.get(message.id)
+        if (message.status === '退码失败' && previousStatus !== message.status) {
+          ElMessage.error('退码失败：当前订单不能退码')
+        } else if (message.status === '退码待确认' && previousStatus !== message.status) {
+          ElMessage.warning('退码结果待确认，请联系管理员')
+        }
+      }
+    }
     const serverTime = dayjs(nextSession.issue.serverTime)
     const elapsedSeconds = serverTime.isValid()
       ? Math.max(0, dayjs().diff(serverTime, 'second'))
@@ -485,7 +503,6 @@ const submitChat = async () => {
   if (!content || !session.value || saving.value) return
 
   bottomPanel.value = ''
-  composer.value = ''
   saving.value = true
   try {
     await sendRoomMessageApi(credential.value, {
@@ -493,6 +510,7 @@ const submitChat = async () => {
       content,
       externalId: uniqueId()
     })
+    composer.value = ''
   } catch (reason: any) {
     ElMessage.error(reason?.message || '发送失败')
   } finally {
@@ -508,14 +526,23 @@ const appendKey = (key: string) => {
   else if (key === '清除') composer.value = ''
   else if (key === '换行') composer.value += '\n'
   else composer.value += key
-  composerRef.value?.focus()
 }
 
 const togglePanel = async (panel: 'keyboard' | 'commands') => {
   bottomPanel.value = bottomPanel.value === panel ? '' : panel
+  if (bottomPanel.value === 'keyboard') composerRef.value?.blur()
   if (bottomPanel.value === 'commands') await loadSession(true)
   if (bottomPanel.value === '') composerRef.value?.focus()
   void scrollToBottom()
+}
+
+const handleDocumentPointerDown = (event: PointerEvent) => {
+  if (!bottomPanel.value) return
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (composerPanelRef.value?.contains(target)) return
+  if (target.closest('.keyboard-toggle, .history-toggle')) return
+  bottomPanel.value = ''
 }
 
 const useHistory = (content: string) => {
@@ -553,7 +580,9 @@ const cancelOrder = async (order: RoomOrder) => {
     await loadSession(true)
     await scrollToBottom('smooth')
   } catch (reason: any) {
-    if (reason !== 'cancel' && reason !== 'close') ElMessage.error(reason?.message || '退码失败')
+    if (reason !== 'cancel' && reason !== 'close') {
+      ElMessage.error(reason?.message ? `退码失败：${reason.message}` : '退码失败')
+    }
   } finally {
     saving.value = false
   }
@@ -588,6 +617,7 @@ watch(
 onMounted(async () => {
   restoreScratchLauncherTop()
   window.addEventListener('resize', handleRoomResize)
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
   await loadSession()
   await scrollToBottom()
   composerRef.value?.focus()
@@ -601,6 +631,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleRoomResize)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('mousemove', moveScratchLauncherByMouse)
   window.removeEventListener('mouseup', finishScratchLauncherMouseDrag)
   if (refreshTimer) window.clearInterval(refreshTimer)
@@ -822,7 +853,10 @@ onBeforeUnmount(() => {
                   </div>
                   <button
                     v-if="
-                      message.order.status === '未开奖' && session.room.cancelEnabled && !saving
+                      message.order.status === '未开奖' &&
+                      session.room.cancelEnabled &&
+                      !saving &&
+                      message.order.cancelable !== false
                     "
                     class="cancel-link"
                     type="button"
@@ -850,7 +884,12 @@ onBeforeUnmount(() => {
       </main>
 
       <form class="chat-composer" @submit.prevent="submitChat">
-        <div v-if="bottomPanel === 'keyboard'" class="composer-panel virtual-keyboard">
+        <div
+          v-if="bottomPanel === 'keyboard'"
+          ref="composerPanelRef"
+          class="composer-panel virtual-keyboard"
+          @pointerdown.stop
+        >
           <div v-for="(row, rowIndex) in keyboardRows" :key="rowIndex" class="keyboard-row">
             <button
               v-for="key in row"
@@ -866,7 +905,9 @@ onBeforeUnmount(() => {
 
         <div
           v-else-if="bottomPanel === 'commands'"
+          ref="composerPanelRef"
           class="composer-panel history-panel command-panel"
+          @pointerdown.stop
         >
           <button
             v-for="command in session.quickCommands"
@@ -934,6 +975,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   color: #333;
+  color-scheme: light;
   background: #f5f5f7;
   inset: 0;
 }
@@ -1621,12 +1663,22 @@ onBeforeUnmount(() => {
   font-family: inherit;
   font-size: 16px;
   line-height: 18px;
-  background: #fcfcfc;
+  color: #202124 !important;
+  caret-color: #202124;
+  -webkit-text-fill-color: #202124 !important;
+  color-scheme: light;
+  background: #fff !important;
   border: 1px solid #dcdcde;
   border-radius: 8px;
   outline: none;
   box-sizing: border-box;
   resize: none;
+}
+
+.composer-row textarea::placeholder {
+  color: #8a8f98 !important;
+  opacity: 1;
+  -webkit-text-fill-color: #8a8f98 !important;
 }
 
 .has-panel-keyboard .chat-stream {
@@ -1731,37 +1783,53 @@ onBeforeUnmount(() => {
 .virtual-keyboard {
   display: grid;
   gap: 5px;
+  width: 100%;
   height: 190px;
-  padding: 5px 2%;
+  padding: 5px clamp(3px, 1.5vw, 8px);
+  overflow: hidden;
+  color-scheme: light;
+  background: #dfe3ea;
+  grid-template-rows: repeat(5, minmax(0, 1fr));
 }
 
 .keyboard-row {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
-  gap: 2%;
+  gap: clamp(2px, 0.8vw, 5px);
+  min-width: 0;
 }
 
 .keyboard-row button {
   min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  overflow: hidden;
+  font-size: 15px;
   font-weight: 700;
-  color: #000;
+  color: #202124 !important;
+  -webkit-text-fill-color: #202124 !important;
   cursor: pointer;
-  background: #fdffff;
-  border: 0;
+  background: #fff !important;
+  border: 1px solid #b8bec8;
   border-radius: 5px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .keyboard-row button:active {
-  background: #ff8c00;
+  background: #ffb24a !important;
 }
 
 .keyboard-row button.is-danger {
-  color: #e30000;
+  color: #d90000 !important;
+  -webkit-text-fill-color: #d90000 !important;
 }
 
 .keyboard-row button.is-accent {
-  color: #666;
-  background: #ffa500;
+  color: #3d2a00 !important;
+  -webkit-text-fill-color: #3d2a00 !important;
+  background: #ffb533 !important;
 }
 
 .quick-panel {
@@ -2037,16 +2105,35 @@ onBeforeUnmount(() => {
     font-size: 13px;
   }
 
-  .keyboard-row {
-    gap: 1%;
-  }
-
   .keyboard-row button {
     font-size: 13px;
   }
 }
 
 @media (width <= 350px) {
+  .composer-row {
+    grid-template-columns: 26px minmax(0, 1fr) 38px 38px 26px;
+    gap: 3px;
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .keyboard-toggle,
+  .history-toggle {
+    width: 26px;
+    height: 26px;
+  }
+
+  .fast-select,
+  .send-button {
+    width: 38px;
+    font-size: 12px;
+  }
+
+  .keyboard-row button {
+    font-size: 12px;
+  }
+
   .room-history-latest {
     grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   }
