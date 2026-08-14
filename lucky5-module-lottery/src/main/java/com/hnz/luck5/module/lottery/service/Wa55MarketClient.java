@@ -46,16 +46,54 @@ public class Wa55MarketClient {
     public record Credentials(String url, String account, String password) {}
     public record Account(String displayAccount, BigDecimal balance) {}
     public record Issue(String period, String status, int marketStatus, int remainingSeconds,
-                        LocalDateTime serverTime, String nextPeriod, String raw) {}
+                        LocalDateTime serverTime, LocalDateTime observedAt, String nextPeriod,
+                        LocalDateTime drawTime, String raw) {}
     public record Draw(String period, String result, LocalDateTime drawTime, LocalDateTime updatedAt, String raw) {}
     public record Snapshot(String lineUrl, Account account, Issue issue, List<Draw> draws) {}
 
+    private final Object drawSessionMonitor = new Object();
+    private Credentials cachedDrawCredentials;
+    private Session cachedDrawSession;
+
     public Snapshot read(Credentials credentials, boolean includeDraws) {
+        return read(credentials, true, includeDraws);
+    }
+
+    /**
+     * Reads only the time-sensitive issue and draw endpoints. Account balance has its own slower scheduler so a
+     * delayed balance request cannot hold up period/result publication.
+     */
+    public Snapshot readDrawSnapshot(Credentials credentials) {
+        synchronized (drawSessionMonitor) {
+            RuntimeException last = null;
+            for (int attempt = 0; attempt < 2; attempt++) {
+                try {
+                    Session session = drawSession(credentials);
+                    return new Snapshot(session.baseUrl, null, issue(session), draws(session));
+                } catch (RuntimeException ex) {
+                    last = ex;
+                    cachedDrawCredentials = null;
+                    cachedDrawSession = null;
+                }
+            }
+            throw last == null ? new IllegalStateException("盘口连接失败") : last;
+        }
+    }
+
+    private Session drawSession(Credentials credentials) {
+        if (cachedDrawSession == null || !credentials.equals(cachedDrawCredentials)) {
+            cachedDrawSession = connect(credentials);
+            cachedDrawCredentials = credentials;
+        }
+        return cachedDrawSession;
+    }
+
+    private Snapshot read(Credentials credentials, boolean includeAccount, boolean includeDraws) {
         RuntimeException last = null;
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
                 Session session = connect(credentials);
-                Account account = account(session);
+                Account account = includeAccount ? account(session) : null;
                 Issue issue = issue(session);
                 List<Draw> draws = includeDraws ? draws(session) : List.of();
                 return new Snapshot(session.baseUrl, account, issue, draws);
@@ -105,8 +143,20 @@ public class Wa55MarketClient {
     }
 
     private Issue issue(Session session) {
+        Instant startedAt = Instant.now();
         JsonNode raw = jsonRequest(session, "/drawno/GetCurrentPeriodStatus?_=" + System.currentTimeMillis());
+        Instant completedAt = Instant.now();
         assertAuthenticated(raw);
+        Duration requestDuration = Duration.between(startedAt, completedAt);
+        Instant observedAt = startedAt.plusNanos(requestDuration.toNanos() / 2);
+        return issue(raw, LocalDateTime.ofInstant(observedAt, ZONE));
+    }
+
+    Issue issue(JsonNode raw) {
+        return issue(raw, null);
+    }
+
+    private Issue issue(JsonNode raw, LocalDateTime observedAt) {
         int marketStatus = number(first(raw, "OPEN_STATUS", "OpenStatus", "open_status", "status"), 99);
         String status = switch (marketStatus) {
             case 0 -> "OPEN";
@@ -114,24 +164,28 @@ public class Wa55MarketClient {
             case 4 -> "PENDING";
             default -> "UNAVAILABLE";
         };
+        LocalDateTime serverTime = date(first(raw, "SERVER_TIME", "ServerTime", "server_time",
+                "system_db_now", "system_now"));
+        LocalDateTime closeTime = date(first(raw, "CLOSE_DATETIME", "CloseDatetime", "close_datetime",
+                "close_time", "CloseTime"));
+        int remainingSeconds = Math.max(0,
+                number(first(raw, "LAST_TIME", "LastTime", "last_time", "last_seconds"), 0));
+        if (serverTime != null && closeTime != null) {
+            long authoritativeRemaining = Duration.between(serverTime, closeTime).getSeconds();
+            remainingSeconds = (int) Math.min(Integer.MAX_VALUE, Math.max(0, authoritativeRemaining));
+        }
+        LocalDateTime drawTime = date(first(raw, "NEXT_OPEN_DATETIME", "NextOpenDatetime",
+                "next_open_datetime", "DRAW_DATETIME", "DrawDatetime", "draw_datetime"));
         return new Issue(text(first(raw, "PERIOD_NO", "PeriodNo", "period_no", "period")), status, marketStatus,
-                Math.max(0, number(first(raw, "LAST_TIME", "LastTime", "last_time", "last_seconds"), 0)),
-                date(first(raw, "SERVER_TIME", "ServerTime", "server_time", "system_db_now", "system_now")),
-                text(first(raw, "NEXT_PERIOD_NO", "NextPeriodNo", "next_period_no", "next_period")), raw.toString());
+                remainingSeconds, serverTime, observedAt,
+                text(first(raw, "NEXT_PERIOD_NO", "NextPeriodNo", "next_period_no", "next_period")),
+                drawTime, raw.toString());
     }
 
     private List<Draw> draws(Session session) {
         JsonNode firstPage = jsonRequest(session, "/DrawNo/GetDrawNoTable?pageindex=1&_=" + System.currentTimeMillis());
         assertAuthenticated(firstPage);
-        int pageCount = Math.max(1, number(first(firstPage, "PageCount", "pageCount"), 1));
-        List<JsonNode> payloads = new ArrayList<>();
-        payloads.add(firstPage);
-        for (int page = 2; page <= pageCount; page++) {
-            JsonNode payload = jsonRequest(session, "/DrawNo/GetDrawNoTable?pageindex=" + page + "&_="
-                    + System.currentTimeMillis());
-            assertAuthenticated(payload);
-            payloads.add(payload);
-        }
+        List<JsonNode> payloads = List.of(firstPage);
         List<Draw> result = new ArrayList<>();
         for (JsonNode payload : payloads) {
             JsonNode rows = array(payload, "Rows", "rows", "List", "list", "draw_info");

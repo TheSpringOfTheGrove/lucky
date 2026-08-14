@@ -20,6 +20,7 @@ public class IssueDO extends LotteryUserBaseDO {
     private Integer marketStatus;
     private Integer remainingSeconds;
     private LocalDateTime serverTime;
+    private LocalDateTime sourceObservedAt;
     private String nextPeriod;
     private LocalDateTime openedAt;
     private LocalDateTime closedAt;

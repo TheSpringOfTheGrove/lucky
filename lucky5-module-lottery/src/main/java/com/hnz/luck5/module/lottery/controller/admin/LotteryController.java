@@ -271,6 +271,13 @@ public class LotteryController {
         return success(lotteryService.getOrders());
     }
 
+    @GetMapping("/draws")
+    @PreAuthorize("@ss.hasPermission('lottery:draw:manage')")
+    public CommonResult<List<Map<String, Object>>> getDrawHistory(
+            @RequestParam(required = false) String period) {
+        return success(lotteryService.getDrawHistory(period));
+    }
+
     @PostMapping("/bets")
     @PreAuthorize("@ss.hasPermission('lottery:order:manage')")
     public CommonResult<Map<String, Object>> placeBet(@Valid @RequestBody LotteryReqVO.PlaceBet reqVO) {

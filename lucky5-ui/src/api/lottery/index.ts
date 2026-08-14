@@ -77,6 +77,12 @@ export const getAmountRecordsApi = () =>
 
 export const getOrdersApi = () => request.get<Record<string, any>[]>({ url: `${base}/orders` })
 
+export const getDrawHistoryApi = (period?: string) =>
+  request.get<Record<string, any>[]>({
+    url: `${base}/draws`,
+    params: period ? { period } : undefined
+  })
+
 export const getMessagesApi = (params: LotteryMessagePageParams) =>
   request.get<PageResult<LotteryMessageRow[]>>({ url: `${base}/messages`, params })
 

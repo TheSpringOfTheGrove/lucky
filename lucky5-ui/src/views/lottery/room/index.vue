@@ -22,6 +22,9 @@ import memberAvatar from '@/assets/imgs/avatar.jpg'
 type ChatKind = 'member' | 'other' | 'robot'
 type ChatType = 'text' | 'order' | 'amount' | 'draw'
 
+const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
+const SCRATCH_PERIOD_SECONDS = 300
+
 interface ChatItem {
   id: string
   kind: ChatKind
@@ -51,6 +54,8 @@ const sessionStartedAt = ref(new Date().toISOString())
 const autoFollowMessages = ref(true)
 const scratchVisible = ref(false)
 const scratchRemaining = ref(0)
+const clockNowMs = ref(Date.now())
+const authoritativeClockOffsetMs = ref(0)
 const autoScratch = ref(localStorage.getItem('lucky5-auto-scratch') !== 'false')
 const visibleDrawPeriods = ref<string[]>([])
 const historyExpanded = ref(false)
@@ -92,8 +97,7 @@ const orderById = computed(() =>
   Object.fromEntries((session.value?.orders || []).map((order) => [order.id, order]))
 )
 const latestDraw = computed(() => session.value?.draws[0] || null)
-const pendingDrawPeriod = computed(() => {
-  const currentSession = session.value
+const resolvePendingDrawPeriod = (currentSession: RoomSession | null) => {
   if (!currentSession) return ''
   const latestDrawPeriod = currentSession.draws[0]?.period || ''
   const pendingPeriods = new Set(
@@ -108,6 +112,123 @@ const pendingDrawPeriod = computed(() => {
       .map((transition) => transition.period)
   )
   return [...pendingPeriods].sort((left, right) => left.localeCompare(right))[0] || ''
+}
+const scratchPendingPeriod = computed(
+  () => session.value?.issue.pendingPeriod || resolvePendingDrawPeriod(session.value)
+)
+const pendingCandidateNumbers = computed(
+  () => (session.value?.issue.pendingResult || '').match(/\d/g)?.slice(0, 5) || []
+)
+const hasPendingCandidate = computed(() => pendingCandidateNumbers.value.length === 5)
+const pendingOfficialDrawTime = computed(() =>
+  dayjs(session.value?.issue.pendingDrawTime || session.value?.issue.drawTime)
+)
+const officialDrawBoundaryPassed = computed(
+  () =>
+    pendingOfficialDrawTime.value.isValid() &&
+    clockNowMs.value >= pendingOfficialDrawTime.value.valueOf()
+)
+const scratchDisplayDrawTime = computed(() =>
+  pendingOfficialDrawTime.value.add(SCRATCH_COUNTDOWN_COMPENSATION_SECONDS, 'second')
+)
+// Keep the zero visible for one normal clock tick before moving every scratch-card field
+// to the next period. The API can cache a candidate early, but the dialog must not expose
+// its period or numbers before the compensated display cycle has completed.
+const scratchDisplayCycleComplete = computed(
+  () =>
+    scratchDisplayDrawTime.value.isValid() &&
+    clockNowMs.value >= scratchDisplayDrawTime.value.add(1, 'second').valueOf()
+)
+const waitingForCandidateAtBoundary = computed(
+  () =>
+    Boolean(scratchPendingPeriod.value) &&
+    officialDrawBoundaryPassed.value &&
+    !hasPendingCandidate.value
+)
+const pendingDrawPeriod = computed(() =>
+  !hasPendingCandidate.value && officialDrawBoundaryPassed.value ? scratchPendingPeriod.value : ''
+)
+const scratchPreviousResultPeriod = computed(() => {
+  const pendingPeriod = scratchPendingPeriod.value
+  if (!pendingPeriod) return latestDraw.value?.period || session.value?.issue.currentPeriod || ''
+
+  const previousDraw = session.value?.draws.find((draw) => draw.period < pendingPeriod)
+  if (previousDraw) return previousDraw.period
+
+  const latestPeriod = latestDraw.value?.period || ''
+  return latestPeriod && latestPeriod < pendingPeriod ? latestPeriod : ''
+})
+const scratchResultPeriod = computed(() => {
+  if (scratchPendingPeriod.value && scratchDisplayCycleComplete.value) {
+    return scratchPendingPeriod.value
+  }
+  return scratchPreviousResultPeriod.value
+})
+const scratchResultDraw = computed<RoomDraw | null>(() => {
+  const settledDraw = session.value?.draws.find((draw) => draw.period === scratchResultPeriod.value)
+  if (settledDraw) return settledDraw
+  if (hasPendingCandidate.value && scratchPendingPeriod.value === scratchResultPeriod.value) {
+    const result = pendingCandidateNumbers.value.join('')
+    return {
+      period: scratchPendingPeriod.value,
+      result,
+      numbers: pendingCandidateNumbers.value,
+      valid: true,
+      bigSmall: '',
+      oddEven: '',
+      dragonTiger: '',
+      status: session.value?.issue.pendingStatus || 'DRAW_PENDING',
+      drawTime: String(session.value?.issue.pendingDrawTime || ''),
+      settledAt: ''
+    }
+  }
+  return null
+})
+const scratchWaitingPeriod = computed(() => {
+  const issue = session.value?.issue
+  if (!issue) return ''
+  if (scratchPendingPeriod.value && !scratchDisplayCycleComplete.value) {
+    return scratchPendingPeriod.value
+  }
+  if (scratchPendingPeriod.value) {
+    if (issue.currentPeriod && issue.currentPeriod > scratchPendingPeriod.value) {
+      return issue.currentPeriod
+    }
+    if (issue.nextPeriod && issue.nextPeriod > scratchPendingPeriod.value) {
+      return issue.nextPeriod
+    }
+    return String(Number(scratchPendingPeriod.value) + 1)
+  }
+  return issue.currentPeriod || issue.nextPeriod || scratchPendingPeriod.value
+})
+const scratchNextDrawAtMs = computed(() => {
+  const issue = session.value?.issue
+  if (!issue) return null
+  if (pendingOfficialDrawTime.value.isValid()) {
+    if (!scratchDisplayCycleComplete.value) return scratchDisplayDrawTime.value.valueOf()
+
+    const currentDrawTime = dayjs(issue.drawTime)
+    if (
+      issue.currentPeriod &&
+      issue.currentPeriod > scratchPendingPeriod.value &&
+      currentDrawTime.isValid()
+    ) {
+      return currentDrawTime
+        .add(SCRATCH_COUNTDOWN_COMPENSATION_SECONDS, 'second')
+        .valueOf()
+    }
+    return pendingOfficialDrawTime.value
+      .add(SCRATCH_PERIOD_SECONDS + SCRATCH_COUNTDOWN_COMPENSATION_SECONDS, 'second')
+      .valueOf()
+  }
+  const currentDrawTime = dayjs(issue.drawTime)
+  return currentDrawTime.isValid()
+    ? currentDrawTime.add(SCRATCH_COUNTDOWN_COMPENSATION_SECONDS, 'second').valueOf()
+    : null
+})
+const scratchDrawRemaining = computed(() => {
+  if (!scratchNextDrawAtMs.value) return 0
+  return Math.max(0, Math.ceil((scratchNextDrawAtMs.value - clockNowMs.value) / 1000))
 })
 const chatMessages = computed<ChatItem[]>(() => {
   if (!session.value) return localMessages.value
@@ -176,7 +297,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       kind: 'robot',
       type: 'draw',
       content: roomReplyTemplates.draw(draw.period, draw.numbers),
-      createdAt: draw.settledAt,
+      createdAt: draw.drawTime || draw.settledAt,
       draw
     })
   }
@@ -207,11 +328,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       !waitingForFinalResult
     ) {
       const robotReplyDelay =
-        message.commandType === 'PAYOUT_SUMMARY'
-          ? 3
-          : message.commandType === 'SETTLEMENT'
-            ? 2
-            : 1
+        message.commandType === 'PAYOUT_SUMMARY' ? 3 : message.commandType === 'SETTLEMENT' ? 2 : 1
       messages.push({
         id: `robot-message-${message.id}`,
         kind: 'robot',
@@ -294,10 +411,20 @@ const recentDraws = computed(() => (session.value?.draws || []).slice(0, 10))
 const currentPeriod = computed(
   () => session.value?.issue.currentPeriod || session.value?.suggestedPeriod || ''
 )
+const scheduledDrawTime = computed(() => {
+  const value = session.value?.issue.drawTime
+  const parsed = dayjs(value)
+  return parsed.isValid() ? parsed.format('HH:mm:ss') : ''
+})
+const drawDisplayTime = (draw: RoomDraw) => {
+  const parsed = dayjs(draw.drawTime || draw.settledAt)
+  return parsed.isValid() ? parsed.format('HH:mm:ss') : '--:--:--'
+}
 const issuePresentation = computed(() => {
   const currentSession = session.value
   const status = currentSession?.issue.status || 'UNAVAILABLE'
   if (status === 'OPEN') {
+    if (scratchRemaining.value <= 0) return { label: '已封盘', tone: 'closed' }
     if (!currentSession?.room.open) return { label: '老板未开盘', tone: 'muted' }
     if (!currentSession.room.bettingEnabled) return { label: '下注已暂停', tone: 'muted' }
     return { label: '开盘中', tone: 'open' }
@@ -317,13 +444,14 @@ const formatCountdown = (seconds: number) => {
 }
 const issueTimingText = computed(() => {
   const status = session.value?.issue.status || 'UNAVAILABLE'
+  const drawTime = scheduledDrawTime.value ? `开奖 ${scheduledDrawTime.value}` : ''
   if (status === 'OPEN') {
     return scratchRemaining.value > 0
-      ? `封盘 ${formatCountdown(scratchRemaining.value)}`
-      : '即将封盘'
+      ? `封盘 ${formatCountdown(scratchRemaining.value)}${drawTime ? ` · ${drawTime}` : ''}`
+      : `${drawTime ? `${drawTime} · ` : ''}等待开奖`
   }
-  if (status === 'CLOSED') return '等待开奖'
-  if (status === 'DRAW_PENDING') return '号码确认中'
+  if (status === 'CLOSED') return `${drawTime ? `${drawTime} · ` : ''}等待开奖`
+  if (status === 'DRAW_PENDING') return `${drawTime ? `${drawTime} · ` : ''}号码确认中`
   if (status === 'DRAW_ABNORMAL') return '暂停结算'
   if (status === 'SOURCE_STALE') return '数据已过期 · 暂停下注'
   if (status === 'SETTLED') return '本期已结算'
@@ -367,6 +495,7 @@ const loadSession = async (quiet = false) => {
     )
     const hadSession = Boolean(session.value)
     const nextSession = await getRoomSessionApi(credential.value)
+    const responseReceivedAt = Date.now()
     if (requestSequence !== sessionRequestSequence) return
     const nextDrawPeriod = nextSession.draws[0]?.period || ''
     if (!previousDrawPeriod && nextDrawPeriod) {
@@ -391,13 +520,11 @@ const loadSession = async (quiet = false) => {
       }
     }
     const serverTime = dayjs(nextSession.issue.serverTime)
-    const elapsedSeconds = serverTime.isValid()
-      ? Math.max(0, dayjs().diff(serverTime, 'second'))
-      : 0
-    scratchRemaining.value = Math.max(
-      0,
-      Number(nextSession.issue.remainingSeconds || 0) - elapsedSeconds
-    )
+    if (serverTime.isValid()) {
+      authoritativeClockOffsetMs.value = serverTime.valueOf() - responseReceivedAt
+    }
+    scratchRemaining.value = Math.max(0, Number(nextSession.issue.remainingSeconds || 0))
+    clockNowMs.value = responseReceivedAt + authoritativeClockOffsetMs.value
     if (
       previousDrawPeriod &&
       nextDrawPeriod &&
@@ -415,6 +542,36 @@ const loadSession = async (quiet = false) => {
     if (requestSequence === sessionRequestSequence) loading.value = false
   }
 }
+
+const scheduleSessionRefresh = () => {
+  if (refreshTimer) window.clearTimeout(refreshTimer)
+  const waitingForResult = Boolean(scratchPendingPeriod.value && !hasPendingCandidate.value)
+  // The scratch countdown includes a five-second display compensation, so 15 means the
+  // authoritative market draw is at most ten seconds away. Poll faster only in this small window.
+  const approachingOfficialDraw = waitingForResult && scratchDrawRemaining.value <= 15
+  const delay = waitingForCandidateAtBoundary.value
+    ? 250
+    : approachingOfficialDraw
+      ? 500
+      : scratchVisible.value || waitingForResult
+      ? 2000
+      : 5000
+  refreshTimer = window.setTimeout(async () => {
+    await loadSession(true)
+    scheduleSessionRefresh()
+  }, delay)
+}
+
+let boundaryRefreshInFlight = false
+watch(waitingForCandidateAtBoundary, (waiting) => {
+  if (!waiting || boundaryRefreshInFlight) return
+  if (refreshTimer) window.clearTimeout(refreshTimer)
+  boundaryRefreshInFlight = true
+  void loadSession(true).finally(() => {
+    boundaryRefreshInFlight = false
+    scheduleSessionRefresh()
+  })
+})
 
 const updateAutoScratch = (value: boolean) => {
   autoScratch.value = value
@@ -490,6 +647,7 @@ const moveScratchLauncherByTouch = (event: TouchEvent) => {
 const openScratchCard = () => {
   if (suppressScratchLauncherClick) return
   scratchVisible.value = true
+  scheduleSessionRefresh()
 }
 
 const handleRoomResize = () => {
@@ -621,8 +779,9 @@ onMounted(async () => {
   await loadSession()
   await scrollToBottom()
   composerRef.value?.focus()
-  refreshTimer = window.setInterval(() => void loadSession(true), 5000)
+  scheduleSessionRefresh()
   countdownTimer = window.setInterval(() => {
+    clockNowMs.value = Date.now() + authoritativeClockOffsetMs.value
     if (session.value?.issue.status === 'OPEN') {
       scratchRemaining.value = Math.max(0, scratchRemaining.value - 1)
     }
@@ -634,7 +793,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('mousemove', moveScratchLauncherByMouse)
   window.removeEventListener('mouseup', finishScratchLauncherMouseDrag)
-  if (refreshTimer) window.clearInterval(refreshTimer)
+  if (refreshTimer) window.clearTimeout(refreshTimer)
   if (countdownTimer) window.clearInterval(countdownTimer)
 })
 </script>
@@ -658,7 +817,7 @@ onBeforeUnmount(() => {
 
     <template v-else-if="session">
       <button
-        v-if="session.room.features.prizeCard && latestDraw && !historyExpanded"
+        v-if="session.room.features.prizeCard && scratchResultPeriod && !historyExpanded"
         class="scratch-launcher"
         :class="{ 'is-dragging': scratchLauncherDragging }"
         :style="scratchLauncherStyle"
@@ -676,9 +835,10 @@ onBeforeUnmount(() => {
 
       <ScratchCard
         :visible="scratchVisible"
-        :draw="latestDraw"
-        :current-period="session.issue.currentPeriod"
-        :remaining-seconds="scratchRemaining"
+        :draw="scratchResultDraw"
+        :result-period="scratchResultPeriod"
+        :current-period="scratchWaitingPeriod"
+        :remaining-seconds="scratchDrawRemaining"
         :auto-popup="autoScratch"
         @close="scratchVisible = false"
         @refresh="loadSession(true)"
@@ -711,7 +871,10 @@ onBeforeUnmount(() => {
           <strong
             :class="[
               'room-countdown',
-              { 'is-urgent': session.issue.status === 'OPEN' && scratchRemaining <= 10 }
+              {
+                'is-urgent':
+                  session.issue.status === 'OPEN' && scratchRemaining > 0 && scratchRemaining <= 10
+              }
             ]"
           >
             {{ issueTimingText }}
@@ -736,7 +899,7 @@ onBeforeUnmount(() => {
             <span class="room-history-label">最近开奖</span>
             <strong>{{ latestDraw.period }}</strong>
             <small class="room-history-latest-time">
-              {{ dayjs(latestDraw.settledAt).format('HH:mm') }}
+              {{ drawDisplayTime(latestDraw) }}
             </small>
             <span class="room-history-numbers room-history-latest-numbers">
               <i v-for="(number, index) in latestDraw.numbers" :key="index">{{ number }}</i>
@@ -756,7 +919,7 @@ onBeforeUnmount(() => {
           <div v-if="recentDraws.length" class="room-history-panel__list">
             <div v-for="draw in recentDraws" :key="draw.period">
               <span class="room-history-period">{{ draw.period }}期</span>
-              <span class="room-history-time">{{ dayjs(draw.settledAt).format('HH:mm') }}</span>
+              <span class="room-history-time">{{ drawDisplayTime(draw) }}</span>
               <span class="room-history-numbers">
                 <i v-for="(number, index) in draw.numbers" :key="`${draw.period}-${index}`">
                   {{ number }}
@@ -786,7 +949,9 @@ onBeforeUnmount(() => {
             />
             <div class="chat-body">
               <h5>
-                {{ message.kind === 'robot' ? '机器人' : message.senderName || session.member.name }}
+                {{
+                  message.kind === 'robot' ? '机器人' : message.senderName || session.member.name
+                }}
               </h5>
               <div class="chat-bubble">
                 <template v-if="message.type === 'draw' && message.draw">
@@ -809,7 +974,7 @@ onBeforeUnmount(() => {
                       class="lottery-table__history-row"
                     >
                       <span>{{ draw.period.slice(-3) }}</span>
-                      <span>{{ dayjs(draw.settledAt).format('HH:mm') }}</span>
+                      <span>{{ drawDisplayTime(draw) }}</span>
                       <span
                         class="lottery-table__history-numbers"
                         :aria-label="draw.numbers.join(' ')"

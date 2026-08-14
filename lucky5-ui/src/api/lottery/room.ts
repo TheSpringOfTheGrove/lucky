@@ -49,6 +49,7 @@ export interface RoomDraw {
   oddEven: string
   dragonTiger: string
   status: string
+  drawTime: string
   settledAt: string
 }
 
@@ -85,7 +86,12 @@ export interface RoomSession {
     remainingSeconds: number
     nextPeriod: string
     serverTime: string | number | null
+    drawTime: string | number | null
     sourceStale?: boolean
+    pendingPeriod?: string
+    pendingDrawTime?: string | number | null
+    pendingResult?: string
+    pendingStatus?: string
   }
   issueTransitions: Array<{
     id: number
@@ -142,7 +148,10 @@ const request = async <T>(url: string, options?: RequestInit) => {
 }
 
 const credentialQuery = (credential: RoomCredential) => {
-  const query = new URLSearchParams({ tenantId: String(credential.tenantId), openId: credential.openId })
+  const query = new URLSearchParams({
+    tenantId: String(credential.tenantId),
+    openId: credential.openId
+  })
   if (credential.uid) query.set('uid', credential.uid)
   if (credential.fp) query.set('fp', credential.fp)
   if (credential.roomMode) query.set('roomMode', credential.roomMode)
@@ -151,9 +160,7 @@ const credentialQuery = (credential: RoomCredential) => {
 
 const normalizeDraw = (draw: RoomDraw): RoomDraw => {
   const source =
-    Array.isArray(draw.numbers) && draw.numbers.length
-      ? draw.numbers.join('')
-      : draw.result || ''
+    Array.isArray(draw.numbers) && draw.numbers.length ? draw.numbers.join('') : draw.result || ''
   return { ...draw, numbers: (source.match(/\d/g) || []).slice(0, 5) }
 }
 
@@ -174,19 +181,25 @@ export const placeRoomBetApi = (
   })
 
 export const previewRoomBetApi = (credential: RoomCredential, content: string) =>
-  request<{ count: number; total: number; selections: string[] }>('/app-api/lottery/room/bets/preview', {
-    method: 'POST',
-    body: JSON.stringify({ ...credential, content })
-  })
+  request<{ count: number; total: number; selections: string[] }>(
+    '/app-api/lottery/room/bets/preview',
+    {
+      method: 'POST',
+      body: JSON.stringify({ ...credential, content })
+    }
+  )
 
 export const sendRoomMessageApi = (
   credential: RoomCredential,
   data: { period?: string; content: string; externalId: string }
 ) =>
-  request<{ reply: string; commandType: string; orderId?: string }>('/app-api/lottery/room/messages', {
-    method: 'POST',
-    body: JSON.stringify({ ...credential, ...data })
-  })
+  request<{ reply: string; commandType: string; orderId?: string }>(
+    '/app-api/lottery/room/messages',
+    {
+      method: 'POST',
+      body: JSON.stringify({ ...credential, ...data })
+    }
+  )
 
 export const createRoomAmountRequestApi = (
   credential: RoomCredential,

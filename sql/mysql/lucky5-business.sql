@@ -281,9 +281,18 @@ CREATE TABLE IF NOT EXISTS `lucky5_draw` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_draw_period` (`tenant_id`,`user_id`,`period`,`deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 开奖记录';
 
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_draw' AND column_name='draw_time')=0,
+  'ALTER TABLE `lucky5_draw` ADD COLUMN `draw_time` datetime NULL AFTER `status`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
 CREATE TABLE IF NOT EXISTS `lucky5_issue` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `period` varchar(40) NOT NULL, `status` varchar(30) NOT NULL,
   `market_status` int NULL, `remaining_seconds` int NOT NULL DEFAULT 0, `server_time` datetime NULL,
+  `source_observed_at` datetime(3) NULL,
   `next_period` varchar(40) NOT NULL DEFAULT '', `opened_at` datetime NULL, `closed_at` datetime NULL,
   `draw_time` datetime NULL, `draw_updated_at` datetime NULL, `result` varchar(100) NOT NULL DEFAULT '',
   `draw_confirmations` int NOT NULL DEFAULT 0, `draw_first_seen_at` datetime NULL,
@@ -295,6 +304,14 @@ CREATE TABLE IF NOT EXISTS `lucky5_issue` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_period` (`tenant_id`,`user_id`,`period`,`deleted`),
   KEY `idx_lucky5_issue_status` (`tenant_id`,`user_id`,`status`,`update_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 期号';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_issue' AND column_name='source_observed_at')=0,
+  'ALTER TABLE `lucky5_issue` ADD COLUMN `source_observed_at` datetime(3) NULL AFTER `server_time`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns

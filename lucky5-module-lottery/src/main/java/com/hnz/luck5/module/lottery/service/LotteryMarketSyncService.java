@@ -26,6 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +42,11 @@ public class LotteryMarketSyncService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryMarketSyncService.class);
     private final AtomicBoolean syncingAll = new AtomicBoolean();
+    private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
+    private volatile long nextDrawSyncAtMillis;
+    private volatile long activeDrawTimeMillis;
+    private volatile long queuedDrawTimeMillis;
 
     @Resource private LotteryConfigMapper lotteryConfigMapper;
     @Resource private MarketConnectionMapper marketConnectionMapper;
@@ -57,23 +62,52 @@ public class LotteryMarketSyncService {
     @Value("${lottery.market.draw-confirmation-delay-ms:5000}")
     private long drawConfirmationDelayMs;
 
+    @Value("${lottery.market.sync-interval-ms:2000}")
+    private long normalDrawSyncIntervalMs;
+
+    @Value("${lottery.market.hot-sync-interval-ms:250}")
+    private long hotDrawSyncIntervalMs;
+
+    @Value("${lottery.market.hot-window-before-seconds:8}")
+    private long hotWindowBeforeSeconds;
+
+    @Value("${lottery.market.hot-window-after-seconds:45}")
+    private long hotWindowAfterSeconds;
+
     @Value("${lottery.draw-source.tenant-id:1}")
     private Long drawSourceTenantId;
 
     @Value("${lottery.draw-source.user-id:1}")
     private Long drawSourceUserId;
 
-    @Scheduled(initialDelayString = "${lottery.market.initial-delay-ms:15000}",
-            fixedDelayString = "${lottery.market.sync-interval-ms:30000}")
+    @Scheduled(initialDelayString = "${lottery.market.initial-delay-ms:5000}",
+            fixedDelayString = "${lottery.market.sync-tick-ms:50}")
     public void syncAllConfigured() {
+        long startedAt = System.currentTimeMillis();
+        if (startedAt < nextDrawSyncAtMillis) return;
         if (!syncingAll.compareAndSet(false, true)) return;
         try {
             List<LotteryConfigDO> configs = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
                     () -> lotteryConfigMapper.selectList(new LambdaQueryWrapper<LotteryConfigDO>()
                             .isNotNull(LotteryConfigDO::getUserId))));
-            syncGlobalDraws(configs);
+            Wa55MarketClient.Snapshot snapshot = syncGlobalDraws(configs);
+            if (snapshot != null) observeDrawTime(snapshot.issue().drawTime(), System.currentTimeMillis());
+        } finally {
+            long completedAt = System.currentTimeMillis();
+            nextDrawSyncAtMillis = Math.max(completedAt, startedAt + drawSyncInterval(completedAt));
+            syncingAll.set(false);
+        }
+    }
+
+    @Scheduled(initialDelayString = "${lottery.market.connection-initial-delay-ms:15000}",
+            fixedDelayString = "${lottery.market.connection-sync-interval-ms:30000}")
+    public void syncAllOwnerConnections() {
+        if (!syncingConnections.compareAndSet(false, true)) return;
+        try {
+            List<LotteryConfigDO> configs = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
+                    () -> lotteryConfigMapper.selectList(new LambdaQueryWrapper<LotteryConfigDO>()
+                            .isNotNull(LotteryConfigDO::getUserId))));
             for (LotteryConfigDO config : configs) {
-                if (isDrawSource(config)) continue;
                 try {
                     TenantUtils.execute(config.getTenantId(), () -> syncOwnerConnection(config));
                 } catch (RuntimeException ex) {
@@ -82,7 +116,7 @@ public class LotteryMarketSyncService {
                 }
             }
         } finally {
-            syncingAll.set(false);
+            syncingConnections.set(false);
         }
     }
 
@@ -198,24 +232,24 @@ public class LotteryMarketSyncService {
         return TenantUtils.execute(tenantId, () -> connectionMap(findConnection(userId)));
     }
 
-    private void syncGlobalDraws(List<LotteryConfigDO> configs) {
+    private Wa55MarketClient.Snapshot syncGlobalDraws(List<LotteryConfigDO> configs) {
         LotteryConfigDO source = configs.stream().filter(this::isDrawSource).findFirst().orElse(null);
         if (!configured(source)) {
             LOGGER.warn("系统开奖源未配置 tenant={} user={}，本轮不更新期号和开奖结果",
                     drawSourceTenantId, drawSourceUserId);
-            return;
+            return null;
         }
         Wa55MarketClient.Snapshot snapshot;
         try {
-            snapshot = TenantUtils.execute(source.getTenantId(), () -> readSnapshot(source, true));
+            snapshot = TenantUtils.execute(source.getTenantId(), () -> readDrawSnapshot(source));
             TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "已连接",
-                    snapshot.lineUrl(), snapshot.account().displayAccount(), snapshot.account().balance(), "", true));
+                    snapshot.lineUrl(), null, null, "", true));
         } catch (RuntimeException ex) {
             TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "连接失败",
                     null, null, BigDecimal.ZERO, rootMessage(ex), false));
             LOGGER.warn("系统开奖源同步失败 tenant={} user={}: {}", source.getTenantId(), source.getUserId(),
                     rootMessage(ex));
-            return;
+            return null;
         }
         for (LotteryConfigDO target : configs) {
             try {
@@ -230,14 +264,37 @@ public class LotteryMarketSyncService {
                 LOGGER.error("共享开奖分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
             }
         }
-        // Settle only after every owner's draw snapshot transaction has committed. This also avoids reading a
-        // just-updated DRAWN row through a transaction resource that was opened for snapshot persistence.
-        for (LotteryConfigDO target : configs) {
-            try {
-                TenantUtils.execute(target.getTenantId(), () -> settlePending(target.getUserId()));
-            } catch (RuntimeException ex) {
-                LOGGER.error("共享开奖结算触发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
-            }
+        // Settlement is intentionally left to settleAllPending() on another scheduler thread. Publishing the next
+        // period and trusted result must never wait for payout, rebate or downstream order processing.
+        return snapshot;
+    }
+
+    private synchronized void observeDrawTime(LocalDateTime drawTime, long nowMillis) {
+        if (drawTime == null) return;
+        long observedDrawTime = drawTime.atZone(ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli();
+        promoteQueuedDrawTime(nowMillis);
+        if (activeDrawTimeMillis == 0 || observedDrawTime < activeDrawTimeMillis) {
+            activeDrawTimeMillis = observedDrawTime;
+        } else if (observedDrawTime > activeDrawTimeMillis) {
+            queuedDrawTimeMillis = Math.max(queuedDrawTimeMillis, observedDrawTime);
+        }
+    }
+
+    private synchronized long drawSyncInterval(long nowMillis) {
+        promoteQueuedDrawTime(nowMillis);
+        long before = Math.max(0, hotWindowBeforeSeconds) * 1000;
+        long after = Math.max(0, hotWindowAfterSeconds) * 1000;
+        boolean hot = activeDrawTimeMillis > 0
+                && nowMillis >= activeDrawTimeMillis - before
+                && nowMillis <= activeDrawTimeMillis + after;
+        return Math.max(100, hot ? hotDrawSyncIntervalMs : normalDrawSyncIntervalMs);
+    }
+
+    private void promoteQueuedDrawTime(long nowMillis) {
+        long after = Math.max(0, hotWindowAfterSeconds) * 1000;
+        if (activeDrawTimeMillis > 0 && nowMillis > activeDrawTimeMillis + after) {
+            activeDrawTimeMillis = queuedDrawTimeMillis > activeDrawTimeMillis ? queuedDrawTimeMillis : 0;
+            queuedDrawTimeMillis = 0;
         }
     }
 
@@ -263,6 +320,12 @@ public class LotteryMarketSyncService {
         String password = credentialService.decrypt(config.getMarketPasswordEncrypted());
         return marketClient.read(new Wa55MarketClient.Credentials(
                 config.getUpstreamUrl(), config.getUpstreamAccount(), password), includeDraws);
+    }
+
+    private Wa55MarketClient.Snapshot readDrawSnapshot(LotteryConfigDO config) {
+        String password = credentialService.decrypt(config.getMarketPasswordEncrypted());
+        return marketClient.readDrawSnapshot(new Wa55MarketClient.Credentials(
+                config.getUpstreamUrl(), config.getUpstreamAccount(), password));
     }
 
     private boolean persistSharedSnapshot(Long userId, Wa55MarketClient.Snapshot snapshot) {
@@ -324,13 +387,21 @@ public class LotteryMarketSyncService {
         issue.setMarketStatus(snapshot.marketStatus());
         issue.setRemainingSeconds(snapshot.remainingSeconds());
         issue.setServerTime(snapshot.serverTime());
+        issue.setSourceObservedAt(snapshot.observedAt());
         issue.setNextPeriod(snapshot.nextPeriod());
+        if (snapshot.drawTime() != null) issue.setDrawTime(snapshot.drawTime());
         issue.setRawSnapshot(snapshot.raw());
     }
 
     private void upsertDrawIssue(Long userId, Wa55MarketClient.Draw draw, LocalDateTime now) {
         if (!draw.period().matches("\\d{8,20}")) return;
         IssueDO issue = findIssue(userId, draw.period());
+        if (issue != null
+                && List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus())
+                && Objects.equals(issue.getResult(), draw.result())
+                && (issue.getDrawTime() != null || draw.drawTime() == null)) {
+            return;
+        }
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
         LotteryDrawVerificationService.Decision decision = drawVerificationService.evaluate(oldStatus,
                 issue == null ? "" : issue.getResult(), issue == null ? 0 : issue.getDrawConfirmations(),
@@ -507,7 +578,8 @@ public class LotteryMarketSyncService {
 
     private Map<String, Object> issueMap(Wa55MarketClient.Issue issue) {
         return map("period", issue.period(), "status", issue.status(), "marketStatus", issue.marketStatus(),
-                "remainingSeconds", issue.remainingSeconds(), "serverTime", issue.serverTime(), "nextPeriod", issue.nextPeriod());
+                "remainingSeconds", issue.remainingSeconds(), "serverTime", issue.serverTime(),
+                "nextPeriod", issue.nextPeriod(), "drawTime", issue.drawTime());
     }
 
     private Map<String, Object> connectionMap(MarketConnectionDO item) {

@@ -48,6 +48,8 @@ public interface LotteryService {
 
     List<Map<String, Object>> getOrders();
 
+    List<Map<String, Object>> getDrawHistory(String period);
+
     Map<String, Object> getMemberDetails(String id);
 
     Map<String, String> getMemberLinks(String id, String origin);

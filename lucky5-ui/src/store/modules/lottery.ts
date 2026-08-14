@@ -20,6 +20,7 @@ import {
   getMarketConnectionSnapshotApi,
   getAmountRecordsApi,
   getChimaRecordsApi,
+  getDrawHistoryApi,
   getOrdersApi,
   getMemberSnapshotsApi,
   getMemberDetailsApi,
@@ -371,6 +372,14 @@ const useLucky5StoreBase = defineStore('lucky5', {
     async refreshOrders() {
       try {
         this.orders = await getOrdersApi()
+        return true
+      } catch {
+        return false
+      }
+    },
+    async refreshDrawHistory(period = '') {
+      try {
+        this.drawHistory = await getDrawHistoryApi(period.trim() || undefined)
         return true
       } catch {
         return false

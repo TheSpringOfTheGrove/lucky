@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,6 +24,29 @@ class Wa55MarketClientTest {
         assertThat(client.normalizeDirectResult("03356")).isEqualTo("03356");
         assertThat(client.normalizeDirectResult("0")).isEmpty();
         assertThat(client.normalizeDirectResult("123456")).isEmpty();
+    }
+
+    @Test
+    void usesMarketCloseAndDrawTimesAsAuthoritativeSchedule() throws Exception {
+        Wa55MarketClient client = new Wa55MarketClient();
+
+        Wa55MarketClient.Issue issue = client.issue(objectMapper.readTree("""
+                {
+                  "period_no":"20260814229",
+                  "open_status":0,
+                  "last_seconds":99,
+                  "system_db_now":"2026-08-14 19:04:24",
+                  "close_datetime":"2026-08-14 19:04:30",
+                  "next_open_datetime":"2026-08-14 19:05:10",
+                  "next_period_no":"20260814230"
+                }
+                """));
+
+        assertThat(issue.period()).isEqualTo("20260814229");
+        assertThat(issue.status()).isEqualTo("OPEN");
+        assertThat(issue.remainingSeconds()).isEqualTo(6);
+        assertThat(issue.serverTime()).isEqualTo(LocalDateTime.of(2026, 8, 14, 19, 4, 24));
+        assertThat(issue.drawTime()).isEqualTo(LocalDateTime.of(2026, 8, 14, 19, 5, 10));
     }
 
     @Test

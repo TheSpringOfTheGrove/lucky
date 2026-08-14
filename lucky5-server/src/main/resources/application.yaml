@@ -8,6 +8,11 @@ spring:
   main:
     allow-circular-references: true # 允许循环依赖，因为项目是三层架构，无法避免这个情况。
 
+  task:
+    scheduling:
+      pool:
+        size: 4 # 开奖同步、连接刷新、结算等任务相互隔离，避免慢任务阻塞号码发布
+
   # Servlet 配置
   servlet:
     # 文件上传相关配置项

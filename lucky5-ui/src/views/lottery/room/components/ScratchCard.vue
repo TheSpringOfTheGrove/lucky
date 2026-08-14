@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import type { RoomDraw } from '@/api/lottery/room'
 
 const props = defineProps<{
   visible: boolean
   draw: RoomDraw | null
+  resultPeriod: string
   currentPeriod: string
   remainingSeconds: number
   autoPopup: boolean
@@ -17,6 +18,10 @@ const emit = defineEmits<{
 }>()
 
 const canvasRef = ref<HTMLCanvasElement>()
+const hasResult = computed(() => (props.draw?.numbers || []).length === 5)
+const displayNumbers = computed(() =>
+  hasResult.value ? props.draw!.numbers : ['', '', '', '', '']
+)
 let drawing = false
 let context: CanvasRenderingContext2D | null = null
 let lastPoint: { x: number; y: number } | null = null
@@ -85,28 +90,23 @@ const refresh = () => {
 }
 
 watch(
-  () => [props.visible, props.draw?.period],
-  ([visible]) => {
-    if (visible) void resetCover()
+  () => props.visible,
+  (visible, previousVisible) => {
+    if (visible && !previousVisible) {
+      void resetCover()
+    }
   }
 )
-
-const onResize = () => {
-  if (props.visible) void resetCover()
-}
-
-window.addEventListener('resize', onResize)
-onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 </script>
 
 <template>
-  <div v-if="visible && draw" class="scratch-mask" @click.self="emit('close')">
+  <div v-if="visible && resultPeriod" class="scratch-mask" @click.self="emit('close')">
     <section class="scratch-dialog" role="dialog" aria-modal="true" aria-label="刮刮卡">
-      <h2>第 {{ draw.period }} 期</h2>
+      <h2>第 {{ resultPeriod }} 期</h2>
 
-      <div class="scratch-stage">
+      <div class="scratch-stage" :class="{ 'is-empty': !hasResult }">
         <div class="scratch-numbers">
-          <span v-for="(number, index) in draw.numbers" :key="`${number}-${index}`">
+          <span v-for="(number, index) in displayNumbers" :key="`${number}-${index}`">
             {{ number }}
           </span>
         </div>
@@ -123,7 +123,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 
       <h3>当前 {{ currentPeriod || '等待开盘' }} 期</h3>
       <p class="scratch-countdown">
-        {{ remainingSeconds > 0 ? `距离开 ${remainingSeconds} 秒` : '等待开奖' }}
+        {{ `距离开奖 ${remainingSeconds}秒` }}
       </p>
 
       <button class="scratch-refresh" type="button" @click="refresh">刷新</button>
@@ -265,5 +265,3 @@ onBeforeUnmount(() => window.removeEventListener('resize', onResize))
   }
 }
 </style>
-
-

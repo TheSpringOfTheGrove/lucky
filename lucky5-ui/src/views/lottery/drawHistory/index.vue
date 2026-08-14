@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
-import { computed, reactive, ref } from 'vue'
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onDeactivated,
+  onMounted,
+  reactive,
+  ref
+} from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -10,6 +18,48 @@ const issuePeriod = ref('')
 const form = reactive({ period: '', result: '', reason: '' })
 const issue = computed(() => store.market.issue)
 const isMobile = useMediaQuery('(max-width: 768px)')
+const periodFilter = ref('')
+const activePeriodFilter = ref('')
+const refreshing = ref(false)
+let refreshTimer: number | undefined
+
+const refreshDrawHistory = async () => {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await store.refreshDrawHistory(activePeriodFilter.value)
+  } finally {
+    refreshing.value = false
+  }
+}
+
+const searchDrawHistory = async () => {
+  activePeriodFilter.value = periodFilter.value.trim()
+  await refreshDrawHistory()
+}
+
+const resetDrawHistory = async () => {
+  periodFilter.value = ''
+  activePeriodFilter.value = ''
+  await refreshDrawHistory()
+}
+
+const startAutoRefresh = () => {
+  if (refreshTimer) return
+  void refreshDrawHistory()
+  refreshTimer = window.setInterval(() => void refreshDrawHistory(), 5 * 60 * 1000)
+}
+
+const stopAutoRefresh = () => {
+  if (!refreshTimer) return
+  window.clearInterval(refreshTimer)
+  refreshTimer = undefined
+}
+
+onMounted(startAutoRefresh)
+onActivated(startAutoRefresh)
+onDeactivated(stopAutoRefresh)
+onBeforeUnmount(stopAutoRefresh)
 
 const submit = async () => {
   const normalizedResult = form.result.replace(/[,，\s]/g, '')
@@ -120,6 +170,19 @@ const changeIssue = async (status: 'open' | 'close') => {
     </el-card>
 
     <el-card shadow="never">
+      <div class="draw-history-filters">
+        <el-input
+          v-model="periodFilter"
+          clearable
+          placeholder="请输入期号"
+          @keyup.enter="searchDrawHistory"
+        />
+        <el-button type="primary" :loading="refreshing" @click="searchDrawHistory"
+          >搜索</el-button
+        >
+        <el-button :disabled="refreshing" @click="resetDrawHistory">重置</el-button>
+        <span class="draw-history-refresh-tip">每 5 分钟自动刷新</span>
+      </div>
       <PaginatedTable :data="store.drawHistory" border>
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
@@ -127,12 +190,14 @@ const changeIssue = async (status: 'open' | 'close') => {
             <span>{{ row.result }}</span>
           </div>
           <div class="lucky-mobile-card__meta">
-            <span>{{ row.settledAt }}</span>
+            <span>{{ row.drawTime || row.settledAt }}</span>
             <span>{{ row.status || '已开奖' }}</span>
           </div>
         </template>
         <el-table-column prop="period" label="期号" min-width="160" />
-        <el-table-column prop="settledAt" label="开奖时间" min-width="200" />
+        <el-table-column prop="drawTime" label="开奖时间" min-width="200">
+          <template #default="{ row }">{{ row.drawTime || row.settledAt }}</template>
+        </el-table-column>
         <el-table-column prop="result" label="开奖号码" min-width="160" />
         <el-table-column label="状态" min-width="110">
           <template #default="{ row }">{{ row.status || '已开奖' }}</template>
@@ -186,6 +251,22 @@ const changeIssue = async (status: 'open' | 'close') => {
   border-radius: 6px;
 }
 
+.draw-history-filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.draw-history-filters :deep(.el-input) {
+  width: 260px;
+}
+
+.draw-history-refresh-tip {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 @media (width <= 768px) {
   .issue-actions {
     align-items: stretch;
@@ -196,6 +277,20 @@ const changeIssue = async (status: 'open' | 'close') => {
   .issue-actions :deep(.el-button) {
     width: 100% !important;
     margin-left: 0;
+  }
+
+  .draw-history-filters {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .draw-history-filters :deep(.el-input) {
+    width: 100%;
+  }
+
+  .draw-history-refresh-tip {
+    display: flex;
+    align-items: center;
   }
 }
 </style>

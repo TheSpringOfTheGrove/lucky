@@ -21,6 +21,7 @@ public class DrawDO extends LotteryUserBaseDO {
     private String oddEven;
     private String dragonTiger;
     private String status;
+    private LocalDateTime drawTime;
     private LocalDateTime settledAt;
 
 }
