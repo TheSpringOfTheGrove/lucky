@@ -40,6 +40,43 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesNumericFixedShorthandFromOnesPosition() {
+        assertThat(service.parse("1各1", odds)).containsExactlyElementsOf(service.parse("个1各1", odds));
+        assertThat(service.parse("12各1", odds)).containsExactlyElementsOf(service.parse("十1个2各1", odds));
+        assertThat(service.parse("123各1", odds)).containsExactlyElementsOf(service.parse("百1十2个3各1", odds));
+        assertThat(service.parse("5874各2", odds))
+                .containsExactlyElementsOf(service.parse("千5百8十7个4各2", odds));
+        assertThat(service.parse("8888各1", odds))
+                .containsExactlyElementsOf(service.parse("千8百8十8个8各1", odds));
+
+        assertThat(service.parse("1各1", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection,
+                        LotteryBettingService.ParsedBet::amount, LotteryBettingService.ParsedBet::odds)
+                .containsExactly("一定位", "XXX1", new BigDecimal("1"), new BigDecimal("9"));
+        assertThat(service.parse("12各1", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection)
+                .containsExactly("二定位", "XX12");
+        assertThat(service.parse("123各1", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection)
+                .containsExactly("三定位", "X123");
+        assertThat(service.parse("5874各2", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection,
+                        LotteryBettingService.ParsedBet::amount, LotteryBettingService.ParsedBet::odds)
+                .containsExactly("四定位", "5874", new BigDecimal("2"), new BigDecimal("9600"));
+        assertThat(service.parse("8888各1", odds).get(0))
+                .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection,
+                        LotteryBettingService.ParsedBet::odds)
+                .containsExactly("四定位", "8888", new BigDecimal("9600"));
+
+        assertThat(service.isWinning(service.parse("1各1", odds).get(0), service.deriveDraw("00010"))).isTrue();
+        assertThat(service.isWinning(service.parse("1各1", odds).get(0), service.deriveDraw("10000"))).isFalse();
+        assertThat(service.isWinning(service.parse("12各1", odds).get(0), service.deriveDraw("00120"))).isTrue();
+        assertThat(service.isWinning(service.parse("123各1", odds).get(0), service.deriveDraw("01230"))).isTrue();
+        assertThat(service.isWinning(service.parse("8888各1", odds).get(0), service.deriveDraw("88880"))).isTrue();
+        assertThat(service.isWinning(service.parse("8888各1", odds).get(0), service.deriveDraw("88808"))).isFalse();
+    }
+
+    @Test
     void matchesOriginalReferenceFilters() {
         assertThat(service.parse("二现含12各3", odds)).hasSize(19);
         assertThat(service.parse("三现取三兄弟各1", odds)).hasSize(10);

@@ -45,4 +45,20 @@ class LotteryMarketRoutingServiceTest {
                 .isEqualByComparingTo("9.00");
         verify(routeItemMapper, never()).insert(any(MarketRouteItemDO.class));
     }
+
+    @Test
+    void supportsRightAlignedNumericPositionSelections() {
+        assertThat(service.supportsMarket(item("一定位", "XXX1"))).isTrue();
+        assertThat(service.supportsMarket(item("二定位", "XX12"))).isTrue();
+        assertThat(service.supportsMarket(item("三定位", "X123"))).isTrue();
+        assertThat(service.supportsMarket(item("四定位", "5874"))).isTrue();
+        assertThat(service.supportsMarket(item("四条", "8888"))).isTrue();
+    }
+
+    private BetItemDO item(String play, String selection) {
+        BetItemDO item = new BetItemDO();
+        item.setPlay(play);
+        item.setSelection(selection);
+        return item;
+    }
 }

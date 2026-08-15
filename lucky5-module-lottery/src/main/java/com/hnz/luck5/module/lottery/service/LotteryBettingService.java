@@ -42,7 +42,7 @@ public class LotteryBettingService {
     }
 
     public List<ParsedBet> parse(String rawContent, List<OddDO> odds) {
-        String content = normalize(rawContent);
+        String content = expandNumericFixedShorthand(normalize(rawContent));
         if (content.isBlank()) {
             throw exception(BET_CONTENT_INVALID);
         }
@@ -417,6 +417,23 @@ public class LotteryBettingService {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().replaceAll("[，,、；;\\s]+", "").replace('：', ':').replace('末', '尾');
+    }
+
+    private String expandNumericFixedShorthand(String content) {
+        Matcher matcher = Pattern.compile("^(\\d{1,4})各(\\d+(?:\\.\\d+)?)$").matcher(content);
+        if (!matcher.matches()) return content;
+        String digits = matcher.group(1);
+        String positions = switch (digits.length()) {
+            case 1 -> "个";
+            case 2 -> "十个";
+            case 3 -> "百十个";
+            default -> "千百十个";
+        };
+        StringBuilder expanded = new StringBuilder();
+        for (int index = 0; index < digits.length(); index++) {
+            expanded.append(positions.charAt(index)).append(digits.charAt(index));
+        }
+        return expanded.append("各").append(matcher.group(2)).toString();
     }
 
     private List<IndexedBet> indexed(List<String> selections, String play, BigDecimal amount, BigDecimal odds, int index) {

@@ -190,12 +190,14 @@ watch(
 
       <div class="rule-row split">
         <label
-          ><b>定位覆</b> <input v-model="form.定位" type="radio" value="除" />除
-          <input v-model="form.定位" type="radio" value="取" />取</label
+          ><b>定位覆</b>
+          <input v-model="form.定位" type="checkbox" true-value="除" false-value="" />除
+          <input v-model="form.定位" type="checkbox" true-value="取" false-value="" />取</label
         >
         <label
-          ><b>配数全转</b> <input v-model="form.配数" type="radio" value="除" />除
-          <input v-model="form.配数" type="radio" value="取" />取</label
+          ><b>配数全转</b>
+          <input v-model="form.配数" type="checkbox" true-value="除" false-value="" />除
+          <input v-model="form.配数" type="checkbox" true-value="取" false-value="" />取</label
         >
       </div>
 
@@ -221,26 +223,30 @@ watch(
       /></div>
       <div class="rule-row"
         ><label
-          ><input v-model="form.双重" type="radio" value="除" />除
-          <input v-model="form.双重" type="radio" value="取" />取 <b>（双重）</b></label
+          ><input v-model="form.双重" type="checkbox" true-value="除" false-value="" />除
+          <input v-model="form.双重" type="checkbox" true-value="取" false-value="" />取
+          <b>（双重）</b></label
         ></div
       >
       <div class="rule-row"
         ><label
-          ><input v-model="form.二兄弟" type="radio" value="除" />除
-          <input v-model="form.二兄弟" type="radio" value="取" />取 <b>（二兄弟）</b></label
+          ><input v-model="form.二兄弟" type="checkbox" true-value="除" false-value="" />除
+          <input v-model="form.二兄弟" type="checkbox" true-value="取" false-value="" />取
+          <b>（二兄弟）</b></label
         ></div
       >
       <div class="rule-row"
         ><label
-          ><input v-model="form.三兄弟" type="radio" value="除" />除
-          <input v-model="form.三兄弟" type="radio" value="取" />取 <b>（三兄弟）</b></label
+          ><input v-model="form.三兄弟" type="checkbox" true-value="除" false-value="" />除
+          <input v-model="form.三兄弟" type="checkbox" true-value="取" false-value="" />取
+          <b>（三兄弟）</b></label
         ></div
       >
       <div class="rule-row"
         ><label
-          ><input v-model="form.四兄弟" type="radio" value="除" />除
-          <input v-model="form.四兄弟" type="radio" value="取" />取 <b>（四兄弟）</b></label
+          ><input v-model="form.四兄弟" type="checkbox" true-value="除" false-value="" />除
+          <input v-model="form.四兄弟" type="checkbox" true-value="取" false-value="" />取
+          <b>（四兄弟）</b></label
         ></div
       >
       <div class="rule-row"><b>对数</b><input v-model="form.对数" placeholder="05-16-27" /></div>
@@ -354,7 +360,7 @@ watch(
 .rule-row b {
   color: #bd1240;
 }
-.rule-row input:not([type='radio']) {
+.rule-row input:not([type='checkbox']) {
   width: 90px;
   height: 24px;
 }
@@ -478,4 +484,3 @@ watch(
   }
 }
 </style>
-
