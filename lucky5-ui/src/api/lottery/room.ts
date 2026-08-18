@@ -87,6 +87,7 @@ export interface RoomSession {
     nextPeriod: string
     serverTime: string | number | null
     drawTime: string | number | null
+    bettingCutoffTime?: string | number | null
     sourceStale?: boolean
     pendingPeriod?: string
     pendingDrawTime?: string | number | null
@@ -124,6 +125,8 @@ export interface RoomSession {
     content: string
   }>
 }
+
+export type RoomDrawState = Pick<RoomSession, 'suggestedPeriod' | 'issue' | 'draws'>
 
 interface ApiEnvelope<T> {
   code: number
@@ -171,6 +174,13 @@ export const getRoomSessionApi = async (credential: RoomCredential) => {
   return { ...session, draws: (session.draws || []).map(normalizeDraw) }
 }
 
+export const getRoomDrawStateApi = async (credential: RoomCredential) => {
+  const state = await request<RoomDrawState>(
+    `/app-api/lottery/room/draw-state?${credentialQuery(credential)}`
+  )
+  return { ...state, draws: (state.draws || []).map(normalizeDraw) }
+}
+
 export const placeRoomBetApi = (
   credential: RoomCredential,
   data: { period: string; content: string; externalId: string }
@@ -193,7 +203,7 @@ export const sendRoomMessageApi = (
   credential: RoomCredential,
   data: { period?: string; content: string; externalId: string }
 ) =>
-  request<{ reply: string; commandType: string; orderId?: string }>(
+  request<{ messageId: number; reply: string; commandType: string; orderId?: string }>(
     '/app-api/lottery/room/messages',
     {
       method: 'POST',

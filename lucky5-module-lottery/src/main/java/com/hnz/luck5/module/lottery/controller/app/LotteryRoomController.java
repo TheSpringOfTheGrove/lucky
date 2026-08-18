@@ -26,9 +26,19 @@ public class LotteryRoomController {
     @Resource
     private LotteryService lotteryService;
 
+    @GetMapping("/health")
+    public CommonResult<String> health() {
+        return success("ok");
+    }
+
     @GetMapping("/session")
     public CommonResult<Map<String, Object>> getSession(@Valid LotteryRoomReqVO.Credential reqVO) {
         return success(lotteryService.getRoomSession(reqVO));
+    }
+
+    @GetMapping("/draw-state")
+    public CommonResult<Map<String, Object>> getDrawState(@Valid LotteryRoomReqVO.Credential reqVO) {
+        return success(lotteryService.getRoomDrawState(reqVO));
     }
 
     @PostMapping("/bets")

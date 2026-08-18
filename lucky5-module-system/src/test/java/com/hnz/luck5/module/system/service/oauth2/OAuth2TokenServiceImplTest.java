@@ -15,6 +15,7 @@ import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import com.hnz.luck5.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import com.hnz.luck5.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import com.hnz.luck5.module.system.dal.redis.oauth2.OAuth2SingleSessionRedisDAO;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
 import org.assertj.core.util.Lists;
@@ -38,7 +39,7 @@ import static org.mockito.Mockito.when;
  *
  * @author 芋道源码
  */
-@Import({OAuth2TokenServiceImpl.class, OAuth2AccessTokenRedisDAO.class})
+@Import({OAuth2TokenServiceImpl.class, OAuth2AccessTokenRedisDAO.class, OAuth2SingleSessionRedisDAO.class})
 public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
 
     @Resource
@@ -51,6 +52,8 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
 
     @Resource
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
+    @Resource
+    private OAuth2SingleSessionRedisDAO oauth2SingleSessionRedisDAO;
 
     @MockitoBean
     private OAuth2ClientService oauth2ClientService;
@@ -95,6 +98,28 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
         OAuth2RefreshTokenDO refreshTokenDO = oauth2RefreshTokenMapper.selectList().get(0);
         assertPojoEquals(accessTokenDO, refreshTokenDO, "id", "expiresTime", "createTime", "updateTime", "deleted");
         assertFalse(DateUtils.isExpired(refreshTokenDO.getExpiresTime()));
+    }
+
+    @Test
+    public void testCreateAccessToken_replacesPreviousAdminSession() {
+        TenantContextHolder.setTenantId(0L);
+        Long userId = randomLongId();
+        String clientId = randomString();
+        OAuth2ClientDO clientDO = randomPojo(OAuth2ClientDO.class).setClientId(clientId)
+                .setAccessTokenValiditySeconds(30).setRefreshTokenValiditySeconds(60);
+        when(oauth2ClientService.validOAuthClientFromCache(eq(clientId))).thenReturn(clientDO);
+        when(adminUserService.getUser(userId)).thenReturn(randomPojo(AdminUserDO.class));
+
+        OAuth2AccessTokenDO first = oauth2TokenService.createAccessToken(
+                userId, UserTypeEnum.ADMIN.getValue(), clientId, List.of());
+        OAuth2AccessTokenDO second = oauth2TokenService.createAccessToken(
+                userId, UserTypeEnum.ADMIN.getValue(), clientId, List.of());
+
+        assertNull(oauth2AccessTokenMapper.selectByAccessToken(first.getAccessToken()));
+        assertNull(oauth2RefreshTokenMapper.selectByRefreshToken(first.getRefreshToken()));
+        assertEquals(second.getRefreshToken(), oauth2SingleSessionRedisDAO.get(
+                0L, UserTypeEnum.ADMIN.getValue(), userId));
+        assertEquals(second.getAccessToken(), oauth2TokenService.checkAccessToken(second.getAccessToken()).getAccessToken());
     }
 
     @Test
@@ -230,6 +255,25 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
         // 调研，并断言
         assertServiceException(() -> oauth2TokenService.checkAccessToken(accessToken),
                 new ErrorCode(401, "访问令牌已过期"));
+    }
+
+    @Test
+    public void testCheckAccessToken_rejectsSessionReplacedByAnotherLogin() {
+        Long tenantId = 0L;
+        Long userId = randomLongId();
+        OAuth2AccessTokenDO accessTokenDO = randomPojo(OAuth2AccessTokenDO.class);
+        accessTokenDO.setTenantId(tenantId);
+        accessTokenDO.setUserId(userId);
+        accessTokenDO.setUserType(UserTypeEnum.ADMIN.getValue());
+        accessTokenDO.setRefreshToken("old-refresh-token");
+        accessTokenDO.setExpiresTime(LocalDateTime.now().plusDays(1));
+        oauth2AccessTokenMapper.insert(accessTokenDO);
+        oauth2AccessTokenRedisDAO.set(accessTokenDO);
+        oauth2SingleSessionRedisDAO.set(tenantId, UserTypeEnum.ADMIN.getValue(), userId,
+                "new-refresh-token", LocalDateTime.now().plusDays(1));
+
+        assertServiceException(() -> oauth2TokenService.checkAccessToken(accessTokenDO.getAccessToken()),
+                new ErrorCode(401, "账号已在其他地方登录，请重新登录"));
     }
 
     @Test

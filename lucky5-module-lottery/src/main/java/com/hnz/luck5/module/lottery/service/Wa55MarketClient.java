@@ -15,6 +15,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -22,10 +24,13 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -51,9 +56,7 @@ public class Wa55MarketClient {
     public record Draw(String period, String result, LocalDateTime drawTime, LocalDateTime updatedAt, String raw) {}
     public record Snapshot(String lineUrl, Account account, Issue issue, List<Draw> draws) {}
 
-    private final Object drawSessionMonitor = new Object();
-    private Credentials cachedDrawCredentials;
-    private Session cachedDrawSession;
+    private final Map<String, SessionSlot> sessions = new ConcurrentHashMap<>();
 
     public Snapshot read(Credentials credentials, boolean includeDraws) {
         return read(credentials, true, includeDraws);
@@ -64,52 +67,40 @@ public class Wa55MarketClient {
      * delayed balance request cannot hold up period/result publication.
      */
     public Snapshot readDrawSnapshot(Credentials credentials) {
-        synchronized (drawSessionMonitor) {
-            RuntimeException last = null;
-            for (int attempt = 0; attempt < 2; attempt++) {
-                try {
-                    Session session = drawSession(credentials);
-                    return new Snapshot(session.baseUrl, null, issue(session), draws(session));
-                } catch (RuntimeException ex) {
-                    last = ex;
-                    cachedDrawCredentials = null;
-                    cachedDrawSession = null;
-                }
-            }
-            throw last == null ? new IllegalStateException("盘口连接失败") : last;
-        }
-    }
-
-    private Session drawSession(Credentials credentials) {
-        if (cachedDrawSession == null || !credentials.equals(cachedDrawCredentials)) {
-            cachedDrawSession = connect(credentials);
-            cachedDrawCredentials = credentials;
-        }
-        return cachedDrawSession;
+        return withSession(credentials, session -> new Snapshot(session.baseUrl, null, issue(session), draws(session)));
     }
 
     private Snapshot read(Credentials credentials, boolean includeAccount, boolean includeDraws) {
-        RuntimeException last = null;
-        for (int attempt = 0; attempt < 2; attempt++) {
+        return withSession(credentials, session -> {
+            Account account = includeAccount ? account(session) : null;
+            Issue issue = issue(session);
+            List<Draw> draws = includeDraws ? draws(session) : List.of();
+            return new Snapshot(session.baseUrl, account, issue, draws);
+        });
+    }
+
+    private <T> T withSession(Credentials credentials, Function<Session, T> operation) {
+        String identity = digest(normalizeBase(credentials.url()).toString() + "\0" + credentials.account());
+        String fingerprint = digest(identity + "\0" + credentials.password());
+        SessionSlot slot = sessions.computeIfAbsent(identity, ignored -> new SessionSlot());
+        synchronized (slot) {
+            Session session = slot.session;
+            if (session == null || !fingerprint.equals(slot.fingerprint)) {
+                session = connect(credentials);
+                slot.session = session;
+                slot.fingerprint = fingerprint;
+            }
             try {
-                Session session = connect(credentials);
-                Account account = includeAccount ? account(session) : null;
-                Issue issue = issue(session);
-                List<Draw> draws = includeDraws ? draws(session) : List.of();
-                return new Snapshot(session.baseUrl, account, issue, draws);
-            } catch (RuntimeException ex) {
-                last = ex;
-                if (attempt == 0) {
-                    try {
-                        Thread.sleep(800);
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("盘口连接被中断", interrupted);
-                    }
-                }
+                return operation.apply(session);
+            } catch (MarketSessionExpiredException ex) {
+                slot.session = null;
+                slot.fingerprint = "";
+                Session refreshed = connect(credentials);
+                slot.session = refreshed;
+                slot.fingerprint = fingerprint;
+                return operation.apply(refreshed);
             }
         }
-        throw last == null ? new IllegalStateException("盘口连接失败") : last;
     }
 
     private Session connect(Credentials credentials) {
@@ -237,6 +228,11 @@ public class Wa55MarketClient {
         try {
             HttpResponse<String> response = client.send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            boolean authenticatedRequest = request.headers().firstValue("X-Requested-With").isPresent();
+            if (authenticatedRequest && (response.statusCode() == 401 || response.statusCode() == 403
+                    || response.uri().getPath().toLowerCase(Locale.ROOT).contains("/member/login"))) {
+                throw new MarketSessionExpiredException();
+            }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("盘口请求失败：HTTP " + response.statusCode());
             }
@@ -272,6 +268,11 @@ public class Wa55MarketClient {
         try {
             return objectMapper.readTree(body);
         } catch (Exception ex) {
+            String normalized = body.toLowerCase(Locale.ROOT);
+            if (normalized.contains("/member/login") || normalized.contains("dologin")
+                    || normalized.contains("请登录")) {
+                throw new MarketSessionExpiredException();
+            }
             throw new IllegalStateException("盘口返回了无法解析的数据", ex);
         }
     }
@@ -280,7 +281,16 @@ public class Wa55MarketClient {
         int status = number(first(payload, "Status", "status"), Integer.MIN_VALUE);
         String data = text(first(payload, "Data", "message"));
         if (status == 5 || data.toLowerCase(Locale.ROOT).contains("login") || data.contains("请登录")) {
-            throw new IllegalStateException("盘口会话已失效");
+            throw new MarketSessionExpiredException();
+        }
+    }
+
+    private String digest(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("无法生成盘口会话标识", ex);
         }
     }
 
@@ -382,6 +392,22 @@ public class Wa55MarketClient {
             }
         }
         return result.toString();
+    }
+
+    void setObjectMapperForTest(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    private static final class SessionSlot {
+        private String fingerprint = "";
+        private Session session;
+    }
+
+    private static final class MarketSessionExpiredException extends IllegalStateException {
+
+        private MarketSessionExpiredException() {
+            super("盘口会话已失效");
+        }
     }
 
     private record Session(HttpClient client, String baseUrl) {}

@@ -233,6 +233,12 @@ public class LotteryController {
         return success(true);
     }
 
+    @GetMapping("/rebates/members")
+    @PreAuthorize("@ss.hasPermission('lottery:rebate:manage')")
+    public CommonResult<List<Map<String, Object>>> getRebateMembers() {
+        return success(lotteryService.getRebateMembers());
+    }
+
     @PostMapping("/rebates/apply")
     @PreAuthorize("@ss.hasPermission('lottery:rebate:manage')")
     public CommonResult<Map<String, Object>> applyRebates() {
@@ -267,8 +273,21 @@ public class LotteryController {
 
     @GetMapping("/orders")
     @PreAuthorize("@ss.hasAnyPermissions('lottery:order:manage', 'lottery:history:query')")
-    public CommonResult<List<Map<String, Object>>> getOrders() {
-        return success(lotteryService.getOrders());
+    public CommonResult<PageResult<Map<String, Object>>> getOrders(@Valid LotteryReqVO.OrderPage reqVO) {
+        return success(lotteryService.getOrders(reqVO));
+    }
+
+    @GetMapping("/orders/{id}/items")
+    @PreAuthorize("@ss.hasPermission('lottery:order:manage')")
+    public CommonResult<Map<String, Object>> getOrderItems(@PathVariable String id,
+                                                            @Valid LotteryReqVO.OrderItemPage reqVO) {
+        return success(lotteryService.getOrderItems(id, reqVO));
+    }
+
+    @GetMapping("/order-history")
+    @PreAuthorize("@ss.hasPermission('lottery:history:query')")
+    public CommonResult<Map<String, Object>> getOrderHistory(@Valid LotteryReqVO.OrderHistoryPage reqVO) {
+        return success(lotteryService.getOrderHistory(reqVO));
     }
 
     @GetMapping("/draws")
@@ -288,6 +307,13 @@ public class LotteryController {
     @PreAuthorize("@ss.hasPermission('lottery:order:manage')")
     public CommonResult<Map<String, Object>> cancelOrder(@PathVariable String id) {
         return success(lotteryService.cancelOrder(id));
+    }
+
+    @PostMapping("/orders/{id}/market-review")
+    @PreAuthorize("@ss.hasPermission('lottery:order:manage')")
+    public CommonResult<Map<String, Object>> reviewMarketOrder(@PathVariable String id,
+                                                               @Valid @RequestBody LotteryReqVO.MarketReview reqVO) {
+        return success(lotteryService.reviewMarketOrder(id, reqVO));
     }
 
     @PostMapping("/draws/{period}/settle")

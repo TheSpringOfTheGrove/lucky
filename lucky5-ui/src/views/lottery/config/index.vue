@@ -37,7 +37,7 @@ const passwordPlaceholder = computed(() => (store.config.hasPassword ? '已设�
 let balanceRefreshTimer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   void store.refreshMarketConnection()
-  balanceRefreshTimer = setInterval(() => void store.refreshMarketConnection(), 1_000)
+  balanceRefreshTimer = setInterval(() => void store.refreshMarketConnection(), 30_000)
 })
 onBeforeUnmount(() => {
   if (balanceRefreshTimer) clearInterval(balanceRefreshTimer)

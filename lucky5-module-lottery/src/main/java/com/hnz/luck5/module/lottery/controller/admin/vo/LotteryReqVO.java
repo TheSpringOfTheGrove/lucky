@@ -43,6 +43,41 @@ public final class LotteryReqVO {
     }
 
     @Data
+    public static class OrderPage extends PageParam {
+        @Size(max = 100)
+        private String nickname;
+        @Size(max = 100)
+        private String period;
+        @Pattern(regexp = "PLAYER|AUTO_PROXY")
+        private String orderType;
+    }
+
+    @Data
+    public static class OrderItemPage extends PageParam {
+    }
+
+    @Data
+    public static class MarketReview {
+        @NotBlank
+        @Pattern(regexp = "ACCEPTED|NOT_ACCEPTED")
+        private String decision;
+        @Size(max = 100)
+        private String externalOrderId;
+        @NotBlank
+        @Size(max = 500)
+        private String reason;
+    }
+
+    @Data
+    public static class OrderHistoryPage extends PageParam {
+        @Size(max = 100)
+        private String period;
+        @Min(0)
+        @Max(3)
+        private Integer timeType = 1;
+    }
+
+    @Data
     public static class Config {
         private String url;
         private String account;

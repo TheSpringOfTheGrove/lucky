@@ -30,6 +30,7 @@ public class OrderDO extends LotteryUserBaseDO {
     private String marketOrderId;
     private String marketError;
     private Integer marketAttempts;
+    private Integer itemCount;
     private Integer periodSequence;
     private Integer version;
     private LocalDateTime settledAt;

@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LotteryMarketSyncService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryMarketSyncService.class);
+    private static final Duration OWNER_CONNECTION_REFRESH_INTERVAL = Duration.ofSeconds(30);
     private final AtomicBoolean syncingAll = new AtomicBoolean();
     private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
@@ -55,6 +56,7 @@ public class LotteryMarketSyncService {
     @Resource private ObjectMapper objectMapper;
     @Resource private MarketCredentialService credentialService;
     @Resource private Wa55MarketClient marketClient;
+    @Resource private LotteryMarketAccountLockService accountLockService;
     @Resource private LotteryDrawVerificationService drawVerificationService;
     @Resource private TransactionTemplate transactionTemplate;
     @Lazy @Resource private LotteryService lotteryService;
@@ -100,7 +102,7 @@ public class LotteryMarketSyncService {
     }
 
     @Scheduled(initialDelayString = "${lottery.market.connection-initial-delay-ms:15000}",
-            fixedDelayString = "${lottery.market.connection-sync-interval-ms:30000}")
+            fixedDelayString = "${lottery.market.connection-sync-tick-ms:5000}")
     public void syncAllOwnerConnections() {
         if (!syncingConnections.compareAndSet(false, true)) return;
         try {
@@ -109,7 +111,13 @@ public class LotteryMarketSyncService {
                             .isNotNull(LotteryConfigDO::getUserId))));
             for (LotteryConfigDO config : configs) {
                 try {
-                    TenantUtils.execute(config.getTenantId(), () -> syncOwnerConnection(config));
+                    TenantUtils.execute(config.getTenantId(), () ->
+                            accountLockService.tryExecute(config.getTenantId(), config.getUserId(),
+                                    () -> {
+                                        if (ownerConnectionRefreshDue(config.getUserId(), LocalDateTime.now())) {
+                                            syncOwnerConnection(config);
+                                        }
+                                    }));
                 } catch (RuntimeException ex) {
                     LOGGER.warn("盘口账户同步失败 tenant={} user={}: {}", config.getTenantId(), config.getUserId(),
                             rootMessage(ex));
@@ -118,6 +126,16 @@ public class LotteryMarketSyncService {
         } finally {
             syncingConnections.set(false);
         }
+    }
+
+    private boolean ownerConnectionRefreshDue(Long userId, LocalDateTime now) {
+        MarketConnectionDO connection = findConnection(userId);
+        LocalDateTime lastSyncAt = connection == null ? null : connection.getLastSyncAt();
+        return ownerConnectionRefreshDue(lastSyncAt, now);
+    }
+
+    static boolean ownerConnectionRefreshDue(LocalDateTime lastSyncAt, LocalDateTime now) {
+        return lastSyncAt == null || !lastSyncAt.plus(OWNER_CONNECTION_REFRESH_INTERVAL).isAfter(now);
     }
 
     @Scheduled(initialDelayString = "${lottery.market.settlement-initial-delay-ms:20000}",
@@ -152,7 +170,10 @@ public class LotteryMarketSyncService {
         String password = usablePassword(input.getPassword()) ? input.getPassword().trim()
                 : current == null ? "" : credentialService.decrypt(current.getMarketPasswordEncrypted());
         requireComplete(url, account, password);
-        Wa55MarketClient.Snapshot snapshot = marketClient.read(new Wa55MarketClient.Credentials(url, account, password), false);
+        Wa55MarketClient.Snapshot snapshot = current == null
+                ? marketClient.read(new Wa55MarketClient.Credentials(url, account, password), false)
+                : accountLockService.execute(current.getTenantId(), current.getUserId(),
+                        () -> marketClient.read(new Wa55MarketClient.Credentials(url, account, password), false));
         return map("configured", true, "connected", true, "status", "已连接", "lineUrl", snapshot.lineUrl(),
                 "account", map("displayAccount", snapshot.account().displayAccount(), "balance", snapshot.account().balance()),
                 "issue", issueMap(snapshot.issue()));
@@ -174,7 +195,7 @@ public class LotteryMarketSyncService {
                 syncGlobalDraws(configs);
             } else {
                 try {
-                    syncOwnerConnection(config);
+                    accountLockService.execute(tenantId, userId, () -> syncOwnerConnection(config));
                 } catch (RuntimeException ex) {
                     LOGGER.warn("盘口账户立即验证失败 tenant={} user={}: {}", tenantId, userId, rootMessage(ex));
                 }
@@ -197,7 +218,7 @@ public class LotteryMarketSyncService {
                 return connectionMap(findConnection(userId));
             }
             try {
-                syncOwnerConnection(config);
+                accountLockService.execute(tenantId, userId, () -> syncOwnerConnection(config));
             } catch (RuntimeException ex) {
                 LOGGER.warn("盘口账户保存后验证失败 tenant={} user={}: {}", tenantId, userId, rootMessage(ex));
             }
@@ -221,9 +242,11 @@ public class LotteryMarketSyncService {
             LotteryConfigDO config = DataPermissionUtils.executeIgnore(() -> lotteryConfigMapper.selectOne(
                     new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
             if (!configured(config)) return;
-            Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
-            updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
-                    snapshot.account().balance(), "", true);
+            accountLockService.tryExecute(tenantId, userId, () -> {
+                Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
+                updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
+                        snapshot.account().balance(), "", true);
+            });
         });
     }
 
@@ -400,6 +423,7 @@ public class LotteryMarketSyncService {
                 && List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus())
                 && Objects.equals(issue.getResult(), draw.result())
                 && (issue.getDrawTime() != null || draw.drawTime() == null)) {
+            publishVerifiedDrawIfReady(userId, issue);
             return;
         }
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
@@ -441,6 +465,16 @@ public class LotteryMarketSyncService {
                     "{\"apiResult\":\"" + jsonValue(draw.result()) + "\",\"confirmations\":"
                             + decision.confirmations() + "}");
         }
+        publishVerifiedDrawIfReady(userId, issue);
+    }
+
+    private void publishVerifiedDrawIfReady(Long userId, IssueDO issue) {
+        if (issue == null || (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) < 2
+                || !List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus())
+                || !drawVerificationService.isTrusted(issue.getResult())) {
+            return;
+        }
+        lotteryService.publishVerifiedDrawForUser(userId, issue.getPeriod(), issue.getResult());
     }
 
     private void settlePending(Long userId) {
@@ -451,6 +485,7 @@ public class LotteryMarketSyncService {
                         .ge(IssueDO::getDrawConfirmations, 2)
                         .orderByAsc(IssueDO::getPeriod).last("LIMIT 10")));
         for (IssueDO issue : candidates) {
+            publishVerifiedDrawIfReady(userId, issue);
             int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
                     .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
                     .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 2)

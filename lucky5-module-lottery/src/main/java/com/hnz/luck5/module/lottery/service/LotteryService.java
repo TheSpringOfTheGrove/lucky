@@ -40,13 +40,19 @@ public interface LotteryService {
 
     List<Map<String, Object>> getMemberSnapshots();
 
+    List<Map<String, Object>> getRebateMembers();
+
     void transferMember(String id, LotteryReqVO.Transfer reqVO);
 
     String createAmountRequest(String id, LotteryReqVO.Transfer reqVO);
 
     List<Map<String, Object>> getAmountRecords();
 
-    List<Map<String, Object>> getOrders();
+    PageResult<Map<String, Object>> getOrders(LotteryReqVO.OrderPage reqVO);
+
+    Map<String, Object> getOrderItems(String id, LotteryReqVO.OrderItemPage reqVO);
+
+    Map<String, Object> getOrderHistory(LotteryReqVO.OrderHistoryPage reqVO);
 
     List<Map<String, Object>> getDrawHistory(String period);
 
@@ -88,9 +94,13 @@ public interface LotteryService {
 
     Map<String, Object> cancelOrder(String id);
 
+    Map<String, Object> reviewMarketOrder(String id, LotteryReqVO.MarketReview reqVO);
+
     Map<String, Object> settlePeriod(String period, LotteryReqVO.Settle reqVO);
 
     Map<String, Object> settlePeriodForUser(Long userId, String period, String result, String actor);
+
+    void publishVerifiedDrawForUser(Long userId, String period, String result);
 
     void handleMarketIssueOpened(Long userId, String period);
 
@@ -121,6 +131,8 @@ public interface LotteryService {
     void markMessage(Long id, String status);
 
     Map<String, Object> getRoomSession(LotteryRoomReqVO.Credential reqVO);
+
+    Map<String, Object> getRoomDrawState(LotteryRoomReqVO.Credential reqVO);
 
     Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO);
 

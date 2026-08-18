@@ -22,6 +22,27 @@ export interface LotteryMessagePageParams {
   nickname?: string
 }
 
+export interface LotteryOrderPageParams {
+  pageNo: number
+  pageSize: number
+  nickname?: string
+  period?: string
+  orderType?: string
+}
+
+export interface LotteryOrderHistoryParams {
+  pageNo: number
+  pageSize: number
+  period?: string
+  timeType: number
+}
+
+export interface LotteryOrderHistoryResult {
+  list: Record<string, any>[]
+  total: number
+  summary: Record<string, number>
+}
+
 export const getLucky5Bootstrap = () =>
   request.get<Record<string, any>>({ url: `${base}/bootstrap` })
 
@@ -42,7 +63,7 @@ export const testConfigApi = (data: Record<string, any>) =>
 export const syncMarketApi = () => request.post<Record<string, any>>({ url: `${base}/config/sync` })
 
 export const getMarketConnectionSnapshotApi = () =>
-  request.get<Record<string, any>>({ url: `${base}/config/snapshot` })
+  request.get<Record<string, any>>({ url: `${base}/config/snapshot`, silentError: true })
 
 export const saveLinksApi = (data: Record<string, any>) =>
   request.put({ url: `${base}/links`, data })
@@ -75,7 +96,18 @@ export const createAmountRequestApi = (
 export const getAmountRecordsApi = () =>
   request.get<Record<string, any>[]>({ url: `${base}/amount-records` })
 
-export const getOrdersApi = () => request.get<Record<string, any>[]>({ url: `${base}/orders` })
+export const getOrdersApi = (
+  params: LotteryOrderPageParams = { pageNo: 1, pageSize: 20 }
+) => request.get<PageResult<Record<string, any>[]>>({ url: `${base}/orders`, params })
+
+export const getOrderItemsApi = (id: string, pageNo: number, pageSize: number) =>
+  request.get<{ order: Record<string, any>; list: Record<string, any>[]; total: number }>({
+    url: `${base}/orders/${id}/items`,
+    params: { pageNo, pageSize }
+  })
+
+export const getOrderHistoryApi = (params: LotteryOrderHistoryParams) =>
+  request.get<LotteryOrderHistoryResult>({ url: `${base}/order-history`, params })
 
 export const getDrawHistoryApi = (period?: string) =>
   request.get<Record<string, any>[]>({
@@ -114,6 +146,9 @@ export const deleteMemberApi = (id: string) => request.delete({ url: `${base}/me
 export const saveDiscountsApi = (members: Record<string, any>[]) =>
   request.put({ url: `${base}/member-discounts`, data: { members } })
 
+export const getRebateMembersApi = () =>
+  request.get<Record<string, any>[]>({ url: `${base}/rebates/members`, timeout: 120_000 })
+
 export const auditAmountApi = (id: string, status: '已通过' | '已拒绝', remark = '') =>
   request.post({ url: `${base}/amount-records/${id}/audit`, data: { status, remark } })
 
@@ -125,6 +160,11 @@ export const processIncomingMessageApi = (data: Record<string, any>) =>
 
 export const cancelOrderApi = (id: string) => request.post({ url: `${base}/orders/${id}/cancel` })
 
+export const reviewMarketOrderApi = (
+  id: string,
+  data: { decision: 'ACCEPTED' | 'NOT_ACCEPTED'; externalOrderId?: string; reason: string }
+) => request.post({ url: `${base}/orders/${id}/market-review`, data })
+
 export const settlePeriodApi = (period: string, result: string, reason: string) =>
   request.post({ url: `${base}/draws/${period}/settle`, data: { result, reason } })
 
@@ -133,7 +173,7 @@ export const setIssueStatusApi = (period: string, status: 'open' | 'close') =>
 
 export const settlePendingIssuesApi = () => request.post({ url: `${base}/issues/settle-pending` })
 
-export const applyRebatesApi = () => request.post({ url: `${base}/rebates/apply` })
+export const applyRebatesApi = () => request.post({ url: `${base}/rebates/apply`, timeout: 120_000 })
 
 export const clearChimaRecordsApi = (password: string) =>
   request.post({ url: `${base}/chima-records/clear`, data: { password } })

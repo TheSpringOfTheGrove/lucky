@@ -53,6 +53,7 @@ class LotteryIssueFreshnessPolicyTest {
         assertThat(policy.isBettingClosed(issue, observedAt.plusSeconds(6))).isTrue();
         assertThat(policy.authoritativeSourceTime(issue, observedAt.plusSeconds(3)))
                 .isEqualTo(sourceTime.plusSeconds(3));
+        assertThat(policy.authoritativeBettingCutoffTime(issue)).isEqualTo(sourceTime.plusSeconds(6));
     }
 
     @Test

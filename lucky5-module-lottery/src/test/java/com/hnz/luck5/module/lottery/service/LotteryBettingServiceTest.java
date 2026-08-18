@@ -40,6 +40,20 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesFullFourPositionCartesianCommand() {
+        List<LotteryBettingService.ParsedBet> bets = service.parse(
+                "千0123456789百0123456789十0123456789尾0123456789各0.1", odds);
+
+        assertThat(bets).hasSize(10_000)
+                .allSatisfy(bet -> {
+                    assertThat(bet.play()).isEqualTo("四定位");
+                    assertThat(bet.amount()).isEqualByComparingTo("0.1");
+                });
+        assertThat(bets.stream().map(LotteryBettingService.ParsedBet::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("1000");
+    }
+
+    @Test
     void parsesNumericFixedShorthandFromOnesPosition() {
         assertThat(service.parse("1各1", odds)).containsExactlyElementsOf(service.parse("个1各1", odds));
         assertThat(service.parse("12各1", odds)).containsExactlyElementsOf(service.parse("十1个2各1", odds));

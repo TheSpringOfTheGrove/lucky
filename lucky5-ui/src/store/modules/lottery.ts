@@ -23,6 +23,7 @@ import {
   getDrawHistoryApi,
   getOrdersApi,
   getMemberSnapshotsApi,
+  getRebateMembersApi,
   getMemberDetailsApi,
   getMemberLinksApi,
   rotateMemberLinkApi,
@@ -96,6 +97,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     loadedUserId: 0,
     loading: false,
     membersRefreshing: false,
+    rebateMembersRefreshing: false,
     marketConnectionRefreshing: false,
     saving: false,
     operator: { username: '', expireAt: '' },
@@ -325,6 +327,22 @@ const useLucky5StoreBase = defineStore('lucky5', {
         this.membersRefreshing = false
       }
     },
+    async refreshRebateMembers() {
+      if (this.rebateMembersRefreshing) return false
+      this.rebateMembersRefreshing = true
+      try {
+        this.members = await getRebateMembersApi()
+        return true
+      } catch (error: any) {
+        console.warn('[Lucky5] 盘口连接后台检测失败', {
+          message: error?.message || String(error),
+          checkedAt: new Date().toISOString()
+        })
+        return false
+      } finally {
+        this.rebateMembersRefreshing = false
+      }
+    },
     async refreshChimaRecords() {
       if (this.chimaRecordsRefreshing) return false
       this.chimaRecordsRefreshing = true
@@ -371,7 +389,8 @@ const useLucky5StoreBase = defineStore('lucky5', {
     },
     async refreshOrders() {
       try {
-        this.orders = await getOrdersApi()
+        const page = await getOrdersApi()
+        this.orders = page.list || []
         return true
       } catch {
         return false

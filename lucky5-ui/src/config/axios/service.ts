@@ -35,6 +35,9 @@ let isRefreshToken = false
 // 请求白名单，无须 token 的接口
 const whiteList: string[] = ['/login', '/refresh-token']
 
+const isSilentErrorRequest = (config?: InternalAxiosRequestConfig | Record<string, any>) =>
+  Boolean((config as Record<string, any> | undefined)?.silentError)
+
 // 创建axios实例
 const service: AxiosInstance = axios.create({
   baseURL: base_url, // api 的 base_url
@@ -150,6 +153,9 @@ service.interceptors.response.use(
       // 如果是忽略的错误码，直接返回 msg 异常
       return Promise.reject(msg)
     } else if (code === 401) {
+      if (msg === '账号已在其他地方登录，请重新登录') {
+        return handleAuthorized(msg)
+      }
       // 如果未认证，并且未进行刷新令牌，说明可能是访问令牌过期了
       if (!isRefreshToken) {
         isRefreshToken = true
@@ -193,7 +199,9 @@ service.interceptors.response.use(
         })
       }
     } else if (code === 500) {
-      ElMessage.error(t('sys.api.errMsg500'))
+      if (!isSilentErrorRequest(config)) {
+        ElMessage.error(t('sys.api.errMsg500'))
+      }
       return Promise.reject(new Error(msg))
     } else if (code === 901) {
       ElMessage.error({
@@ -214,7 +222,7 @@ service.interceptors.response.use(
         // hard coding：忽略这个提示，直接登出
         console.log(msg)
         return handleAuthorized()
-      } else {
+      } else if (!isSilentErrorRequest(config)) {
         ElNotification.error({ title: msg })
       }
       return Promise.reject('error')
@@ -233,7 +241,9 @@ service.interceptors.response.use(
     } else if (message.includes('Request failed with status code')) {
       message = t('sys.api.apiRequestFailed') + message.substr(message.length - 3)
     }
-    ElMessage.error(message)
+    if (!isSilentErrorRequest(error.config as InternalAxiosRequestConfig | undefined)) {
+      ElMessage.error(message)
+    }
     return Promise.reject(error)
   }
 )
@@ -242,7 +252,7 @@ const refreshToken = async () => {
   axios.defaults.headers.common['tenant-id'] = getTenantId()
   return await axios.post(base_url + '/system/auth/refresh-token?refreshToken=' + getRefreshToken())
 }
-const handleAuthorized = () => {
+const handleAuthorized = (message?: string) => {
   const { t } = useI18n()
   if (!isRelogin.show) {
     // 如果已经到登录页面则不进行弹窗提示
@@ -250,7 +260,7 @@ const handleAuthorized = () => {
       return
     }
     isRelogin.show = true
-    ElMessageBox.confirm(t('sys.api.timeoutMessage'), t('common.confirmTitle'), {
+    ElMessageBox.confirm(message || t('sys.api.timeoutMessage'), t('common.confirmTitle'), {
       showCancelButton: false,
       closeOnClickModal: false,
       showClose: false,

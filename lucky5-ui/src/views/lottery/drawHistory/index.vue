@@ -143,32 +143,6 @@ const changeIssue = async (status: 'open' | 'close') => {
       />
     </el-card>
 
-    <el-card v-if="store.drawAlerts.length" shadow="never" class="mb-16px">
-      <template #header><strong>开奖确认与异常</strong></template>
-      <div v-if="isMobile" class="draw-alert-list">
-        <article v-for="row in store.drawAlerts" :key="row.period" class="draw-alert-item">
-          <div class="lucky-mobile-card__title">
-            <span>{{ row.period }}</span>
-            <el-tag type="danger" size="small">{{ row.status }}</el-tag>
-          </div>
-          <div class="lucky-mobile-card__meta">
-            <span>API号码：{{ row.result || '-' }}</span>
-            <span>确认 {{ row.drawConfirmations || 0 }} 次</span>
-          </div>
-          <div v-if="row.error" class="lucky-mobile-card__content lucky-danger">{{
-            row.error
-          }}</div>
-        </article>
-      </div>
-      <el-table v-else :data="store.drawAlerts" border>
-        <el-table-column prop="period" label="期号" min-width="150" />
-        <el-table-column prop="status" label="状态" min-width="140" />
-        <el-table-column prop="result" label="API号码" min-width="120" />
-        <el-table-column prop="drawConfirmations" label="确认次数" min-width="100" />
-        <el-table-column prop="error" label="说明" min-width="260" />
-      </el-table>
-    </el-card>
-
     <el-card shadow="never">
       <div class="draw-history-filters">
         <el-input
@@ -238,17 +212,6 @@ const changeIssue = async (status: 'open' | 'close') => {
   gap: 10px;
   align-items: center;
   margin: 16px 0;
-}
-
-.draw-alert-list {
-  display: grid;
-  gap: 10px;
-}
-
-.draw-alert-item {
-  padding: 12px;
-  border: 1px solid var(--el-border-color);
-  border-radius: 6px;
 }
 
 .draw-history-filters {
