@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,6 +44,8 @@ class LotteryOrderCancelTest {
                 MessageDO.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "lottery-order-cancel-route-test"),
                 MarketRouteItemDO.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "lottery-order-cancel-issue-test"),
+                IssueDO.class);
     }
 
     private LotteryServiceImpl service;
@@ -62,6 +65,7 @@ class LotteryOrderCancelTest {
         ReflectionTestUtils.setField(service, "memberMapper", memberMapper);
         ReflectionTestUtils.setField(service, "messageMapper", messageMapper);
         ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueFreshnessPolicy", new LotteryIssueFreshnessPolicy());
         ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
         ReflectionTestUtils.setField(service, "operationLogMapper", mock(OperationLogMapper.class));
         ReflectionTestUtils.setField(service, "balanceLedgerService", mock(LotteryBalanceLedgerService.class));
@@ -82,6 +86,7 @@ class LotteryOrderCancelTest {
         when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
         when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
         when(messageMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
 
         Map<String, Object> result = service.cancelOrder("O-1");
 
@@ -107,6 +112,7 @@ class LotteryOrderCancelTest {
         when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
         when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
         when(messageMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
 
         Map<String, Object> result = service.cancelOrder("O-1");
 
@@ -142,6 +148,7 @@ class LotteryOrderCancelTest {
         when(memberMapper.selectById("M-1")).thenReturn(member);
         when(marketClient.isRealWritesEnabled()).thenReturn(true);
         when(routeMapper.selectList(any())).thenReturn(java.util.List.of(route));
+        when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
 
         assertThatThrownBy(() -> service.cancelOrder("O-1"))
                 .hasMessageContaining("订单正在核对");
@@ -176,6 +183,30 @@ class LotteryOrderCancelTest {
         assertThat(member.getTotalBet()).isEqualByComparingTo("100");
     }
 
+    @Test
+    void cancellationFailsAfterOfficialCutoffEvenWhenOrderIsNotSettled() {
+        OrderDO order = pendingOrder("PLAYER", "网页群");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("玩家A");
+        member.setUserId(142L);
+        member.setBalance(new BigDecimal("50"));
+        member.setTotalBet(new BigDecimal("100"));
+        IssueDO issue = openIssue(order.getPeriod());
+        issue.setSourceObservedAt(LocalDateTime.now().minusSeconds(2));
+        issue.setRemainingSeconds(1);
+        when(orderMapper.selectById("O-1")).thenReturn(order);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+
+        assertThatThrownBy(() -> service.cancelOrder("O-1"))
+                .hasMessageContaining("未开奖订单");
+
+        verifyNoInteractions(messageMapper);
+        assertThat(member.getBalance()).isEqualByComparingTo("50");
+        assertThat(member.getTotalBet()).isEqualByComparingTo("100");
+    }
+
     private OrderDO pendingOrder(String orderType, String source) {
         OrderDO order = new OrderDO();
         order.setId("O-1");
@@ -185,9 +216,21 @@ class LotteryOrderCancelTest {
         order.setStatus("\u672a\u5f00\u5956");
         order.setOrderType(orderType);
         order.setSource(source);
+        order.setPeriod("20260818240");
         order.setDeliveryMode("LOCAL_ONLY");
         order.setAmount(new BigDecimal("100"));
         order.setVersion(0);
         return order;
+    }
+
+    private IssueDO openIssue(String period) {
+        IssueDO issue = new IssueDO();
+        issue.setUserId(142L);
+        issue.setPeriod(period);
+        issue.setStatus("OPEN");
+        issue.setServerTime(LocalDateTime.now());
+        issue.setSourceObservedAt(LocalDateTime.now());
+        issue.setRemainingSeconds(60);
+        return issue;
     }
 }

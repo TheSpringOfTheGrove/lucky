@@ -41,9 +41,10 @@ class LotteryRebateCalculatorTest {
     void routesDragonBetsToNormalRateWhenSeparateSwitchIsOff() {
         MemberDO member = member(null);
         OrderDO order = order("O-1", LocalDateTime.now());
+        order.setAmount(new BigDecimal("50"));
 
         LotteryRebateCalculator.RebateResult result = calculator.calculate(member, List.of(order),
-                Map.of("O-1", List.of(item("龙虎", "50"))), List.of(), false);
+                Map.of(), List.of(), false);
 
         assertThat(result.normalBet()).isEqualByComparingTo("50.00");
         assertThat(result.dragonBet()).isEqualByComparingTo("0.00");
@@ -94,10 +95,12 @@ class LotteryRebateCalculatorTest {
         MemberDO member = member(clearedAt);
         OrderDO oldOrder = order("OLD", clearedAt.minusMinutes(1));
         OrderDO newOrder = order("NEW", clearedAt.plusMinutes(1));
+        oldOrder.setAmount(new BigDecimal("100"));
+        newOrder.setAmount(new BigDecimal("30"));
         RebateRecordDO oldPaid = rebate("100", "0", clearedAt.minusSeconds(1));
 
         LotteryRebateCalculator.RebateResult result = calculator.calculate(member, List.of(oldOrder, newOrder),
-                Map.of("OLD", List.of(item("普通", "100")), "NEW", List.of(item("普通", "30"))),
+                Map.of(),
                 List.of(oldPaid), false);
 
         assertThat(result.normalBet()).isEqualByComparingTo("30.00");

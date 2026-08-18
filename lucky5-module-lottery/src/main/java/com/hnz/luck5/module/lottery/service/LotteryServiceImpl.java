@@ -4,10 +4,13 @@ import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.hnz.luck5.framework.common.exception.ServiceException;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.common.pojo.PageResult;
+import com.hnz.luck5.framework.mybatis.core.util.MyBatisUtils;
 import com.hnz.luck5.framework.security.core.service.SecurityFrameworkService;
 import com.hnz.luck5.framework.security.core.util.SecurityFrameworkUtils;
 import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
@@ -19,9 +22,13 @@ import com.hnz.luck5.module.lottery.dal.mysql.*;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
@@ -29,8 +36,11 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -50,7 +60,9 @@ import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.*;
 @Validated
 public class LotteryServiceImpl implements LotteryService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(LotteryServiceImpl.class);
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final int LARGE_BET_LOG_ITEM_THRESHOLD = 1_000;
     private static final Long DEFAULT_OWNER_USER_ID = 1L;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Set<String> INTEGRATION_KEYS = Set.of("blueWhale", "fish", "wechat");
@@ -81,6 +93,9 @@ public class LotteryServiceImpl implements LotteryService {
         String channel() {
             return ROOM_MODE_PRIVATE.equals(mode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
         }
+    }
+
+    private record HistoryRange(LocalDateTime start, LocalDateTime end) {
     }
 
     @Resource private LotteryConfigMapper lotteryConfigMapper;
@@ -119,7 +134,9 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private MarketCredentialService marketCredentialService;
     @Resource private LotteryMarketSyncService marketSyncService;
     @Resource private LotteryMarketRoutingService marketRoutingService;
+    @Resource private LotteryBatchInsertService batchInsertService;
     @Resource private LotteryMarketBalanceService marketBalanceService;
+    @Resource private LotteryMarketOrderStateService marketOrderStateService;
     @Resource private Wa55MarketOrderClient marketOrderClient;
     @Resource private SecurityFrameworkService securityFrameworkService;
     @Resource private AdminUserService adminUserService;
@@ -159,13 +176,6 @@ public class LotteryServiceImpl implements LotteryService {
         List<AmountRecordDO> amountRecords = amountRecordMapper.selectList(new LambdaQueryWrapper<AmountRecordDO>()
                 .ne(AmountRecordDO::getRecordSource, TYPE_AUTO_PROXY)
                 .orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 500"));
-        List<OrderDO> orders = orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
-                .orderByDesc(OrderDO::getCreateTime).last("LIMIT 1000"));
-        Set<String> orderIds = orders.stream().map(OrderDO::getId).collect(Collectors.toSet());
-        List<BetItemDO> items = orderIds.isEmpty() ? List.of() : betItemMapper.selectList(
-                new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds));
-        Map<String, List<BetItemDO>> itemsByOrder = items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
-        Map<String, String> drawResultsByPeriod = drawResultsForOrders(loginUserId, orders);
         List<DrawDO> draws = drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                 .orderByDesc(DrawDO::getPeriod).last("LIMIT 500"));
         Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(loginUserId, draws);
@@ -176,8 +186,6 @@ public class LotteryServiceImpl implements LotteryService {
                 .orderByDesc(FollowOrderDO::getCreateTime));
         List<OperationLogDO> operators = operationLogMapper.selectList(new LambdaQueryWrapper<OperationLogDO>()
                 .orderByDesc(OperationLogDO::getCreateTime).last("LIMIT 1000"));
-        List<RebateRecordDO> rebates = rebateRecordMapper.selectList(null);
-
         Map<String, Object> result = new LinkedHashMap<>();
         List<MemberDO> realMembers = members.stream().filter(item -> !isAutoProxy(item)).toList();
         LocalDateTime onlineCutoff = LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT);
@@ -214,14 +222,11 @@ public class LotteryServiceImpl implements LotteryService {
                 "bound", links != null) : Map.of());
         result.put("odds", has("lottery:odds:manage") ? odds.stream().map(this::oddMap).toList() : List.of());
 
-        boolean separateDragonRebate = loginUserId != null && enabled("dragonTigerSeparateRebate", loginUserId);
         result.put("members", hasAny("lottery:member:manage", "lottery:rebate:manage")
-                ? members.stream().map(item -> memberMap(item, rebateCalculator.calculate(item, orders, itemsByOrder,
-                        rebates, separateDragonRebate))).toList() : List.of());
+                ? members.stream().map(item -> memberMap(item, rebateCalculator.empty())).toList() : List.of());
         result.put("amountRecords", has("lottery:amount:manage") ? amountRecords.stream().map(this::amountRecordMap).toList() : List.of());
-        result.put("orders", hasAny("lottery:order:manage", "lottery:history:query")
-                ? orders.stream().map(item -> orderMap(item, itemsByOrder.getOrDefault(item.getId(), List.of()),
-                        drawResultsByPeriod.get(item.getPeriod()))).toList() : List.of());
+        // 订单查询和历史记录使用独立接口，bootstrap 不携带可能达到数十万条的下注明细。
+        result.put("orders", List.of());
         result.put("drawHistory", has("lottery:draw:manage") ? draws.stream()
                 .map(item -> drawMap(item, drawTimesByPeriod.get(item.getPeriod()))).toList() : List.of());
         result.put("fakeOrders", has("lottery:preset:manage") ? presets.stream().map(item -> presetMap(item, odds)).toList() : List.of());
@@ -230,8 +235,8 @@ public class LotteryServiceImpl implements LotteryService {
         result.put("operators", has("lottery:operator:query") ? operators.stream().map(this::operationMap).toList() : List.of());
         result.put("messages", List.of());
         result.put("chimaConfig", has("lottery:chima-config:manage") ? chimaConfigMap(chimaConfig) : Map.of());
-        result.put("chimaRecords", has("lottery:chima-record:manage")
-                ? calculatePeriodChima(orders, members, state, config != null && bool(config.getBossMode())) : List.of());
+        // 吃码盈亏使用独立接口按页面需要加载。
+        result.put("chimaRecords", List.of());
         return result;
     }
 
@@ -295,6 +300,27 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
+    public List<Map<String, Object>> getRebateMembers() {
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        List<MemberDO> members = memberMapper.selectList(new LambdaQueryWrapper<MemberDO>()
+                .orderByAsc(MemberDO::getId));
+        List<OrderDO> orders = orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
+                .and(wrapper -> wrapper.isNull(OrderDO::getOrderType)
+                        .or().ne(OrderDO::getOrderType, TYPE_AUTO_PROXY))
+                .in(OrderDO::getStatus, "已中奖", "未中奖")
+                .orderByDesc(OrderDO::getCreateTime).last("LIMIT 1000"));
+        List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
+        boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
+        List<BetItemDO> items = !separateDragonRebate || orderIds.isEmpty() ? List.of() : betItemMapper.selectList(
+                new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds));
+        Map<String, List<BetItemDO>> itemsByOrder = items.stream()
+                .collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        List<RebateRecordDO> rebates = rebateRecordMapper.selectList(null);
+        return members.stream().map(item -> memberMap(item, rebateCalculator.calculate(item, orders, itemsByOrder,
+                rebates, separateDragonRebate))).toList();
+    }
+
+    @Override
     public Map<String, Object> initializeOwner(Long userId) {
         AdminUserDO user = adminUserService.getUser(userId);
         if (user == null) {
@@ -324,19 +350,29 @@ public class LotteryServiceImpl implements LotteryService {
                 "createdAt", date(item.getCreateTime()));
     }
 
-    private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets) {
-        return orderMap(item, bets, null);
+    private Map<String, Object> orderSummaryMap(OrderDO item, String drawResult, int itemCount) {
+        return orderSummaryMap(item, drawResult, itemCount, null);
     }
 
-    private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets, String drawResult) {
+    private Map<String, Object> orderSummaryMap(OrderDO item, String drawResult, int itemCount, IssueDO issue) {
         return map("id", item.getId(), "member", item.getMemberName(), "period", item.getPeriod(), "content", item.getContent(),
                 "amount", money(item.getAmount()), "win", money(item.getWin()), "status", item.getStatus(), "source", item.getSource(),
                 "orderType", value(item.getOrderType(), TYPE_PLAYER), "autoProxy", isAutoProxyOrder(item),
                 "deliveryMode", item.getDeliveryMode(), "marketStatus", item.getMarketStatus(), "marketOrderId", item.getMarketOrderId(),
                 "marketError", item.getMarketError(), "marketAttempts", value(item.getMarketAttempts(), 0),
                 "createdAt", date(item.getCreateTime()), "settledAt", date(item.getSettledAt()),
-                "drawResult", value(drawResult, ""), "itemCount", bets.size(),
-                "items", bets.stream().map(this::betItemMap).toList());
+                "drawResult", value(drawResult, ""), "itemCount", itemCount,
+                "cancelable", isOrderCancelable(item, issue));
+    }
+
+    private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets) {
+        return orderMap(item, bets, null);
+    }
+
+    private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets, String drawResult) {
+        Map<String, Object> result = orderSummaryMap(item, drawResult, bets.size());
+        result.put("items", bets.stream().map(this::betItemMap).toList());
+        return result;
     }
 
     private Map<String, Object> orderMapWithMarketStatistics(OrderDO order, List<BetItemDO> bets, String drawResult,
@@ -372,21 +408,39 @@ public class LotteryServiceImpl implements LotteryService {
                 || StrUtil.isNotBlank(route.getMarketBetId());
     }
 
-    private Map<String, Object> roomOrderMap(OrderDO item, List<BetItemDO> bets) {
-        Map<String, Object> result = orderMap(item, bets);
-        boolean processing = Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "MANUAL_REVIEW",
+    private Map<String, Object> roomOrderMap(OrderDO item, int itemCount, IssueDO issue) {
+        Map<String, Object> result = orderSummaryMap(item, null, itemCount, issue);
+        result.put("items", List.of());
+        boolean processing = Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING", "MANUAL_REVIEW",
                 "PARTIAL_CONFIRMED", "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
                 .contains(item.getMarketStatus());
         result.put("processing", processing);
-        result.put("cancelable", "未开奖".equals(item.getStatus()) && !Set.of("PENDING", "SUBMITTING", "RETRY",
-                "UNKNOWN", "MANUAL_REVIEW", "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
-                .contains(item.getMarketStatus()) && StrUtil.isBlank(item.getMarketError()));
         result.remove("deliveryMode");
         result.remove("marketStatus");
         result.remove("marketOrderId");
         result.remove("marketError");
         result.remove("marketAttempts");
         return result;
+    }
+
+    private boolean isOrderCancelable(OrderDO order, IssueDO issue) {
+        return order != null && "未开奖".equals(order.getStatus())
+                && issue != null && "OPEN".equals(issue.getStatus())
+                && !issueFreshnessPolicy.isStale(issue) && !issueFreshnessPolicy.isBettingClosed(issue)
+                && !Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING", "MANUAL_REVIEW",
+                        "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
+                .contains(value(order.getMarketStatus(), ""))
+                && StrUtil.isBlank(order.getMarketError());
+    }
+
+    private Map<String, IssueDO> issuesForOrders(Long userId, List<OrderDO> orders) {
+        Set<String> periods = orders.stream().map(OrderDO::getPeriod).filter(StrUtil::isNotBlank)
+                .collect(Collectors.toSet());
+        if (userId == null || periods.isEmpty()) return Map.of();
+        return DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(new LambdaQueryWrapper<IssueDO>()
+                        .eq(IssueDO::getUserId, userId).in(IssueDO::getPeriod, periods)))
+                .stream().collect(Collectors.toMap(IssueDO::getPeriod, Function.identity(),
+                        (first, ignored) -> first));
     }
 
     private Map<String, String> drawResultsForOrders(Long userId, List<OrderDO> orders) {
@@ -826,22 +880,137 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
-    public List<Map<String, Object>> getOrders() {
-        List<OrderDO> orders = orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
-                .eq(OrderDO::getUserId, SecurityFrameworkUtils.getLoginUserId())
-                .orderByDesc(OrderDO::getCreateTime).last("LIMIT 1000"));
-        List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
-        Map<String, List<BetItemDO>> itemsByOrder = orderIds.isEmpty() ? Map.of()
-                : betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds))
-                        .stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
-        Map<String, List<MarketRouteItemDO>> routesByOrder = orderIds.isEmpty() ? Map.of()
-                : marketRouteItemMapper.selectList(new LambdaQueryWrapper<MarketRouteItemDO>()
-                        .in(MarketRouteItemDO::getOrderId, orderIds)).stream()
-                        .collect(Collectors.groupingBy(MarketRouteItemDO::getOrderId));
-        Map<String, String> drawResultsByPeriod = drawResultsForOrders(SecurityFrameworkUtils.getLoginUserId(), orders);
-        return orders.stream().map(item -> orderMapWithMarketStatistics(item,
-                itemsByOrder.getOrDefault(item.getId(), List.of()), drawResultsByPeriod.get(item.getPeriod()),
-                routesByOrder.getOrDefault(item.getId(), List.of()))).toList();
+    public PageResult<Map<String, Object>> getOrders(LotteryReqVO.OrderPage reqVO) {
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+        LambdaQueryWrapper<OrderDO> query = new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, userId)
+                .like(StrUtil.isNotBlank(StrUtil.trim(reqVO.getNickname())), OrderDO::getMemberName,
+                        StrUtil.trim(reqVO.getNickname()))
+                .like(StrUtil.isNotBlank(StrUtil.trim(reqVO.getPeriod())), OrderDO::getPeriod,
+                        StrUtil.trim(reqVO.getPeriod()))
+                .orderByDesc(OrderDO::getCreateTime).orderByDesc(OrderDO::getId);
+        if (TYPE_AUTO_PROXY.equals(reqVO.getOrderType())) {
+            query.eq(OrderDO::getOrderType, TYPE_AUTO_PROXY);
+        } else if (TYPE_PLAYER.equals(reqVO.getOrderType())) {
+            query.and(wrapper -> wrapper.isNull(OrderDO::getOrderType)
+                    .or().ne(OrderDO::getOrderType, TYPE_AUTO_PROXY));
+        }
+        PageResult<OrderDO> page = orderMapper.selectPage(reqVO, query);
+        List<OrderDO> orders = page.getList();
+        Map<String, Integer> itemCounts = betItemCountsByOrder(userId, orders);
+        Map<String, String> drawResultsByPeriod = drawResultsForOrders(userId, orders);
+        Map<String, IssueDO> issuesByPeriod = issuesForOrders(userId, orders);
+        List<Map<String, Object>> rows = orders.stream().map(item -> orderSummaryMap(item,
+                drawResultsByPeriod.get(item.getPeriod()), itemCounts.getOrDefault(item.getId(), 0),
+                issuesByPeriod.get(item.getPeriod()))).toList();
+        return new PageResult<>(rows, page.getTotal());
+    }
+
+    @Override
+    public Map<String, Object> getOrderItems(String id, LotteryReqVO.OrderItemPage reqVO) {
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+        OrderDO order = orderMapper.selectOne(new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, userId).eq(OrderDO::getId, id));
+        if (order == null) throw exception(RECORD_NOT_FOUND);
+        PageResult<BetItemDO> page = betItemMapper.selectPage(reqVO, new LambdaQueryWrapper<BetItemDO>()
+                .eq(BetItemDO::getUserId, userId).eq(BetItemDO::getOrderId, id)
+                .orderByDesc(BetItemDO::getWon).orderByAsc(BetItemDO::getId));
+        String drawResult = drawResultsForOrders(userId, List.of(order)).get(order.getPeriod());
+        IssueDO issue = issuesForOrders(userId, List.of(order)).get(order.getPeriod());
+        return map("order", orderSummaryMap(order, drawResult, Math.toIntExact(page.getTotal()), issue),
+                "list", page.getList().stream().map(this::betItemMap).toList(), "total", page.getTotal());
+    }
+
+    @Override
+    public Map<String, Object> getOrderHistory(LotteryReqVO.OrderHistoryPage reqVO) {
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+        HistoryRange range = historyRange(reqVO.getTimeType());
+        QueryWrapper<OrderDO> pageQuery = historyOrderQuery(userId, reqVO, range)
+                .select("period AS periods", "COALESCE(SUM(amount), 0) AS zongTou",
+                        "COALESCE(SUM(win), 0) AS zhongJiang",
+                        "COALESCE(SUM(win), 0) - COALESCE(SUM(amount), 0) AS yinKui",
+                        "COALESCE(SUM(amount), 0) AS shiTou")
+                .groupBy("period").orderByDesc("period");
+        IPage<Map<String, Object>> page = MyBatisUtils.buildPage(reqVO);
+        orderMapper.selectMapsPage(page, pageQuery);
+        List<Map<String, Object>> rows = new ArrayList<>(page.getRecords());
+        List<String> periods = rows.stream().map(item -> String.valueOf(item.get("periods"))).toList();
+        Map<String, Map<String, Object>> marketByPeriod = periods.isEmpty() ? Map.of()
+                : marketRouteItemMapper.selectHistoryStatistics(TenantContextHolder.getRequiredTenantId(), userId, periods)
+                        .stream().collect(Collectors.toMap(item -> String.valueOf(item.get("period")), Function.identity()));
+        rows.forEach(item -> applyHistoryMarketStatistics(item,
+                marketByPeriod.get(String.valueOf(item.get("periods")))));
+
+        Map<String, Object> orderSummary = first(orderMapper.selectMaps(historyOrderQuery(userId, reqVO, range)
+                .select("COALESCE(SUM(amount), 0) AS total_bet", "COALESCE(SUM(win), 0) AS total_win")));
+        Map<String, Object> marketSummary = marketRouteItemMapper.selectHistorySummary(
+                TenantContextHolder.getRequiredTenantId(), userId, StrUtil.trim(reqVO.getPeriod()),
+                range.start(), range.end());
+        BigDecimal totalBet = decimalValue(orderSummary == null ? null : orderSummary.get("total_bet"));
+        BigDecimal totalWin = decimalValue(orderSummary == null ? null : orderSummary.get("total_win"));
+        BigDecimal marketBet = decimalValue(marketSummary == null ? null : marketSummary.get("bet_money"));
+        BigDecimal marketWin = decimalValue(marketSummary == null ? null : marketSummary.get("market_win"));
+        Map<String, Object> summary = map("bet", money(totalBet), "win", money(totalWin),
+                "profit", money(totalWin.subtract(totalBet)), "real", money(totalBet),
+                "marketBet", money(marketBet), "marketWin", money(marketWin),
+                "marketRebate", ZERO, "marketProfit", money(marketWin.subtract(marketBet)));
+        return map("list", rows, "total", page.getTotal(), "summary", summary);
+    }
+
+    private Map<String, Integer> betItemCountsByOrder(Long userId, List<OrderDO> orders) {
+        if (orders.isEmpty()) return Map.of();
+        Map<String, Integer> result = new HashMap<>();
+        orders.stream().filter(item -> value(item.getItemCount(), 0) > 0)
+                .forEach(item -> result.put(item.getId(), item.getItemCount()));
+        List<String> missingOrderIds = orders.stream().filter(item -> value(item.getItemCount(), 0) <= 0)
+                .map(OrderDO::getId).toList();
+        if (missingOrderIds.isEmpty()) return result;
+        List<Map<String, Object>> counts = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectMaps(
+                new QueryWrapper<BetItemDO>().select("order_id", "COUNT(*) AS item_count")
+                        .eq("user_id", userId).in("order_id", missingOrderIds).groupBy("order_id")));
+        counts.forEach(item -> result.put(String.valueOf(item.get("order_id")),
+                Math.toIntExact(decimalValue(item.get("item_count")).longValue())));
+        return result;
+    }
+
+    private QueryWrapper<OrderDO> historyOrderQuery(Long userId, LotteryReqVO.OrderHistoryPage reqVO,
+                                                     HistoryRange range) {
+        QueryWrapper<OrderDO> query = new QueryWrapper<OrderDO>()
+                .eq("user_id", userId)
+                .in("status", "已中奖", "未中奖")
+                .and(wrapper -> wrapper.isNull("order_type").or().ne("order_type", TYPE_AUTO_PROXY));
+        String period = StrUtil.trim(reqVO.getPeriod());
+        if (StrUtil.isNotBlank(period)) query.like("period", period);
+        if (range.start() != null) query.ge("create_time", range.start());
+        if (range.end() != null) query.lt("create_time", range.end());
+        return query;
+    }
+
+    private HistoryRange historyRange(Integer timeType) {
+        int normalized = timeType == null ? 1 : timeType;
+        LocalDate today = LocalDate.now();
+        return switch (normalized) {
+            case 1 -> new HistoryRange(today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+            case 2 -> new HistoryRange(today.minusDays(1).atStartOfDay(), today.atStartOfDay());
+            case 3 -> new HistoryRange(today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).atStartOfDay(),
+                    today.plusDays(1).atStartOfDay());
+            default -> new HistoryRange(null, null);
+        };
+    }
+
+    private void applyHistoryMarketStatistics(Map<String, Object> row, Map<String, Object> market) {
+        BigDecimal totalBet = decimalValue(row.get("zongTou"));
+        BigDecimal totalWin = decimalValue(row.get("zhongJiang"));
+        BigDecimal marketBet = decimalValue(market == null ? null : market.get("bet_money"));
+        BigDecimal marketWin = decimalValue(market == null ? null : market.get("market_win"));
+        row.put("zongTou", money(totalBet));
+        row.put("zhongJiang", money(totalWin));
+        row.put("yinKui", money(totalWin.subtract(totalBet)));
+        row.put("shiTou", money(totalBet));
+        row.put("betMoney", money(marketBet));
+        row.put("marketWin", money(marketWin));
+        row.put("marketRebate", ZERO);
+        row.put("marketProfit", money(marketWin.subtract(marketBet)));
     }
 
     @Override
@@ -1039,7 +1208,8 @@ public class LotteryServiceImpl implements LotteryService {
                 .eq(OrderDO::getUserId, userId).ne(OrderDO::getOrderType, TYPE_AUTO_PROXY)
                 .in(OrderDO::getStatus, "已中奖", "未中奖")));
         List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
-        List<BetItemDO> items = orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
+        boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
+        List<BetItemDO> items = !separateDragonRebate || orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId).in(BetItemDO::getOrderId, orderIds)));
         Map<String, List<BetItemDO>> itemsByOrder = items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
         List<RebateRecordDO> rebateRecords = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
@@ -1052,7 +1222,6 @@ public class LotteryServiceImpl implements LotteryService {
                         .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)));
         Map<String, MemberDO> pullersByName = members.stream().filter(member -> "拉手".equals(member.getTag()))
                 .collect(Collectors.toMap(MemberDO::getName, Function.identity(), (first, ignored) -> first));
-        boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         for (MemberDO member : members) {
             LotteryRebateCalculator.RebateResult rebate = rebateCalculator.calculate(member, orders, itemsByOrder,
                     rebateRecords, separateDragonRebate);
@@ -1279,6 +1448,7 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private BetResult placeBetInternal(LotteryReqVO.PlaceBet reqVO, String actor, String requestedOrderType) {
+        long placementStartedAt = System.nanoTime();
         MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
                 : findMemberByName(reqVO.getMemberName());
         if (member == null) throw exception(MEMBER_NOT_FOUND);
@@ -1326,7 +1496,9 @@ public class LotteryServiceImpl implements LotteryService {
         if (issueFreshnessPolicy.isStale(issue)) throw exception(ISSUE_SOURCE_STALE);
         if (issueFreshnessPolicy.isBettingClosed(issue)) throw exception(ISSUE_NOT_OPEN);
         List<OddDO> odds = getEffectiveOdds(member.getUserId());
+        long parseStartedAt = System.nanoTime();
         List<LotteryBettingService.ParsedBet> parsed = bettingService.parse(reqVO.getContent(), odds);
+        long parseElapsedMs = elapsedMillis(parseStartedAt);
         boolean hasDragonTiger = parsed.stream().anyMatch(item -> "龙虎".equals(item.play()));
         boolean hasNormal = parsed.stream().anyMatch(item -> !"龙虎".equals(item.play()));
         int playType = value(config.getPlayType(), 2);
@@ -1347,13 +1519,7 @@ public class LotteryServiceImpl implements LotteryService {
             marketBalanceService.requireSufficient(config, marketAmount);
         }
 
-        int oldSequence = value(issue.getOrderSequence(), 0);
-        int periodSequence = oldSequence + 1;
-        int issueUpdated = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
-                .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, member.getUserId())
-                .eq(IssueDO::getStatus, "OPEN").eq(IssueDO::getOrderSequence, oldSequence)
-                .set(IssueDO::getOrderSequence, periodSequence));
-        if (issueUpdated != 1) throw exception(BET_STATE_CHANGED);
+        int periodSequence = allocatePeriodSequence(member.getUserId(), reqVO.getPeriod().trim());
 
         int oldMemberVersion = value(member.getVersion(), 0);
         BigDecimal balanceBefore = money(member.getBalance());
@@ -1383,6 +1549,7 @@ public class LotteryServiceImpl implements LotteryService {
         order.setMarketOrderId("");
         order.setMarketError("");
         order.setMarketAttempts(0);
+        order.setItemCount(parsed.size());
         order.setPeriodSequence(periodSequence);
         order.setVersion(0);
         order.setUserId(member.getUserId());
@@ -1392,10 +1559,11 @@ public class LotteryServiceImpl implements LotteryService {
         balanceLedgerService.recordAppliedChange(member, balanceBefore, balance,
                 LotteryBalanceLedgerService.BET_DEBIT, order.getId(), actor,
                 "期号 " + order.getPeriod() + " 下注 " + order.getContent());
+        long itemBuildStartedAt = System.nanoTime();
         List<BetItemDO> orderItems = new ArrayList<>(parsed.size());
         for (LotteryBettingService.ParsedBet value : parsed) {
             BetItemDO item = new BetItemDO();
-            item.setId(id());
+            item.setId(detailId());
             item.setOrderId(order.getId());
             item.setPlay(value.play());
             item.setSelection(value.selection());
@@ -1403,9 +1571,13 @@ public class LotteryServiceImpl implements LotteryService {
             item.setOdds(value.odds());
             item.setPayout(ZERO);
             item.setUserId(order.getUserId());
-            betItemMapper.insert(item);
             orderItems.add(item);
         }
+        long itemBuildElapsedMs = elapsedMillis(itemBuildStartedAt);
+        long itemInsertStartedAt = System.nanoTime();
+        insertBetItems(orderItems);
+        long itemInsertElapsedMs = elapsedMillis(itemInsertStartedAt);
+        long postInsertStartedAt = System.nanoTime();
         if (realMarketOrder) {
             LotteryMarketRoutingService.RoutingResult routing = marketRoutingService.prepare(member.getUserId(),
                     order.getId(), order.getPeriod(), member, orderItems);
@@ -1450,9 +1622,60 @@ public class LotteryServiceImpl implements LotteryService {
         if (!TYPE_AUTO_PROXY.equals(orderType)) {
             logAs(member.getUserId(), actor, member.getName(), "下注 " + total + "，期号 " + order.getPeriod());
         }
+        logLargeBetTiming(parsed.size(), realMarketOrder, placementStartedAt, parseElapsedMs,
+                itemBuildElapsedMs, itemInsertElapsedMs, postInsertStartedAt);
         return new BetResult(message.getId(), order.getId(), member.getName(), order.getPeriod(), total, balance,
-                parsed.size(), periodSequence, parsed, order.getStatus(), order.getDeliveryMode(),
+                parsed.size(), periodSequence, parsed.stream().limit(20).toList(), order.getStatus(), order.getDeliveryMode(),
                 order.getMarketStatus(), false);
+    }
+
+    private void insertBetItems(List<BetItemDO> items) {
+        batchInsertService.insertBetItems(TenantContextHolder.getRequiredTenantId(), items);
+    }
+
+    private void logLargeBetTiming(int itemCount, boolean realMarketOrder, long placementStartedAt,
+                                   long parseElapsedMs, long itemBuildElapsedMs, long itemInsertElapsedMs,
+                                   long postInsertStartedAt) {
+        if (itemCount < LARGE_BET_LOG_ITEM_THRESHOLD) return;
+        long serviceElapsedMs = elapsedMillis(placementStartedAt);
+        LOGGER.info("Lucky5 large bet prepared: itemCount={}, realMarket={}, parseMs={}, itemBuildMs={}, "
+                        + "itemInsertMs={}, postInsertMs={}, serviceMs={}",
+                itemCount, realMarketOrder, parseElapsedMs, itemBuildElapsedMs, itemInsertElapsedMs,
+                elapsedMillis(postInsertStartedAt), serviceElapsedMs);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                LOGGER.info("Lucky5 large bet transaction completed: itemCount={}, committed={}, totalMs={}",
+                        itemCount, status == STATUS_COMMITTED, elapsedMillis(placementStartedAt));
+            }
+        });
+    }
+
+    private long elapsedMillis(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000L;
+    }
+
+    private int allocatePeriodSequence(Long userId, String period) {
+        IssueDO lockedIssue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getPeriod, period)
+                        .last("FOR UPDATE")));
+        if (lockedIssue == null || !"OPEN".equals(lockedIssue.getStatus())
+                || issueFreshnessPolicy.isStale(lockedIssue) || issueFreshnessPolicy.isBettingClosed(lockedIssue)) {
+            throw exception(ISSUE_NOT_OPEN);
+        }
+        List<Object> maxSequences = DataPermissionUtils.executeIgnore(() -> orderMapper.selectObjs(
+                new QueryWrapper<OrderDO>().select("COALESCE(MAX(period_sequence), 0)")
+                        .eq("user_id", userId).eq("period", period)));
+        int maxPersistedSequence = maxSequences.isEmpty() ? 0
+                : decimalValue(maxSequences.get(0)).intValue();
+        int periodSequence = Math.max(value(lockedIssue.getOrderSequence(), 0), maxPersistedSequence) + 1;
+        int issueUpdated = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                .eq(IssueDO::getId, lockedIssue.getId()).eq(IssueDO::getUserId, userId)
+                .eq(IssueDO::getStatus, "OPEN")
+                .set(IssueDO::getOrderSequence, periodSequence));
+        if (issueUpdated != 1) throw exception(BET_STATE_CHANGED);
+        return periodSequence;
     }
 
     @Override
@@ -1472,6 +1695,33 @@ public class LotteryServiceImpl implements LotteryService {
         return cancelResultMap(cancelOrderInternal(id, null, loginName(), false, true));
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> reviewMarketOrder(String id, LotteryReqVO.MarketReview reqVO) {
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+        OrderDO order = orderMapper.selectOne(new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getId, id).eq(OrderDO::getUserId, userId).last("LIMIT 1"));
+        if (order == null) throw exception(ORDER_NOT_FOUND);
+        if (!"未开奖".equals(order.getStatus()) || !"MANUAL_REVIEW".equals(order.getMarketStatus())) {
+            throw exception(BET_STATE_CHANGED);
+        }
+        String reason = StrUtil.trim(reqVO.getReason());
+        LotteryMarketOrderStateService.ManualReviewResult result;
+        if ("ACCEPTED".equals(reqVO.getDecision())) {
+            String externalOrderId = StrUtil.trim(reqVO.getExternalOrderId());
+            if (StrUtil.isBlank(externalOrderId)) throw exception(BET_CONTENT_INVALID);
+            result = marketOrderStateService.confirmManualReviewAccepted(userId, id, externalOrderId);
+            logAs(userId, loginName(), order.getMemberName(),
+                    "人工核对盘口订单已受理，订单 " + id + "，依据：" + reason);
+        } else {
+            result = marketOrderStateService.confirmManualReviewNotAccepted(userId, id, loginName(), reason);
+            logAs(userId, loginName(), order.getMemberName(),
+                    "人工核对盘口订单未受理并退款，订单 " + id + "，依据：" + reason);
+        }
+        return map("id", id, "decision", reqVO.getDecision(), "status", result.marketStatus(),
+                "routeCount", result.routeCount(), "amount", result.amount());
+    }
+
     private CancelResult cancelOrderInternal(String id, String expectedMemberId, String actor,
                                              boolean requireCancelEnabled, boolean allowAutoProxy) {
         OrderDO order = orderMapper.selectById(id);
@@ -1482,7 +1732,10 @@ public class LotteryServiceImpl implements LotteryService {
         if (!allowAutoProxy && isAutoProxyOrder(order)) throw exception(ORDER_CAN_NOT_CANCEL);
         MemberDO member = requireMember(order.getMemberId());
         if (requireCancelEnabled && !enabled("openCancel", member.getUserId())) throw exception(ORDER_CAN_NOT_CANCEL);
-        if (hasDrawResult(order.getUserId(), order.getPeriod())) {
+        IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, order.getUserId())
+                        .eq(IssueDO::getPeriod, order.getPeriod()).last("LIMIT 1")));
+        if (!isOrderCancelable(order, issue) || hasDrawResult(order.getUserId(), order.getPeriod())) {
             throw exception(ORDER_CAN_NOT_CANCEL);
         }
         boolean realMarketDelivery = Set.of("MARKET_ADAPTER", "MIXED_MARKET").contains(order.getDeliveryMode());
@@ -1511,7 +1764,7 @@ public class LotteryServiceImpl implements LotteryService {
                     LotteryMarketOrderDispatchEvent.Action.CANCEL));
             return new CancelResult(id, "退码处理中", ZERO);
         }
-        if (realMarketDelivery && Set.of("SUBMITTING", "RETRY", "UNKNOWN", "MANUAL_REVIEW")
+        if (realMarketDelivery && Set.of("SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING", "MANUAL_REVIEW")
                 .contains(order.getMarketStatus())) throw exception(MARKET_ORDER_RECONCILING);
         order.setStatus("已退码");
         order.setCancelledAt(LocalDateTime.now());
@@ -1586,6 +1839,42 @@ public class LotteryServiceImpl implements LotteryService {
         return settlePeriodInternal(userId, period, reqVO, actor);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void publishVerifiedDrawForUser(Long userId, String period, String result) {
+        String normalizedResult = normalizeFiveDigitDraw(result);
+        if (LotteryDrawVerificationService.ZERO_RESULT.equals(normalizedResult)) {
+            throw exception(DRAW_RESULT_ABNORMAL);
+        }
+        LotteryBettingService.DrawResult draw = bettingService.deriveDraw(normalizedResult);
+        DrawDO record = DataPermissionUtils.executeIgnore(() -> drawMapper.selectOne(
+                new LambdaQueryWrapper<DrawDO>().eq(DrawDO::getUserId, userId)
+                        .eq(DrawDO::getPeriod, period).last("LIMIT 1")));
+        if (record != null && !Objects.equals(record.getResult(), draw.result())) {
+            throw exception(PERIOD_ALREADY_SETTLED);
+        }
+        IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getPeriod, period).last("LIMIT 1")));
+        if (record == null) {
+            record = new DrawDO();
+            record.setUserId(userId);
+            record.setPeriod(period);
+            record.setResult(draw.result());
+            record.setBigSmall(draw.bigSmall());
+            record.setOddEven(draw.oddEven());
+            record.setDragonTiger(draw.dragonTiger());
+            record.setDrawTime(issue == null ? null : issue.getDrawTime());
+            record.setStatus("待结算");
+            drawMapper.insert(record);
+            return;
+        }
+        if (record.getDrawTime() == null && issue != null && issue.getDrawTime() != null) {
+            record.setDrawTime(issue.getDrawTime());
+            drawMapper.updateById(record);
+        }
+    }
+
     private Map<String, Object> settlePeriodInternal(Long userId, String period, LotteryReqVO.Settle reqVO, String actor) {
         if (reqVO == null || StrUtil.isBlank(reqVO.getResult())) throw exception(BET_CONTENT_INVALID);
         String normalizedResult = normalizeFiveDigitDraw(reqVO.getResult());
@@ -1615,6 +1904,11 @@ public class LotteryServiceImpl implements LotteryService {
                 .anyMatch(order -> !Set.of("CONFIRMED", "NOT_REQUIRED").contains(order.getMarketStatus()));
         if (unresolvedMarketOrder) throw exception(MARKET_ORDER_RECONCILING);
         if (oldDraw != null && orders.isEmpty()) {
+            if (!"已结算".equals(oldDraw.getStatus()) || oldDraw.getSettledAt() == null) {
+                oldDraw.setStatus("已结算");
+                oldDraw.setSettledAt(LocalDateTime.now());
+                drawMapper.updateById(oldDraw);
+            }
             if ("system".equals(actor)) {
                 IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                         new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
@@ -1709,8 +2003,12 @@ public class LotteryServiceImpl implements LotteryService {
             record.setStatus("已结算");
             record.setSettledAt(LocalDateTime.now());
             drawMapper.insert(record);
-        } else if (record.getDrawTime() == null && issue != null && issue.getDrawTime() != null) {
-            record.setDrawTime(issue.getDrawTime());
+        } else {
+            if (record.getDrawTime() == null && issue != null && issue.getDrawTime() != null) {
+                record.setDrawTime(issue.getDrawTime());
+            }
+            record.setStatus("已结算");
+            record.setSettledAt(LocalDateTime.now());
             drawMapper.updateById(record);
         }
         if (issue == null) {
@@ -2147,10 +2445,8 @@ public class LotteryServiceImpl implements LotteryService {
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, member.getUserId()).eq(OrderDO::getMemberId, member.getId())
                 .orderByDesc(OrderDO::getCreateTime).last("LIMIT 30")));
-        List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
-        Map<String, List<BetItemDO>> items = orderIds.isEmpty() ? Map.of() : DataPermissionUtils.executeIgnore(() ->
-                betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, member.getUserId())
-                        .in(BetItemDO::getOrderId, orderIds))).stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        Map<String, Integer> itemCounts = betItemCountsByOrder(member.getUserId(), orders);
+        Map<String, IssueDO> orderIssuesByPeriod = issuesForOrders(member.getUserId(), orders);
         List<AmountRecordDO> amounts = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
                 new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
                         .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20")));
@@ -2202,6 +2498,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "suggestedPeriod", current == null ? "" : current.getPeriod(),
                 "issue", current == null ? map("currentPeriod", "", "status", "UNAVAILABLE", "remainingSeconds", 0,
                                 "nextPeriod", "", "serverTime", authoritativeSourceTime, "drawTime", null,
+                                "bettingCutoffTime", null,
                                 "sourceStale", false,
                                 "pendingPeriod", pendingIssue == null ? "" : value(pendingIssue.getPeriod(), ""),
                                 "pendingDrawTime", pendingIssue == null ? null : pendingIssue.getDrawTime(),
@@ -2215,6 +2512,7 @@ public class LotteryServiceImpl implements LotteryService {
                                 "nextPeriod", value(current.getNextPeriod(), ""),
                                 "serverTime", authoritativeSourceTime,
                                 "drawTime", current.getDrawTime(),
+                                "bettingCutoffTime", issueFreshnessPolicy.authoritativeBettingCutoffTime(current),
                                 "sourceStale", LotteryIssueFreshnessPolicy.STATUS_SOURCE_STALE.equals(effectiveIssueStatus),
                                 "pendingPeriod", pendingIssue == null ? "" : value(pendingIssue.getPeriod(), ""),
                                 "pendingDrawTime", pendingIssue == null ? null : pendingIssue.getDrawTime(),
@@ -2231,11 +2529,74 @@ public class LotteryServiceImpl implements LotteryService {
                     value.put("numbers", item.getResult().replaceAll("\\D", "").chars().mapToObj(c -> String.valueOf((char) c)).toList());
                     return value;
                 }).toList(),
-                "orders", orders.stream().map(item -> roomOrderMap(item, items.getOrDefault(item.getId(), List.of()))).toList(),
+                "orders", orders.stream().map(item -> roomOrderMap(item,
+                        itemCounts.getOrDefault(item.getId(), 0),
+                        orderIssuesByPeriod.get(item.getPeriod()))).toList(),
                 "amountRecords", amounts.stream().map(this::amountRecordMap).toList(),
                 "messages", messages.stream().sorted(Comparator.comparing(MessageDO::getCreateTime))
                         .map(item -> roomMessageMap(item, member)).toList(),
                 "quickCommands", commands.stream().map(this::quickCommandMap).toList());
+    }
+
+    @Override
+    public Map<String, Object> getRoomDrawState(LotteryRoomReqVO.Credential reqVO) {
+        return TenantUtils.execute(reqVO.getTenantId(), () -> {
+            RoomAccess access = requireRoomAccess(reqVO);
+            touchMemberPresence(access.member());
+            return getRoomDrawStateInternal(access.member());
+        });
+    }
+
+    private Map<String, Object> getRoomDrawStateInternal(MemberDO member) {
+        List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
+                        .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
+                .stream().filter(item -> drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
+        Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(member.getUserId(), draws);
+        String latestDrawPeriod = draws.isEmpty() ? "" : value(draws.get(0).getPeriod(), "");
+        LambdaQueryWrapper<IssueDO> pendingIssueQuery = new LambdaQueryWrapper<IssueDO>()
+                .eq(IssueDO::getUserId, member.getUserId());
+        if (!latestDrawPeriod.isBlank()) {
+            pendingIssueQuery.gt(IssueDO::getPeriod, latestDrawPeriod);
+        } else {
+            pendingIssueQuery.in(IssueDO::getStatus, "CLOSED", "DRAW_ABNORMAL", "DRAW_PENDING",
+                    "DRAWN", "SETTLING", "SETTLED");
+        }
+        IssueDO pendingIssue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                pendingIssueQuery.orderByAsc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
+        IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
+                .eq(IssueDO::getUserId, member.getUserId())
+                .orderByDesc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
+        LocalDateTime roomNow = LocalDateTime.now();
+        String effectiveIssueStatus = issueFreshnessPolicy.effectiveStatus(current, roomNow);
+        LocalDateTime authoritativeSourceTime = issueFreshnessPolicy.authoritativeSourceTime(current, roomNow);
+        Map<String, Object> issue = current == null
+                ? map("currentPeriod", "", "status", "UNAVAILABLE", "remainingSeconds", 0,
+                        "nextPeriod", "", "serverTime", authoritativeSourceTime, "drawTime", null,
+                        "bettingCutoffTime", null,
+                        "sourceStale", false, "pendingPeriod", pendingIssue == null ? "" : value(pendingIssue.getPeriod(), ""),
+                        "pendingDrawTime", pendingIssue == null ? null : pendingIssue.getDrawTime(),
+                        "pendingResult", pendingIssue != null && drawVerificationService.isTrusted(pendingIssue.getResult())
+                                ? pendingIssue.getResult() : "",
+                        "pendingStatus", pendingIssue == null ? "" : value(pendingIssue.getStatus(), ""))
+                : map("currentPeriod", current.getPeriod(), "status", effectiveIssueStatus,
+                        "remainingSeconds", "OPEN".equals(effectiveIssueStatus)
+                                ? issueFreshnessPolicy.effectiveRemainingSeconds(current, roomNow) : 0,
+                        "nextPeriod", value(current.getNextPeriod(), ""), "serverTime", authoritativeSourceTime,
+                        "drawTime", current.getDrawTime(),
+                        "bettingCutoffTime", issueFreshnessPolicy.authoritativeBettingCutoffTime(current),
+                        "sourceStale", LotteryIssueFreshnessPolicy.STATUS_SOURCE_STALE.equals(effectiveIssueStatus),
+                        "pendingPeriod", pendingIssue == null ? "" : value(pendingIssue.getPeriod(), ""),
+                        "pendingDrawTime", pendingIssue == null ? null : pendingIssue.getDrawTime(),
+                        "pendingResult", pendingIssue != null && drawVerificationService.isTrusted(pendingIssue.getResult())
+                                ? pendingIssue.getResult() : "",
+                        "pendingStatus", pendingIssue == null ? "" : value(pendingIssue.getStatus(), ""));
+        List<Map<String, Object>> drawRows = draws.stream().map(item -> {
+            Map<String, Object> value = drawMap(item, drawTimesByPeriod.get(item.getPeriod()));
+            value.put("numbers", item.getResult().replaceAll("\\D", "").chars()
+                    .mapToObj(c -> String.valueOf((char) c)).toList());
+            return value;
+        }).toList();
+        return map("suggestedPeriod", current == null ? "" : current.getPeriod(), "issue", issue, "draws", drawRows);
     }
 
     private List<MessageDO> roomMessages(MemberDO member, String roomMode) {
@@ -2282,9 +2643,7 @@ public class LotteryServiceImpl implements LotteryService {
         boolean sharedSettlement = COMMAND_SETTLEMENT.equals(item.getCommandType());
         String sharedReply = sharedPayoutSummary || sharedSettlement ? item.getReply() : "";
         String playerReply = normalizeCheckMarks(value(item.getReply(), ""));
-        if (playerReply.contains("盘口") || playerReply.contains("外盘")
-                || "BET".equals(item.getCommandType()) && Set.of("处理中", "盘口提交中", "待人工核对")
-                        .contains(item.getStatus())) {
+        if (playerReply.contains("盘口") || playerReply.contains("外盘")) {
             playerReply = "";
         }
         result.put("own", own);
@@ -2294,7 +2653,8 @@ public class LotteryServiceImpl implements LotteryService {
             String messageStatus = value(item.getStatus(), "");
             result.put("status", Set.of("退码处理中", "退码待确认", "退码失败").contains(messageStatus)
                     ? messageStatus
-                    : playerReply.isBlank() ? "处理中" : playerReply.contains("下注失败") ? "失败" : "成功");
+                    : playerReply.isBlank() || playerReply.endsWith("提交中") ? "处理中"
+                            : playerReply.contains("下注失败") ? "失败" : "成功");
         }
         if (!own) {
             result.put("orderId", "");
@@ -2894,8 +3254,19 @@ public class LotteryServiceImpl implements LotteryService {
         return IdUtil.fastSimpleUUID();
     }
 
+    private String detailId() {
+        String timestamp = Long.toHexString(System.currentTimeMillis());
+        return "0".repeat(Math.max(0, 12 - timestamp.length())) + timestamp + IdUtil.fastSimpleUUID();
+    }
+
     private BigDecimal money(BigDecimal value) {
         return value == null ? null : value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal decimalValue(Object value) {
+        if (value == null) return ZERO;
+        if (value instanceof BigDecimal decimal) return decimal;
+        return new BigDecimal(String.valueOf(value));
     }
 
     private String date(LocalDateTime value) {

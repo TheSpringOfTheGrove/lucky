@@ -55,6 +55,9 @@ public class LotteryRobotReplyTemplate {
         if (receipt.endsWith("点击退码")) {
             receipt = receipt.substring(0, receipt.length() - "点击退码".length()).stripTrailing();
         }
+        if (receipt.endsWith("正在确认明细")) {
+            receipt = receipt.substring(0, receipt.length() - "正在确认明细".length()).stripTrailing();
+        }
         return receipt + "\n已退码";
     }
 
@@ -71,7 +74,7 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String marketBetPending(String memberName, String period, String content) {
-        return "";
+        return "@" + memberName + "\n提交中";
     }
 
     public String betFailed(String memberName, BigDecimal refunded) {
@@ -91,10 +94,20 @@ public class LotteryRobotReplyTemplate {
 
     public String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                              BigDecimal amount, BigDecimal balance) {
+        return betReceipt(memberName, period, content, sequence, itemCount, amount, balance, "点击退码");
+    }
+
+    public String betReceiptAwaitingDetails(String memberName, String period, String content, int sequence,
+                                            int itemCount, BigDecimal amount, BigDecimal balance) {
+        return betReceipt(memberName, period, content, sequence, itemCount, amount, balance, "正在确认明细");
+    }
+
+    private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
+                              BigDecimal amount, BigDecimal balance, String action) {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content
                 + "\n【户型审核成功】✓✓\n【编号】：" + sequence
                 + "\n【套内】：" + itemCount + "\n【套外】：" + number(amount)
-                + "\n【面积】：" + number(balance) + "\n点击退码";
+                + "\n【面积】：" + number(balance) + "\n" + action;
     }
 
     /**
@@ -111,7 +124,8 @@ public class LotteryRobotReplyTemplate {
         for (String line : receipt.split("\\R")) {
             String normalized = line.trim();
             if (normalized.startsWith("【面积】") || normalized.startsWith("面积：")
-                    || normalized.equals("点击退码") || normalized.startsWith("可用积分")
+                    || normalized.equals("点击退码") || normalized.equals("正在确认明细")
+                    || normalized.startsWith("可用积分")
                     || normalized.startsWith("余额")) {
                 continue;
             }

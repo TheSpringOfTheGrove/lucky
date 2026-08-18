@@ -19,7 +19,7 @@ WORKDIR /opt/lucky5
 COPY --from=build --chown=lucky5:lucky5 /workspace/lucky5-server/target/lucky5-server.jar app.jar
 
 ENV TZ=Asia/Shanghai
-ENV JAVA_TOOL_OPTIONS="-Xms512m -Xmx1024m -Djava.security.egd=file:/dev/./urandom"
+ENV JAVA_TOOL_OPTIONS="-Xms512m -Xmx2048m -Djava.security.egd=file:/dev/./urandom"
 
 USER lucky5
 EXPOSE 48080

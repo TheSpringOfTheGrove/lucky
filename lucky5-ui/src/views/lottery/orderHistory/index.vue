@@ -1,27 +1,57 @@
 <script setup lang="ts">
+import { useMediaQuery } from '@vueuse/core'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
-import { useLucky5Store } from '@/store/modules/lottery'
+import { getOrderHistoryApi } from '@/api/lottery'
 
-const store = useLucky5Store()
 const period = ref('')
 const timeType = ref(1)
 const refreshing = ref(false)
+const rows = ref<any[]>([])
+const pageNo = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
+const summary = ref<Record<string, number>>({})
+const isMobile = useMediaQuery('(max-width: 768px)')
 let refreshTimer: number | undefined
 
-const refreshOrders = async () => {
+const refreshHistory = async () => {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    await store.refreshOrders()
+    const result = await getOrderHistoryApi({
+      pageNo: pageNo.value,
+      pageSize: pageSize.value,
+      period: period.value.trim() || undefined,
+      timeType: timeType.value
+    })
+    rows.value = result.list || []
+    total.value = Number(result.total || 0)
+    summary.value = result.summary || {}
   } finally {
     refreshing.value = false
   }
 }
 
+const search = () => {
+  pageNo.value = 1
+  void refreshHistory()
+}
+
+const changePage = (value: number) => {
+  pageNo.value = value
+  void refreshHistory()
+}
+
+const changePageSize = (value: number) => {
+  pageSize.value = value
+  pageNo.value = 1
+  void refreshHistory()
+}
+
 const startAutoRefresh = () => {
   if (refreshTimer) return
-  void refreshOrders()
-  refreshTimer = window.setInterval(() => void refreshOrders(), 5000)
+  void refreshHistory()
+  refreshTimer = window.setInterval(() => void refreshHistory(), 5000)
 }
 
 const stopAutoRefresh = () => {
@@ -31,62 +61,30 @@ const stopAutoRefresh = () => {
 }
 
 const money = (value: unknown) => Number(value || 0).toFixed(2)
+const startRow = computed(() => (total.value ? (pageNo.value - 1) * pageSize.value + 1 : 0))
+const endRow = computed(() => Math.min(pageNo.value * pageSize.value, total.value))
 
 onMounted(startAutoRefresh)
 onActivated(startAutoRefresh)
 onDeactivated(stopAutoRefresh)
 onBeforeUnmount(stopAutoRefresh)
 
-const rows = computed(() => {
-  const groups = new Map<string, any>()
-  store.orders.forEach((item) => {
-    if (item.orderType === 'AUTO_PROXY' || item.autoProxy) return
-    if (!['已中奖', '未中奖'].includes(item.status)) return
-    if (period.value && !item.period.includes(period.value.trim())) return
-    const current = groups.get(item.period) || {
-      periods: item.period,
-      zongTou: 0,
-      zhongJiang: 0,
-      yinKui: 0,
-      shiTou: 0,
-      betMoney: 0,
-      marketWin: 0,
-      marketProfit: 0,
-      marketRebate: 0
-    }
-    current.zongTou += Number(item.amount || 0)
-    current.zhongJiang += Number(item.win || 0)
-    current.yinKui = current.zhongJiang - current.zongTou
-    current.shiTou += Number(item.amount || 0)
-    current.betMoney += Number(item.marketBet || 0)
-    current.marketWin += Number(item.marketWin || 0)
-    current.marketRebate += Number(item.marketRebate || 0)
-    current.marketProfit = current.marketWin + current.marketRebate - current.betMoney
-    groups.set(item.period, current)
-  })
-  return [...groups.values()]
-})
-const totals = computed(() =>
-  rows.value.reduce(
-    (sum, row) => ({
-      bet: sum.bet + row.zongTou,
-      win: sum.win + row.zhongJiang,
-      profit: sum.profit + row.yinKui,
-      real: sum.real + row.shiTou,
-      marketBet: sum.marketBet + row.betMoney,
-      marketWin: sum.marketWin + row.marketWin,
-      marketProfit: sum.marketProfit + row.marketProfit,
-      marketRebate: sum.marketRebate + row.marketRebate
-    }),
-    { bet: 0, win: 0, profit: 0, real: 0, marketBet: 0, marketWin: 0, marketProfit: 0, marketRebate: 0 }
-  )
-)
+const totals = computed(() => ({
+  bet: Number(summary.value.bet || 0),
+  win: Number(summary.value.win || 0),
+  profit: Number(summary.value.profit || 0),
+  real: Number(summary.value.real || 0),
+  marketBet: Number(summary.value.marketBet || 0),
+  marketWin: Number(summary.value.marketWin || 0),
+  marketProfit: Number(summary.value.marketProfit || 0),
+  marketRebate: Number(summary.value.marketRebate || 0)
+}))
 </script>
 
 <template>
   <div class="lucky-page">
     <h1 class="lucky-page__heading">历史记录 <small>查询历史记录</small></h1>
-    <el-card shadow="never">
+    <el-card v-loading="refreshing" shadow="never">
       <div class="lucky-summary">
         <p
           >总盈亏：{{ money(totals.profit) }}，总中奖：{{ money(totals.win) }}，总投分：{{
@@ -108,11 +106,11 @@ const totals = computed(() =>
             <el-option label="昨天" :value="2" />
             <el-option label="本周" :value="3" />
           </el-select>
-          <el-button type="primary" :loading="refreshing" @click="refreshOrders">搜索</el-button>
+          <el-button type="primary" :loading="refreshing" @click="search">搜索</el-button>
         </div>
       </div>
-      <PaginatedTable :data="rows" border>
-        <template #mobile="{ row }">
+      <div v-if="isMobile" class="history-mobile-list">
+        <article v-for="row in rows" :key="row.periods" class="lucky-mobile-card history-mobile-card">
           <div class="lucky-mobile-card__title">
             <span>{{ row.periods }}</span>
             <span :class="Number(row.yinKui) >= 0 ? 'lucky-danger' : ''">
@@ -124,14 +122,67 @@ const totals = computed(() =>
             <span>中奖：{{ money(row.zhongJiang) }}</span>
             <span>实投：{{ money(row.shiTou) }}</span>
           </div>
-        </template>
+        </article>
+        <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
+      </div>
+      <el-table v-else :data="rows" row-key="periods" border>
         <el-table-column prop="periods" label="期号" min-width="160" />
         <el-table-column prop="zongTou" label="投额" min-width="110" />
         <el-table-column prop="zhongJiang" label="中奖" min-width="110" />
         <el-table-column prop="yinKui" label="盈亏" min-width="110" />
         <el-table-column prop="shiTou" label="实投" min-width="110" />
         <el-table-column prop="betMoney" label="网盘下单" min-width="130" />
-      </PaginatedTable>
+      </el-table>
+      <div class="history-pagination">
+        <span>显示第 {{ startRow }} 到 {{ endRow }} 条，共 {{ total }} 条</span>
+        <el-pagination
+          :current-page="pageNo"
+          :page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next, jumper'"
+          :pager-count="isMobile ? 3 : 7"
+          :small="isMobile"
+          background
+          @current-change="changePage"
+          @size-change="changePageSize"
+        />
+      </div>
     </el-card>
   </div>
 </template>
+
+<style scoped>
+.history-mobile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-mobile-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 6px;
+}
+
+.history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+@media (max-width: 768px) {
+  .history-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 12px;
+  }
+
+  .history-pagination :deep(.el-pagination) {
+    justify-content: center;
+  }
+}
+</style>

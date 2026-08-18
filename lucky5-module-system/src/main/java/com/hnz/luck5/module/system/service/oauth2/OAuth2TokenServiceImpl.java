@@ -22,6 +22,7 @@ import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.dal.mysql.oauth2.OAuth2AccessTokenMapper;
 import com.hnz.luck5.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import com.hnz.luck5.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
+import com.hnz.luck5.module.system.dal.redis.oauth2.OAuth2SingleSessionRedisDAO;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
 import org.springframework.context.annotation.Lazy;
@@ -32,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception0;
 import static com.hnz.luck5.framework.common.util.collection.CollectionUtils.convertSet;
@@ -51,6 +53,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
 
     @Resource
     private OAuth2AccessTokenRedisDAO oauth2AccessTokenRedisDAO;
+    @Resource
+    private OAuth2SingleSessionRedisDAO oauth2SingleSessionRedisDAO;
 
     @Resource
     private OAuth2ClientService oauth2ClientService;
@@ -62,10 +66,18 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Transactional(rollbackFor = Exception.class)
     public OAuth2AccessTokenDO createAccessToken(Long userId, Integer userType, String clientId, List<String> scopes) {
         OAuth2ClientDO clientDO = oauth2ClientService.validOAuthClientFromCache(clientId);
+        if (requiresSingleSession(userId, userType)) {
+            removeAccessToken(userId, userType);
+        }
         // 创建刷新令牌
         OAuth2RefreshTokenDO refreshTokenDO = createOAuth2RefreshToken(userId, userType, clientDO, scopes);
         // 创建访问令牌
-        return createOAuth2AccessToken(refreshTokenDO, clientDO);
+        OAuth2AccessTokenDO accessTokenDO = createOAuth2AccessToken(refreshTokenDO, clientDO);
+        if (requiresSingleSession(userId, userType)) {
+            oauth2SingleSessionRedisDAO.set(accessTokenDO.getTenantId(), userType, userId,
+                    refreshTokenDO.getRefreshToken(), refreshTokenDO.getExpiresTime());
+        }
+        return accessTokenDO;
     }
 
     @Override
@@ -82,6 +94,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         if (ObjectUtil.notEqual(clientId, refreshTokenDO.getClientId())) {
             throw exception0(GlobalErrorCodeConstants.BAD_REQUEST.getCode(), "刷新令牌的客户端编号不正确");
         }
+        validateSingleSession(refreshTokenDO.getTenantId(), refreshTokenDO.getUserId(),
+                refreshTokenDO.getUserType(), refreshTokenDO.getRefreshToken(), refreshTokenDO.getExpiresTime());
 
         // 移除相关的访问令牌
         List<OAuth2AccessTokenDO> accessTokenDOs = oauth2AccessTokenMapper.selectListByRefreshToken(refreshToken);
@@ -136,6 +150,8 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         if (DateUtils.isExpired(accessTokenDO.getExpiresTime())) {
             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "访问令牌已过期");
         }
+        validateSingleSession(accessTokenDO.getTenantId(), accessTokenDO.getUserId(), accessTokenDO.getUserType(),
+                accessTokenDO.getRefreshToken(), accessTokenDO.getExpiresTime());
         return accessTokenDO;
     }
 
@@ -152,6 +168,10 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         // 删除刷新令牌
         oauth2RefreshTokenMapper.deleteByRefreshToken(accessTokenDO.getRefreshToken());
         oauth2AccessTokenRedisDAO.delete(accessTokenDO.getRefreshToken());
+        if (requiresSingleSession(accessTokenDO.getUserId(), accessTokenDO.getUserType())) {
+            oauth2SingleSessionRedisDAO.deleteIfMatches(accessTokenDO.getTenantId(), accessTokenDO.getUserType(),
+                    accessTokenDO.getUserId(), accessTokenDO.getRefreshToken());
+        }
         return accessTokenDO;
     }
 
@@ -159,6 +179,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     public void removeAccessToken(Long userId, Integer userType) {
         List<OAuth2AccessTokenDO> accessTokens = oauth2AccessTokenMapper.selectListByUserIdAndUserType(userId, userType);
         if (CollUtil.isEmpty(accessTokens)) {
+            deleteSingleSession(userId, userType);
             return;
         }
         accessTokens.forEach(accessToken -> {
@@ -169,6 +190,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             oauth2RefreshTokenMapper.deleteByRefreshToken(accessToken.getRefreshToken());
             oauth2AccessTokenRedisDAO.delete(accessToken.getRefreshToken());
         });
+        deleteSingleSession(userId, userType);
     }
 
     @Override
@@ -241,6 +263,31 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
 
     private static String generateRefreshToken() {
         return IdUtil.fastSimpleUUID();
+    }
+
+    private void validateSingleSession(Long tenantId, Long userId, Integer userType, String refreshToken,
+                                       LocalDateTime expiresTime) {
+        if (!requiresSingleSession(userId, userType)) {
+            return;
+        }
+        String currentRefreshToken = oauth2SingleSessionRedisDAO.get(tenantId, userType, userId);
+        if (currentRefreshToken == null) {
+            oauth2SingleSessionRedisDAO.setIfAbsent(tenantId, userType, userId, refreshToken, expiresTime);
+            currentRefreshToken = oauth2SingleSessionRedisDAO.get(tenantId, userType, userId);
+        }
+        if (!Objects.equals(currentRefreshToken, refreshToken)) {
+            throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "账号已在其他地方登录，请重新登录");
+        }
+    }
+
+    private void deleteSingleSession(Long userId, Integer userType) {
+        if (requiresSingleSession(userId, userType)) {
+            oauth2SingleSessionRedisDAO.delete(TenantContextHolder.getTenantId(), userType, userId);
+        }
+    }
+
+    private static boolean requiresSingleSession(Long userId, Integer userType) {
+        return userId != null && userId > 0 && Objects.equals(userType, UserTypeEnum.ADMIN.getValue());
     }
 
     @Override

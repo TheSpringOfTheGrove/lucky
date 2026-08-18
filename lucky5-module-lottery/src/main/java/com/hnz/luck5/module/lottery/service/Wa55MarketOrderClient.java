@@ -17,9 +17,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,6 +45,7 @@ public class Wa55MarketOrderClient {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern NORMAL_SELECTION = Pattern.compile("(?i)[0-9X]{4}");
     private static final Pattern XIAN_SELECTION = Pattern.compile("[0-9]{2,4}");
+    private static final int MAX_BATCH_DETAIL_PAGES = 20;
 
     @Resource
     private ObjectMapper objectMapper;
@@ -53,54 +59,240 @@ public class Wa55MarketOrderClient {
 
     public SubmissionBatch submit(Credentials credentials, String expectedPeriod, List<BetRequest> requests) {
         requireEnabled();
-        if (requests == null || requests.isEmpty()) return new SubmissionBatch(List.of(), null);
+        if (requests == null || requests.isEmpty()) return new SubmissionBatch(List.of(), List.of(), null);
         requests.forEach(request -> validateRequest(expectedPeriod, request));
-        Session session = connect(credentials);
-        MemberPrint member = memberPrint(session);
-        assertExpectedOpenPeriod(session, expectedPeriod, member.period());
+        Preflight preflight = preflight(credentials, expectedPeriod);
+        Session session = preflight.session();
+        MemberPrint member = preflight.member();
         List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
-        for (BetRequest request : requests) {
+        List<AcceptedBatch> acceptedBatches = new ArrayList<>();
+        List<BetGroup> groups = groupRequests(expectedPeriod, requests);
+        for (BetGroup group : groups) {
             JsonNode payload;
             try {
-                payload = postForm(session, "/Member/Bet", Map.of(
-                        "betno", request.selection().toUpperCase(Locale.ROOT),
-                        "is_xian", request.xian() ? "1" : "0",
-                        "isxian", request.xian() ? "1" : "0",
-                        "way", "101",
-                        "isfulltransform", "0",
-                        "guid", request.guid(),
-                        "betmoney", money(request.amount()).stripTrailingZeros().toPlainString()));
+                payload = submitGroup(session, expectedPeriod, group);
             } catch (MarketProtocolException ex) {
-                throw new MarketProtocolException("盘口提交结果不确定：" + ex.getMessage(), false, confirmations,
-                        true, ex);
+                throw new MarketProtocolException("盘口提交结果不确定（批次 " + group.guid() + "）："
+                        + ex.getMessage(), false, confirmations, true, ex);
             }
             try {
                 assertSuccess(payload, "盘口拒绝下注");
+            } catch (MarketSessionExpiredException ex) {
+                throw new MarketProtocolException("盘口提交结果不确定（批次 " + group.guid() + "）："
+                        + ex.getMessage(), false, confirmations, true, ex);
             } catch (MarketProtocolException ex) {
-                if (confirmations.isEmpty()) throw ex;
+                if (confirmations.isEmpty() && acceptedBatches.isEmpty()) throw ex;
+                if (!acceptedBatches.isEmpty()) {
+                    throw new MarketProtocolException("盘口已有批次明确受理，后续批次结果异常："
+                            + ex.getMessage(), false, confirmations, true, ex);
+                }
                 throw new MarketProtocolException("盘口只受理了部分注单：" + ex.getMessage(), false,
                         confirmations, false, ex);
             }
             JsonNode data = first(payload, "Data", "data");
-            BigDecimal accepted = decimal(first(data, "Money", "money", "BetMoney", "bet_money"));
-            String betId = text(first(data, "BetId", "bet_id", "Id", "id"));
-            String serialNo = text(first(data, "SerialNo", "serial_no"));
-            int betCount = number(first(data, "BetCount", "bet_count"), 1);
-            if (betId.isBlank() || serialNo.isBlank() || betCount <= 0) {
-                throw new MarketProtocolException("盘口返回成功但缺少注单标识", false, confirmations,
+            BigDecimal accepted = decimal(first(data, "FinalMoney", "final_money", "Money", "money",
+                    "BetMoney", "bet_money"));
+            int betCount = number(first(data, "FinalBetCount", "final_bet_count", "BetCount", "bet_count"), -1);
+            if (betCount != group.requests().size() || accepted == null
+                    || accepted.compareTo(group.totalAmount()) != 0) {
+                throw new MarketProtocolException("盘口实际受理注数或金额与提交批次不一致", false, confirmations,
                         true, null);
             }
-            BetConfirmation confirmation = new BetConfirmation(request.routeItemId(), request.guid(), betId, serialNo,
-                    betCount, accepted, decimal(first(data, "Odds", "odds")));
-            if (accepted == null || accepted.compareTo(money(request.amount())) != 0) {
-                List<BetConfirmation> partial = new ArrayList<>(confirmations);
-                partial.add(confirmation);
-                throw new MarketProtocolException("盘口实际受理金额与提交金额不一致", false, partial,
-                        true, null);
+            if (group.requests().size() == 1) {
+                String betId = text(first(data, "BetId", "bet_id", "Id", "id"));
+                String serialNo = text(first(data, "SerialNo", "serial_no"));
+                if (betId.isBlank() || serialNo.isBlank()) {
+                    throw new MarketProtocolException("盘口返回成功但缺少注单标识", false, confirmations,
+                            true, null);
+                }
+                BigDecimal odds = decimal(first(data, "Odds", "odds"));
+                BetRequest request = group.requests().get(0);
+                confirmations.add(new BetConfirmation(request.routeItemId(), group.guid(), betId, serialNo,
+                        betCount, money(request.amount()), odds));
+                continue;
             }
-            confirmations.add(confirmation);
+            List<BetConfirmation> directConfirmations = directBatchConfirmations(group, data, betCount);
+            if (!directConfirmations.isEmpty()) {
+                confirmations.addAll(directConfirmations);
+            } else {
+                // Exact count and amount make the write result definite. External identifiers are recovered later
+                // through the read-only detail endpoint so the player response is not blocked by paged polling.
+                acceptedBatches.add(acceptedBatch(group));
+            }
         }
-        return new SubmissionBatch(List.copyOf(confirmations), member.balance());
+        return new SubmissionBatch(List.copyOf(confirmations), List.copyOf(acceptedBatches), member.balance());
+    }
+
+    /**
+     * Reads only the external detail list for batches that already returned an exact successful count and amount.
+     * This method never calls a market write endpoint and therefore is safe to repeat until the identifiers appear.
+     */
+    public VerificationBatch verifyAccepted(Credentials credentials, String period, List<BetRequest> requests) {
+        if (requests == null || requests.isEmpty()) return new VerificationBatch(List.of(), List.of());
+        requests.forEach(request -> validateRequest(period, request));
+        List<ExternalBetRow> rows = memberBetRows(connect(credentials), period);
+        List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
+        List<AcceptedBatch> unresolved = new ArrayList<>();
+        for (BetGroup group : groupRequests(period, requests)) {
+            List<BetConfirmation> matched = matchBatchConfirmations(rows, group, "", "");
+            if (matched.isEmpty()) unresolved.add(acceptedBatch(group));
+            else confirmations.addAll(matched);
+        }
+        return new VerificationBatch(List.copyOf(confirmations), List.copyOf(unresolved));
+    }
+
+    private Preflight preflight(Credentials credentials, String expectedPeriod) {
+        MarketSessionExpiredException firstFailure = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                Session session = connect(credentials);
+                MemberPrint member = memberPrint(session);
+                assertExpectedOpenPeriod(session, expectedPeriod, member.period());
+                return new Preflight(session, member);
+            } catch (MarketSessionExpiredException ex) {
+                if (attempt > 0) throw ex;
+                firstFailure = ex;
+            }
+        }
+        throw firstFailure;
+    }
+
+    private List<BetConfirmation> directBatchConfirmations(BetGroup group, JsonNode data, int betCount) {
+        String betId = text(direct(data, "BetId", "bet_id", "Id", "id"));
+        String serialNo = text(direct(data, "SerialNo", "serial_no"));
+        if (betId.isBlank() || serialNo.isBlank()) return List.of();
+        BigDecimal odds = decimal(direct(data, "Odds", "odds"));
+        return group.requests().stream().map(request -> new BetConfirmation(request.routeItemId(), group.guid(),
+                betId, serialNo, betCount, money(request.amount()), odds)).toList();
+    }
+
+    private List<BetConfirmation> matchBatchConfirmations(List<ExternalBetRow> rows, BetGroup group,
+                                                           String directBetId, String directSerialNo) {
+        Map<String, List<ExternalBetRow>> rowsBySerial = new LinkedHashMap<>();
+        for (ExternalBetRow row : rows) {
+            if (!directBetId.isBlank() && !directBetId.equals(row.betId())) continue;
+            if (!directSerialNo.isBlank() && !directSerialNo.equals(row.serialNo())) continue;
+            rowsBySerial.computeIfAbsent(row.serialNo(), ignored -> new ArrayList<>()).add(row);
+        }
+        List<List<ExternalBetRow>> matches = rowsBySerial.values().stream()
+                .filter(candidate -> matchesGroup(candidate, group.requests())).toList();
+        return matches.size() == 1 ? confirmations(group, matches.get(0)) : List.of();
+    }
+
+    private boolean matchesGroup(List<ExternalBetRow> rows, List<BetRequest> requests) {
+        if (rows.size() != requests.size()) return false;
+        Map<ExternalBetKey, Integer> expected = new LinkedHashMap<>();
+        Map<ExternalBetKey, Integer> actual = new LinkedHashMap<>();
+        requests.forEach(request -> expected.merge(new ExternalBetKey(dictNoTypeId(request), request.selection(),
+                money(request.amount())), 1, Integer::sum));
+        rows.forEach(row -> actual.merge(new ExternalBetKey(row.dictNoTypeId(), row.selection(),
+                money(row.amount())), 1, Integer::sum));
+        return expected.equals(actual);
+    }
+
+    private List<BetConfirmation> confirmations(BetGroup group, List<ExternalBetRow> rows) {
+        Map<ExternalBetKey, ArrayDeque<ExternalBetRow>> available = new LinkedHashMap<>();
+        rows.forEach(row -> available.computeIfAbsent(new ExternalBetKey(row.dictNoTypeId(), row.selection(),
+                money(row.amount())), ignored -> new ArrayDeque<>()).add(row));
+        List<BetConfirmation> result = new ArrayList<>(group.requests().size());
+        for (BetRequest request : group.requests()) {
+            ExternalBetRow row = available.get(new ExternalBetKey(dictNoTypeId(request), request.selection(),
+                    money(request.amount()))).remove();
+            result.add(new BetConfirmation(request.routeItemId(), group.guid(), row.betId(), row.serialNo(),
+                    row.betCount(), money(request.amount()), row.odds()));
+        }
+        return result;
+    }
+
+    private List<ExternalBetRow> memberBetRows(Session session, String period) {
+        List<ExternalBetRow> result = new ArrayList<>();
+        int pageCount = 1;
+        for (int page = 1; page <= pageCount && page <= MAX_BATCH_DETAIL_PAGES; page++) {
+            JsonNode payload = getJson(session, "/Member/GetMemberBetList?period_number=" + encode(period)
+                    + "&pageindex=" + page + "&_=" + System.currentTimeMillis());
+            assertSuccess(payload, "盘口下注明细读取失败");
+            JsonNode data = first(payload, "Data", "data");
+            pageCount = Math.max(1, number(first(data, "PageCount", "page_count"), 1));
+            JsonNode rows = first(data, "Rows", "rows", "List", "list");
+            if (rows == null || !rows.isArray()) continue;
+            for (JsonNode row : rows) {
+                String betId = text(first(row, "bet_id", "BetId", "id"));
+                String serialNo = text(first(row, "serial_no", "SerialNo"));
+                int dictNoTypeId = number(first(row, "dict_no_type_id", "DictNoTypeId"), -1);
+                String selection = text(first(row, "bet_no", "BetNo", "selection")).toUpperCase(Locale.ROOT);
+                BigDecimal amount = decimal(first(row, "bet_money", "BetMoney", "money", "Money"));
+                int betCount = number(first(row, "BetCount", "bet_count"), 1);
+                if (betId.isBlank() || serialNo.isBlank() || dictNoTypeId <= 0 || selection.isBlank() || amount == null
+                        || betCount <= 0) continue;
+                boolean validSelection = NORMAL_SELECTION.matcher(selection).matches()
+                        || XIAN_SELECTION.matcher(selection).matches();
+                if (!validSelection) continue;
+                result.add(new ExternalBetRow(betId, serialNo, dictNoTypeId, selection, amount, betCount,
+                        decimal(first(row, "odds", "Odds"))));
+            }
+        }
+        return result;
+    }
+
+    private JsonNode submitGroup(Session session, String expectedPeriod, BetGroup group) {
+        if (group.requests().size() == 1) {
+            return postForm(session, "/Member/Bet", Map.of(
+                    "betno", group.selections(),
+                    "is_xian", group.xian() ? "1" : "0",
+                    "isxian", group.xian() ? "1" : "0",
+                    "way", "101",
+                    "isfulltransform", "0",
+                    "guid", group.guid(),
+                    "betmoney", group.amount().stripTrailingZeros().toPlainString()));
+        }
+        try {
+            List<Map<String, Object>> bets = group.requests().stream().map(request -> Map.<String, Object>of(
+                    "dict_no_type_id", dictNoTypeId(request),
+                    "bet_no", request.selection().toUpperCase(Locale.ROOT),
+                    "bet_money", request.amount().stripTrailingZeros().toPlainString())).toList();
+            return postForm(session, "/Member/BatchBet", Map.of(
+                    "bets", objectMapper.writeValueAsString(bets),
+                    "way", "108",
+                    "period_no", expectedPeriod,
+                    "bet_log", group.requests().get(0).play(),
+                    "guid", group.guid()));
+        } catch (MarketProtocolException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new MarketProtocolException("盘口批量下注参数生成失败", false, List.of(), ex);
+        }
+    }
+
+    private int dictNoTypeId(BetRequest request) {
+        String selection = request.selection().toUpperCase(Locale.ROOT);
+        if (request.xian()) {
+            return switch (selection.length()) {
+                case 2 -> 12;
+                case 3 -> 13;
+                case 4 -> 14;
+                default -> throw new MarketProtocolException("盘口字现类型无法识别", false, List.of());
+            };
+        }
+        String pattern = selection.replaceAll("\\d", "口");
+        return switch (pattern) {
+            case "口XXX" -> 19;
+            case "X口XX" -> 20;
+            case "XX口X" -> 21;
+            case "XXX口" -> 22;
+            case "口口XX" -> 1;
+            case "口X口X" -> 2;
+            case "口XX口" -> 3;
+            case "X口X口" -> 4;
+            case "X口口X" -> 5;
+            case "XX口口" -> 6;
+            case "口口口X" -> 7;
+            case "口口X口" -> 8;
+            case "口X口口" -> 9;
+            case "X口口口" -> 10;
+            case "口口口口" -> 11;
+            default -> throw new MarketProtocolException("盘口定位类型无法识别：" + request.play(), false,
+                    List.of());
+        };
     }
 
     public CancelResult cancel(Credentials credentials, String expectedPeriod, List<CancelRequest> requests) {
@@ -109,9 +301,10 @@ public class Wa55MarketOrderClient {
         if (expectedPeriod == null || expectedPeriod.isBlank()) {
             throw new MarketProtocolException("退码期号不能为空", false, List.of());
         }
-        requests.forEach(this::validateCancelRequest);
+        List<CancelRequest> distinctRequests = distinctCancelRequests(requests);
+        distinctRequests.forEach(this::validateCancelRequest);
         Session session = connect(credentials);
-        String ids = requests.stream().map(item -> item.marketBetId() + "|" + item.betCount())
+        String ids = distinctRequests.stream().map(item -> item.marketBetId() + "|" + item.betCount())
                 .reduce((left, right) -> left + "," + right).orElse("");
         JsonNode payload;
         try {
@@ -150,8 +343,53 @@ public class Wa55MarketOrderClient {
         }
     }
 
+    private List<BetGroup> groupRequests(String expectedPeriod, List<BetRequest> requests) {
+        Map<BetGroupKey, List<BetRequest>> groups = new LinkedHashMap<>();
+        for (BetRequest request : requests) {
+            BetGroupKey key = new BetGroupKey(request.play() == null ? "" : request.play().trim(), request.xian(),
+                    money(request.amount()));
+            groups.computeIfAbsent(key, ignored -> new ArrayList<>()).add(request);
+        }
+        return groups.entrySet().stream().map(entry -> {
+            List<BetRequest> items = List.copyOf(entry.getValue());
+            String selections = items.stream().map(item -> item.selection().toUpperCase(Locale.ROOT))
+                    .reduce((left, right) -> left + "," + right).orElse("");
+            BigDecimal total = entry.getKey().amount().multiply(BigDecimal.valueOf(items.size()));
+            return new BetGroup(items, selections, entry.getKey().xian(), entry.getKey().amount(), total,
+                    batchGuid(expectedPeriod, entry.getKey(), items));
+        }).toList();
+    }
+
+    private AcceptedBatch acceptedBatch(BetGroup group) {
+        return new AcceptedBatch(group.guid(), group.requests().stream().map(BetRequest::routeItemId).toList(),
+                group.requests().size(), money(group.totalAmount()));
+    }
+
+    private List<CancelRequest> distinctCancelRequests(List<CancelRequest> requests) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (CancelRequest request : requests) {
+            validateCancelRequest(request);
+            counts.merge(request.marketBetId(), request.betCount(), Math::max);
+        }
+        return counts.entrySet().stream().map(entry -> new CancelRequest(entry.getKey(), entry.getValue())).toList();
+    }
+
+    private String batchGuid(String period, BetGroupKey key, List<BetRequest> requests) {
+        if (requests.size() == 1) return requests.get(0).guid();
+        StringBuilder source = new StringBuilder(period).append('|').append(key.play()).append('|')
+                .append(key.xian()).append('|').append(key.amount());
+        requests.stream().map(BetRequest::routeItemId).sorted().forEach(id -> source.append('|').append(id));
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(source.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("无法生成盘口批次标识", ex);
+        }
+    }
+
     private void assertExpectedOpenPeriod(Session session, String expectedPeriod, String memberPeriod) {
         JsonNode issue = getJson(session, "/drawno/GetCurrentPeriodStatus?_=" + System.currentTimeMillis());
+        assertAuthenticated(issue);
         String issuePeriod = text(first(issue, "PERIOD_NO", "PeriodNo", "period_no", "period"));
         int openStatus = number(first(issue, "OPEN_STATUS", "OpenStatus", "open_status", "status"), 99);
         if (!Objects.equals(expectedPeriod, memberPeriod) || !Objects.equals(expectedPeriod, issuePeriod)) {
@@ -211,8 +449,15 @@ public class Wa55MarketOrderClient {
     private void assertAuthenticated(JsonNode payload) {
         int status = number(first(payload, "Status", "status"), Integer.MIN_VALUE);
         String data = text(first(payload, "Data", "data", "message"));
-        if (status == 5 && (data.toLowerCase(Locale.ROOT).contains("login") || data.contains("登录"))) {
-            throw new MarketProtocolException("盘口会话已经失效", true, List.of());
+        String normalized = data.toLowerCase(Locale.ROOT);
+        boolean explicitSessionFailure = data.contains("别处登录") || data.contains("別處登錄")
+                || data.contains("重新登录") || data.contains("重新登錄")
+                || data.contains("会话失效") || data.contains("會話失效")
+                || data.contains("登录超时") || data.contains("登錄超時")
+                || data.contains("未登录") || data.contains("未登錄");
+        if (explicitSessionFailure || status == 5 && (normalized.contains("login") || data.contains("登录")
+                || data.contains("登錄"))) {
+            throw new MarketSessionExpiredException("盘口会话已经失效");
         }
     }
 
@@ -265,6 +510,19 @@ public class Wa55MarketOrderClient {
             for (JsonNode child : input) {
                 JsonNode found = first(child, keys);
                 if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private JsonNode direct(JsonNode input, String... keys) {
+        if (input == null || !input.isObject()) return null;
+        for (String key : keys) if (input.has(key)) return input.get(key);
+        Iterator<Map.Entry<String, JsonNode>> fields = input.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            for (String key : keys) {
+                if (field.getKey().equalsIgnoreCase(key)) return field.getValue();
             }
         }
         return null;
@@ -344,15 +602,47 @@ public class Wa55MarketOrderClient {
     public record BetConfirmation(String routeItemId, String guid, String marketBetId, String serialNo,
                                   int betCount, BigDecimal acceptedAmount, BigDecimal odds) {}
 
-    public record SubmissionBatch(List<BetConfirmation> confirmations, BigDecimal balance) {}
+    public record AcceptedBatch(String guid, List<String> routeItemIds, int betCount, BigDecimal acceptedAmount) {}
+
+    public record SubmissionBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> acceptedBatches,
+                                  BigDecimal balance) {
+        public SubmissionBatch(List<BetConfirmation> confirmations, BigDecimal balance) {
+            this(confirmations, List.of(), balance);
+        }
+    }
+
+    public record VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches) {}
 
     public record CancelRequest(String marketBetId, int betCount) {}
 
     public record CancelResult(boolean success, String message) {}
 
+    private record BetGroupKey(String play, boolean xian, BigDecimal amount) {}
+
+    private record BetGroup(List<BetRequest> requests, String selections, boolean xian, BigDecimal amount,
+                            BigDecimal totalAmount, String guid) {}
+
+    private record ExternalBetKey(int dictNoTypeId, String selection, BigDecimal amount) {
+        private ExternalBetKey {
+            selection = selection == null ? "" : selection.toUpperCase(Locale.ROOT);
+        }
+    }
+
+    private record ExternalBetRow(String betId, String serialNo, int dictNoTypeId, String selection, BigDecimal amount,
+                                  int betCount, BigDecimal odds) {}
+
     private record MemberPrint(String period, BigDecimal balance) {}
 
+    private record Preflight(Session session, MemberPrint member) {}
+
     private record Session(HttpClient client, String baseUrl) {}
+
+    private static final class MarketSessionExpiredException extends MarketProtocolException {
+
+        private MarketSessionExpiredException(String message) {
+            super(message, true, List.of());
+        }
+    }
 
     public static class MarketProtocolException extends RuntimeException {
 

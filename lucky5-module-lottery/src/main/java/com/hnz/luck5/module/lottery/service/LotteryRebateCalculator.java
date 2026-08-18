@@ -19,11 +19,15 @@ public class LotteryRebateCalculator {
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
+    public RebateResult empty() {
+        return new RebateResult(ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO);
+    }
+
     public RebateResult calculate(MemberDO member, List<OrderDO> orders,
                                   Map<String, List<BetItemDO>> itemsByOrder,
                                   List<RebateRecordDO> rebateRecords, boolean separateDragonRebate) {
         if ("BOT".equalsIgnoreCase(member.getMemberType()) || Boolean.TRUE.equals(member.getAutoProxy())) {
-            return new RebateResult(ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO);
+            return empty();
         }
         BigDecimal normalBet = ZERO;
         BigDecimal dragonBet = ZERO;
@@ -31,6 +35,10 @@ public class LotteryRebateCalculator {
         for (OrderDO order : orders) {
             if (!member.getId().equals(order.getMemberId()) || !Set.of("已中奖", "未中奖").contains(order.getStatus())
                     || "AUTO_PROXY".equals(order.getOrderType()) || beforeClear(order.getCreateTime(), clearedAt)) {
+                continue;
+            }
+            if (!separateDragonRebate && order.getAmount() != null) {
+                normalBet = normalBet.add(value(order.getAmount()));
                 continue;
             }
             for (BetItemDO item : itemsByOrder.getOrDefault(order.getId(), List.of())) {

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_lucky5_market_route_bet` (`tenant_id`,`user_id`,`order_id`,`bet_item_id`),
-  UNIQUE KEY `uk_lucky5_market_route_guid` (`tenant_id`,`user_id`,`market_guid`),
+  KEY `idx_lucky5_market_route_guid` (`tenant_id`,`user_id`,`market_guid`),
   KEY `idx_lucky5_market_route_dispatch` (`tenant_id`,`user_id`,`status`,`next_retry_at`),
   KEY `idx_lucky5_market_route_period` (`tenant_id`,`user_id`,`period`,`play`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 real market routing state';

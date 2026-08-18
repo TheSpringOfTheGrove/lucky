@@ -4,6 +4,7 @@ import cn.hutool.core.util.IdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
+import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import com.hnz.luck5.module.lottery.dal.dataobject.BetItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.ChimaConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,10 +30,10 @@ import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.MARKET_PLAY_
 public class LotteryMarketRoutingService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-
     @Resource private ChimaConfigMapper chimaConfigMapper;
     @Resource private MarketRouteItemMapper routeItemMapper;
     @Resource private LotteryMarketRoutingPolicy routingPolicy;
+    @Resource private LotteryBatchInsertService batchInsertService;
 
     /**
      * Calculates the amount that would actually be sent to the external market without persisting an order route.
@@ -47,9 +49,10 @@ public class LotteryMarketRoutingService {
         List<LotteryMarketRoutingPolicy.Allocation> allocations = plan.allocations();
         BigDecimal localTotal = plan.localTotal();
         BigDecimal marketTotal = plan.marketTotal();
+        List<MarketRouteItemDO> routes = new ArrayList<>(allocations.size());
         for (LotteryMarketRoutingPolicy.Allocation allocation : allocations) {
             MarketRouteItemDO route = new MarketRouteItemDO();
-            route.setId(IdUtil.fastSimpleUUID());
+            route.setId(detailId());
             route.setOrderId(orderId);
             route.setBetItemId(allocation.item().getId());
             route.setPeriod(period);
@@ -69,12 +72,22 @@ public class LotteryMarketRoutingService {
             route.setAttempts(0);
             route.setLastError("");
             route.setUserId(userId);
-            routeItemMapper.insert(route);
+            routes.add(route);
         }
+        insertRoutes(routes);
         String deliveryMode = marketTotal.signum() == 0 ? "LOCAL_EAT"
                 : localTotal.signum() == 0 ? "MARKET_ADAPTER" : "MIXED_MARKET";
         return new RoutingResult(localTotal, marketTotal, deliveryMode,
                 marketTotal.signum() == 0 ? "NOT_REQUIRED" : "PENDING");
+    }
+
+    private void insertRoutes(List<MarketRouteItemDO> routes) {
+        batchInsertService.insertMarketRoutes(TenantContextHolder.getRequiredTenantId(), routes);
+    }
+
+    private String detailId() {
+        String timestamp = Long.toHexString(System.currentTimeMillis());
+        return "0".repeat(Math.max(0, 12 - timestamp.length())) + timestamp + IdUtil.fastSimpleUUID();
     }
 
     private AllocationPlan allocationPlan(Long userId, String period, MemberDO member, List<BetItemDO> items) {

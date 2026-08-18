@@ -68,6 +68,14 @@ public interface RedisKeyConstants {
     String OAUTH2_ACCESS_TOKEN = "oauth2_access_token:%s";
 
     /**
+     * 后台账号当前唯一登录会话
+     * <p>
+     * KEY 格式：oauth2_single_session:{tenantId}:{userType}:{userId}
+     * VALUE 数据类型：String 当前刷新令牌
+     */
+    String OAUTH2_SINGLE_SESSION = "oauth2_single_session:%s:%s:%s";
+
+    /**
      * 站内信模版的缓存
      * <p>
      * KEY 格式：notify_template:{code}

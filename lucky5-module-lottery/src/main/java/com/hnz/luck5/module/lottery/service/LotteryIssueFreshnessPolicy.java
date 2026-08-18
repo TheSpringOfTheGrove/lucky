@@ -85,6 +85,12 @@ public class LotteryIssueFreshnessPolicy {
         return issue.getServerTime().plus(Duration.between(issue.getSourceObservedAt(), now));
     }
 
+    public LocalDateTime authoritativeBettingCutoffTime(IssueDO issue) {
+        if (issue == null || issue.getServerTime() == null) return null;
+        long remaining = Math.max(0, issue.getRemainingSeconds() == null ? 0 : issue.getRemainingSeconds());
+        return issue.getServerTime().plusSeconds(remaining);
+    }
+
     private LocalDateTime localCutoff(IssueDO issue) {
         if (issue == null) return null;
         long remaining = Math.max(0, issue.getRemainingSeconds() == null ? 0 : issue.getRemainingSeconds());

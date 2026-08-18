@@ -31,6 +31,11 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001"))
                 .isEqualTo("@露露\n下注成功");
         assertThat(template.publicBetReceipt("露露", "")).isEmpty();
+
+        String awaitingDetails = template.betReceiptAwaitingDetails("露露", "20260809194",
+                "654倒二定各10", 3, 36, new BigDecimal("360"), new BigDecimal("26764.45"));
+        assertThat(template.publicBetReceipt("露露", awaitingDetails))
+                .doesNotContain("26764.45", "正在确认明细");
     }
 
     @Test
@@ -48,7 +53,13 @@ class LotteryRobotReplyTemplateTest {
 
     @Test
     void shouldOnlyExposeFinalBetOutcomeToPlayer() {
-        assertThat(template.marketBetPending("露露", "20260809194", "654倒二定各10")).isEmpty();
+        assertThat(template.marketBetPending("露露", "20260809194", "654倒二定各10"))
+                .isEqualTo("@露露\n提交中");
+        assertThat(template.betReceiptAwaitingDetails("露露", "20260809194", "654倒二定各10", 3, 36,
+                new BigDecimal("360.00"), new BigDecimal("26764.45")))
+                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
+                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n正在确认明细")
+                .doesNotContain("盘口", "外盘");
         assertThat(template.betFailed("露露", new BigDecimal("360.00")))
                 .isEqualTo("@露露\n下注失败\n下注金额360已退回")
                 .doesNotContain("盘口", "外盘", "核对");

@@ -230,7 +230,8 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   `order_type` varchar(30) NOT NULL DEFAULT 'PLAYER',
   `delivery_mode` varchar(30) NOT NULL DEFAULT 'LOCAL_ONLY', `market_status` varchar(30) NOT NULL DEFAULT 'NOT_REQUIRED',
   `market_order_id` mediumtext NOT NULL, `market_error` varchar(1000) NOT NULL DEFAULT '',
-  `market_attempts` int NOT NULL DEFAULT 0, `period_sequence` int NOT NULL DEFAULT 0, `version` int NOT NULL DEFAULT 0,
+  `market_attempts` int NOT NULL DEFAULT 0, `item_count` int NOT NULL DEFAULT 0,
+  `period_sequence` int NOT NULL DEFAULT 0, `version` int NOT NULL DEFAULT 0,
   `settled_at` datetime NULL, `cancelled_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -238,6 +239,14 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_order_sequence` (`tenant_id`,`user_id`,`period`,`period_sequence`),
   KEY `idx_lucky5_order_period` (`tenant_id`,`user_id`,`period`,`status`), KEY `idx_lucky5_order_member` (`tenant_id`,`user_id`,`member_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 订单';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_order' AND column_name='item_count')=0,
+  'ALTER TABLE `lucky5_order` ADD COLUMN `item_count` int NOT NULL DEFAULT 0 AFTER `market_attempts`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_bet_item` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `order_id` varchar(64) NOT NULL, `play` varchar(100) NOT NULL,
@@ -266,15 +275,32 @@ CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_market_route_bet` (`tenant_id`,`user_id`,`order_id`,`bet_item_id`),
-  UNIQUE KEY `uk_lucky5_market_route_guid` (`tenant_id`,`user_id`,`market_guid`),
+  KEY `idx_lucky5_market_route_guid` (`tenant_id`,`user_id`,`market_guid`),
   KEY `idx_lucky5_market_route_dispatch` (`tenant_id`,`user_id`,`status`,`next_retry_at`),
   KEY `idx_lucky5_market_route_period` (`tenant_id`,`user_id`,`period`,`play`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 真实盘口资金路由及派发状态';
 
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_route_item'
+     AND index_name='uk_lucky5_market_route_guid')>0,
+  'ALTER TABLE `lucky5_market_route_item` DROP INDEX `uk_lucky5_market_route_guid`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_route_item'
+     AND index_name='idx_lucky5_market_route_guid')=0,
+  'ALTER TABLE `lucky5_market_route_item` ADD KEY `idx_lucky5_market_route_guid` (`tenant_id`,`user_id`,`market_guid`)',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
 CREATE TABLE IF NOT EXISTS `lucky5_draw` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `period` varchar(40) NOT NULL, `result` varchar(100) NOT NULL,
   `big_small` varchar(20) NOT NULL DEFAULT '', `odd_even` varchar(20) NOT NULL DEFAULT '',
-  `dragon_tiger` varchar(20) NOT NULL DEFAULT '', `status` varchar(30) NOT NULL DEFAULT '已开奖', `settled_at` datetime NOT NULL,
+  `dragon_tiger` varchar(20) NOT NULL DEFAULT '', `status` varchar(30) NOT NULL DEFAULT '已开奖', `settled_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
@@ -285,6 +311,15 @@ SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns
    WHERE table_schema=DATABASE() AND table_name='lucky5_draw' AND column_name='draw_time')=0,
   'ALTER TABLE `lucky5_draw` ADD COLUMN `draw_time` datetime NULL AFTER `status`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_draw'
+     AND column_name='settled_at' AND is_nullable='NO')>0,
+  'ALTER TABLE `lucky5_draw` MODIFY COLUMN `settled_at` datetime NULL',
   'SELECT 1'
 );
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;

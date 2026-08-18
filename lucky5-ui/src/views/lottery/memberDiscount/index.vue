@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
 
@@ -69,13 +69,18 @@ const rebuildList = () => {
   listVersion.value += 1
 }
 
+onMounted(() => void store.refreshRebateMembers())
+
 const apply = async () => {
   try {
     await ElMessageBox.confirm(`确认发放返水 ${money(totalRebate.value)} 分？`, '一键返水', {
       type: 'warning'
     })
     const result = await store.applyRebates()
-    if (result !== false) rebuildList()
+    if (result !== false) {
+      await store.refreshRebateMembers()
+      rebuildList()
+    }
   } catch {
     // User cancelled.
   }
@@ -101,6 +106,7 @@ const saveEdit = async () => {
   }
   const result = await store.saveDiscounts([{ ...editForm }])
   if (result !== false) {
+    await store.refreshRebateMembers()
     rebuildList()
     editVisible.value = false
   }
@@ -116,7 +122,10 @@ const togglePuller = async (row: Record<string, any>) => {
       { type: 'warning' }
     )
     const result = await store.saveDiscounts([{ ...row, puller: next }])
-    if (result !== false) rebuildList()
+    if (result !== false) {
+      await store.refreshRebateMembers()
+      rebuildList()
+    }
   } catch {
     // User cancelled.
   }
@@ -141,6 +150,7 @@ const saveBatch = async () => {
   }))
   const result = await store.saveDiscounts(payload)
   if (result !== false) {
+    await store.refreshRebateMembers()
     rebuildList()
     batchVisible.value = false
   }
@@ -175,7 +185,7 @@ const saveBatch = async () => {
 
       <PaginatedTable
         :key="listVersion"
-        v-loading="store.loading || store.saving"
+        v-loading="store.rebateMembersRefreshing || store.saving"
         :data="rows"
         border
       >

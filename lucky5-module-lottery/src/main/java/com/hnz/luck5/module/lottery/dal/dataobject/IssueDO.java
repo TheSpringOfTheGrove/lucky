@@ -1,6 +1,8 @@
 package com.hnz.luck5.module.lottery.dal.dataobject;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -34,6 +36,7 @@ public class IssueDO extends LotteryUserBaseDO {
     private String error;
     private LocalDateTime settlementStartedAt;
     private LocalDateTime settledAt;
+    @TableField(updateStrategy = FieldStrategy.NEVER)
     private Integer orderSequence;
 
 }
