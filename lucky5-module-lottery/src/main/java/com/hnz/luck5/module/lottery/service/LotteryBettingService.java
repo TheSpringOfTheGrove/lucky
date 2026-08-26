@@ -42,7 +42,7 @@ public class LotteryBettingService {
     }
 
     public List<ParsedBet> parse(String rawContent, List<OddDO> odds) {
-        String content = expandNumericFixedShorthand(normalize(rawContent));
+        String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(normalize(rawContent)));
         if (content.isBlank()) {
             throw exception(BET_CONTENT_INVALID);
         }
@@ -417,6 +417,12 @@ public class LotteryBettingService {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().replaceAll("[，,、；;\\s]+", "").replace('：', ':').replace('末', '尾');
+    }
+
+    private String normalizeReverseFixedAlias(String content) {
+        Matcher matcher = Pattern.compile("^([0-9]+)([二三四])定倒(.*各\\d+(?:\\.\\d+)?)$").matcher(content);
+        if (!matcher.matches()) return content;
+        return matcher.group(1) + "倒" + matcher.group(2) + "定" + matcher.group(3);
     }
 
     private String expandNumericFixedShorthand(String content) {

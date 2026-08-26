@@ -91,6 +91,25 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesReverseFixedAliasWithModeBeforeReverse() {
+        assertThat(service.parse("253二定倒各5", odds))
+                .containsExactlyElementsOf(service.parse("253倒二定各5", odds));
+        assertThat(service.parse("123三定倒各1", odds))
+                .containsExactlyElementsOf(service.parse("123倒三定各1", odds));
+
+        List<LotteryBettingService.ParsedBet> alias = service.parse("223344455667788四定倒各1", odds);
+        List<LotteryBettingService.ParsedBet> canonical = service.parse("223344455667788倒四定各1", odds);
+        assertThat(alias).hasSize(2_250).containsExactlyElementsOf(canonical)
+                .allSatisfy(bet -> {
+                    assertThat(bet.play()).isEqualTo("四定位");
+                    assertThat(bet.amount()).isEqualByComparingTo("1");
+                    assertThat(bet.odds()).isEqualByComparingTo("9600");
+                });
+        assertThat(alias.stream().map(LotteryBettingService.ParsedBet::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("2250");
+    }
+
+    @Test
     void matchesOriginalReferenceFilters() {
         assertThat(service.parse("二现含12各3", odds)).hasSize(19);
         assertThat(service.parse("三现取三兄弟各1", odds)).hasSize(10);
