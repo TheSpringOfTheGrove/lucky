@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_balance_ledger` (
   `member_name` varchar(100) NOT NULL, `business_type` varchar(40) NOT NULL, `business_id` varchar(100) NOT NULL,
   `direction` varchar(10) NOT NULL, `amount` decimal(18,2) NOT NULL,
   `balance_before` decimal(18,2) NOT NULL, `balance_after` decimal(18,2) NOT NULL,
-  `actor` varchar(100) NOT NULL DEFAULT '', `remark` varchar(500) NOT NULL DEFAULT '',
+  `actor` varchar(100) NOT NULL DEFAULT '', `remark` mediumtext NOT NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   `updater` varchar(64) DEFAULT '', `update_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
@@ -218,6 +218,15 @@ CREATE TABLE IF NOT EXISTS `lucky5_balance_ledger` (
   UNIQUE KEY `uk_lucky5_balance_business` (`tenant_id`,`user_id`,`member_id`,`business_type`,`business_id`),
   KEY `idx_lucky5_balance_member` (`tenant_id`,`user_id`,`member_id`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 会员资金流水';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_balance_ledger'
+     AND column_name='remark' AND data_type='mediumtext')=0,
+  'ALTER TABLE `lucky5_balance_ledger` MODIFY COLUMN `remark` mediumtext NOT NULL',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 ALTER TABLE `lucky5_balance_ledger`
   MODIFY COLUMN `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),

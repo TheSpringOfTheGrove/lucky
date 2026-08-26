@@ -55,6 +55,21 @@ class LotteryBalanceLedgerServiceTest {
     }
 
     @Test
+    void preservesLongAuditRemarkWithoutTruncation() {
+        MemberDO member = member("100.00", 3);
+        when(memberMapper.update(any(), any())).thenReturn(1);
+        String remark = "期号 20260826175 下注 " + "13680配四定取千123456789".repeat(40);
+
+        service.change(member, new BigDecimal("-1"),
+                LotteryBalanceLedgerService.BET_DEBIT, "O-LONG", "boss", remark);
+
+        ArgumentCaptor<BalanceLedgerDO> captor = ArgumentCaptor.forClass(BalanceLedgerDO.class);
+        verify(balanceLedgerMapper).insert(captor.capture());
+        assertThat(remark).hasSizeGreaterThan(500);
+        assertThat(captor.getValue().getRemark()).isEqualTo(remark);
+    }
+
+    @Test
     void refusesOverdraftWithoutWritingLedger() {
         MemberDO member = member("10.00", 0);
 
