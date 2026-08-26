@@ -110,6 +110,81 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesHistoricalFixedPoolAndReverseAliases() {
+        assertThat(service.parse("0759三定各0.1", odds)).hasSize(96);
+        assertThat(service.parse("56790三定各0.2", odds)).hasSize(240);
+        assertThat(service.parse("5679倒两定各1", odds)).hasSize(72);
+        assertThat(service.parse("6651倒各1", odds)).hasSize(12);
+    }
+
+    @Test
+    void splitsCombinedCommandsAndPreservesDuplicateCommands() {
+        assertThat(service.parse("5679各1.1 9765各1", odds)).hasSize(2);
+        assertThat(service.parse("0759三定各1,0759三定各1", odds)).hasSize(192);
+        assertThat(service.parse("千01234百01234十01234尾01234各1 千01234百01234十01234尾01234各1", odds))
+                .hasSize(1_250);
+    }
+
+    @Test
+    void matchesHistoricalFourPositionFilterCounts() {
+        assertThat(service.parse(
+                "除个4四定取千百十个合023697458百十个合623957104两数合0268除对数49除单单大双除四兄弟除四重除两双重各1", odds).size()).isEqualTo(5_823);
+        assertThat(service.parse(
+                "除个7四定取千百合473018652百个合237460518三数合01258除对数38各0.5", odds).size()).isEqualTo(6_105);
+        assertThat(service.parse(
+                "配01234配56789四定除千百十个合4三数合54321除单双双双取两兄弟各1.6", odds).size()).isEqualTo(4_876);
+        assertThat(service.parse(
+                "四定千123457906百123567890十123457890取千百十个合123456789取千百个合012345689除三重除四重除四兄弟除对数371各0.8", odds).size()).isEqualTo(5_409);
+        assertThat(service.parse(
+                "千百十尾23457890除大大大大除小小小小除单单单单除双双双双除千百十个合16各0.1", odds).size()).isEqualTo(2_590);
+    }
+
+    @Test
+    void matchesHistoricalInheritedFilterActionCounts() {
+        assertThat(service.parse(
+                "千9375百234571908十123457896取两数合1357三数合13579248除三兄弟三重各1", odds)).hasSize(139);
+        assertThat(service.parse(
+                "千9375百234571908十123457896取两数合2468三数合13579248除三兄弟三重各1", odds)).hasSize(206);
+        assertThat(service.parse(
+                "千234567980百234507896尾3957除三兄弟三重取两数合2468三数合13579248各1", odds)).hasSize(200);
+    }
+
+    @Test
+    void parsesHistoricalConflictingFilterChainWithoutHardCodingItsReply() {
+        // 该条存档回执与同一文件中其它已验证样本的筛选定义冲突，只锁定兼容解析能力。
+        assertThat(service.parse(
+                "千百十个1357902468除千百十个合7除千百合0除十个合7两数合0268除对数27除三重除两双重除三兄弟各0.6", odds)).isNotEmpty();
+    }
+
+    @Test
+    void matchesHistoricalCombinedPairedCommandCount() {
+        String suffix = "配四定取千123456789两数合0248含23568除四兄弟除对数27除值36值36各0.1";
+        String content = List.of("035", "203", "028", "258", "235", "269", "429",
+                        "640", "670", "709", "358", "047", "368", "568")
+                .stream().map(right -> "13680配" + right + suffix)
+                .collect(java.util.stream.Collectors.joining(" "));
+
+        assertThat(service.parse(content, odds)).hasSize(69_141);
+    }
+
+    @Test
+    void matchesRemainingHistoricalCorpusCounts() {
+        assertThat(service.parse(
+                "089613三定各0.3 7890三定各0.3 8902三定各0.3 0136三定各0.3 1234三定各0.3 0123三定各0.3", odds)).hasSize(960);
+        assertThat(service.parse("1133445599778800倒四定各1.3", odds)).hasSize(3_864);
+        assertThat(service.parse(
+                "123456780头123467890百234567890十。两数合234567除三重除三兄弟各7", odds)).hasSize(650);
+        assertThat(service.parse(
+                "123456780头123467890百234567890十012346789个。两数合012345除三重各0.5", odds)).hasSize(6_264);
+        assertThat(service.parse("12364790头12307698尾除双重各65", odds)).hasSize(57);
+        assertThat(service.parse(
+                "6516各8.8 6156各8.8 6651倒各0.6 5561倒各0.6 1156倒各0.6", odds)).hasSize(38);
+        assertThat(service.parse(
+                "千234567980百234507896尾3957除三兄弟三重取两数合1357三数合13579248各0.9", odds)).hasSize(166);
+        assertThat(service.parse("千364578百154378个024568各23", odds)).hasSize(216);
+    }
+
+    @Test
     void matchesOriginalReferenceFilters() {
         assertThat(service.parse("二现含12各3", odds)).hasSize(19);
         assertThat(service.parse("三现取三兄弟各1", odds)).hasSize(10);
