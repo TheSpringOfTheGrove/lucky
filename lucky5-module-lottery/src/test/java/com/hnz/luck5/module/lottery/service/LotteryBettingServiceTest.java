@@ -123,6 +123,8 @@ class LotteryBettingServiceTest {
         assertThat(service.parse("0759三定各1,0759三定各1", odds)).hasSize(192);
         assertThat(service.parse("千01234百01234十01234尾01234各1 千01234百01234十01234尾01234各1", odds))
                 .hasSize(1_250);
+        assertThat(service.splitCommandsForDisplay("0759三定各1,0759三定各1"))
+                .containsExactly("0759三定各1", "0759三定各1");
     }
 
     @Test

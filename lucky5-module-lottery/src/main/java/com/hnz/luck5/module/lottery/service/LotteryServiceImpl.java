@@ -72,6 +72,7 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String TYPE_AUTO_PROXY = "AUTO_PROXY";
     private static final String COMMAND_SETTLEMENT = "SETTLEMENT";
     private static final String COMMAND_PAYOUT_SUMMARY = "PAYOUT_SUMMARY";
+    private static final String COMMAND_PERIOD_SUMMARY = "PERIOD_SUMMARY";
     private static final Set<String> DRAW_RESULT_COMMANDS = Set.of("DRAW", "DRAW_RESULT", "LOTTERY_RESULT");
     private static final String ROOM_MODE_GROUP = "GROUP";
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
@@ -125,6 +126,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryBettingService bettingService;
     @Resource private LotteryRoomMessagePolicy roomMessagePolicy;
     @Resource private LotteryRobotReplyTemplate robotReplyTemplate;
+    @Resource private LotteryPeriodSummaryService periodSummaryService;
     @Resource private LotteryIssueFreshnessPolicy issueFreshnessPolicy;
     @Resource private LotteryRebateCalculator rebateCalculator;
     @Resource private LotteryChimaCalculator chimaCalculator;
@@ -1492,7 +1494,9 @@ public class LotteryServiceImpl implements LotteryService {
         if (existingDraw != null) throw exception(PERIOD_ALREADY_SETTLED);
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, member.getUserId()).eq(IssueDO::getPeriod, reqVO.getPeriod())));
-        if (issue == null || !"OPEN".equals(issue.getStatus())) throw exception(ISSUE_NOT_OPEN);
+        if (issue == null || !"OPEN".equals(issue.getStatus()) || issue.getOpenedAt() == null) {
+            throw exception(ISSUE_NOT_OPEN);
+        }
         if (issueFreshnessPolicy.isStale(issue)) throw exception(ISSUE_SOURCE_STALE);
         if (issueFreshnessPolicy.isBettingClosed(issue)) throw exception(ISSUE_NOT_OPEN);
         List<OddDO> odds = getEffectiveOdds(member.getUserId());
@@ -1926,8 +1930,7 @@ public class LotteryServiceImpl implements LotteryService {
                     "oddEven", oldDraw.getOddEven(), "dragonTiger", oldDraw.getDragonTiger(), "orders", 0,
                     "totalBet", ZERO, "totalPayout", ZERO, "alreadySettled", true);
         }
-        BigDecimal totalAmount = ZERO;
-        BigDecimal totalPayout = ZERO;
+        LotterySettlementTotals settlementTotals = new LotterySettlementTotals();
         List<Map<String, Object>> details = new ArrayList<>();
         Map<String, List<String>> winningLines = new LinkedHashMap<>();
         Map<String, BigDecimal> winningPayouts = new HashMap<>();
@@ -1981,9 +1984,9 @@ public class LotteryServiceImpl implements LotteryService {
             }
             messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
                     .eq(MessageDO::getOrderId, order.getId()).set(MessageDO::getStatus, order.getStatus()));
-            if (!isAutoProxyOrder(order)) {
-                totalAmount = totalAmount.add(order.getAmount());
-                totalPayout = totalPayout.add(payout);
+            boolean autoProxyOrder = isAutoProxyOrder(order);
+            settlementTotals.add(order.getAmount(), payout, autoProxyOrder);
+            if (!autoProxyOrder) {
                 details.add(map("orderId", order.getId(), "member", order.getMemberName(), "amount", money(order.getAmount()),
                         "payout", payout, "status", order.getStatus()));
             }
@@ -2032,12 +2035,16 @@ public class LotteryServiceImpl implements LotteryService {
             issue.setSettledAt(LocalDateTime.now());
             issueMapper.updateById(issue);
         }
+        List<String> groupSettlementReplies = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : winningLines.entrySet()) {
             MemberDO member = requireMember(winningMemberIds.get(entry.getKey()), userId);
             BigDecimal payout = money(winningPayouts.get(entry.getKey()));
             BigDecimal afterBalance = money(member.getBalance());
+            String settlementReply = robotReplyTemplate.settlement(entry.getKey(), entry.getValue(), payout,
+                    afterBalance);
+            groupSettlementReplies.add(settlementReply);
             MessageDO message = new MessageDO();
-            message.setChannel(CHANNEL_WEB_GROUP);
+            message.setChannel(CHANNEL_WEB_PRIVATE);
             message.setMemberId(member.getId());
             message.setMember(entry.getKey());
             message.setPeriod(period);
@@ -2045,8 +2052,7 @@ public class LotteryServiceImpl implements LotteryService {
             message.setStatus("已结算");
             message.setCommandType(COMMAND_SETTLEMENT);
             message.setMessageType(isAutoProxy(member) ? TYPE_AUTO_PROXY : TYPE_PLAYER);
-            message.setReply(robotReplyTemplate.settlement(entry.getKey(), entry.getValue(), payout,
-                    afterBalance));
+            message.setReply(settlementReply);
             message.setProcessedAt(LocalDateTime.now());
             message.setUserId(userId);
             messageMapper.insert(message);
@@ -2062,17 +2068,18 @@ public class LotteryServiceImpl implements LotteryService {
             payoutSummary.setExternalId("payout-summary:" + period);
             payoutSummary.setCommandType(COMMAND_PAYOUT_SUMMARY);
             payoutSummary.setMessageType(TYPE_PLAYER);
-            payoutSummary.setReply(robotReplyTemplate.payoutSummary(money(totalPayout)));
+            payoutSummary.setReply(robotReplyTemplate.payoutSummary(groupSettlementReplies,
+                    money(settlementTotals.roomPayout())));
             payoutSummary.setProcessedAt(LocalDateTime.now());
             payoutSummary.setUserId(userId);
             messageMapper.insert(payoutSummary);
             logAs(userId, actor, "-", "结算期号 " + period + "，真实订单 " + details.size() + " 笔，投额 "
-                    + money(totalAmount) + "，派彩 " + money(totalPayout) + "，原因 "
+                    + money(settlementTotals.realBet()) + "，派彩 " + money(settlementTotals.realPayout()) + "，原因 "
                     + StrUtil.blankToDefault(reason, "开奖API二次确认"));
         }
         Map<String, Object> result = map("period", period, "result", record.getResult(), "bigSmall", record.getBigSmall(),
                 "oddEven", record.getOddEven(), "dragonTiger", record.getDragonTiger(), "orders", details.size(),
-                "totalBet", money(totalAmount), "totalPayout", money(totalPayout), "details", details,
+                "totalBet", money(settlementTotals.realBet()), "totalPayout", money(settlementTotals.realPayout()), "details", details,
                 "alreadySettled", false);
         if (autoRebate) result.put("rebate", applyRebatesInternal(userId, actor));
         return result;
@@ -2109,7 +2116,11 @@ public class LotteryServiceImpl implements LotteryService {
         if ("OPEN".equals(target)) issue.setOpenedAt(LocalDateTime.now()); else issue.setClosedAt(LocalDateTime.now());
         issueMapper.updateById(issue);
         log("-", ("OPEN".equals(target) ? "开盘 " : "封盘 ") + period);
-        if ("OPEN".equals(target)) publishIssueOpened(issue.getUserId(), period);
+        if ("OPEN".equals(target)) {
+            publishIssueOpened(issue.getUserId(), period);
+        } else {
+            periodSummaryService.publish(issue.getUserId(), period);
+        }
     }
 
     @Override
@@ -2209,17 +2220,23 @@ public class LotteryServiceImpl implements LotteryService {
             MessageDO message = saveCommandMessage(member, reqVO, "CHAT", "");
             return map("messageId", message.getId(), "reply", "", "commandType", "CHAT");
         }
-        if (Set.of("查", "余额").contains(content)) {
+        if (messageType == LotteryRoomMessagePolicy.MessageType.BALANCE) {
             List<OrderDO> activeOrders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
                     new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, member.getUserId())
                             .eq(OrderDO::getMemberId, member.getId()).eq(OrderDO::getStatus, "未开奖")
                             .orderByAsc(OrderDO::getCreateTime)));
-            String current = activeOrders.isEmpty() ? "目前无房源" : activeOrders.stream()
-                    .map(order -> "[" + periodSuffix(order.getPeriod()) + "-" + value(order.getPeriodSequence(), 0) + "]" + order.getContent())
-                    .collect(Collectors.joining("\n"));
+            List<LotteryRobotReplyTemplate.CurrentOrder> current = activeOrders.stream()
+                    .map(order -> new LotteryRobotReplyTemplate.CurrentOrder(order.getPeriod(), order.getContent(),
+                            Set.of("CONFIRMED", "NOT_REQUIRED").contains(value(order.getMarketStatus(), ""))))
+                    .toList();
             String reply = robotReplyTemplate.balance(member.getName(), current, member.getBalance());
             MessageDO message = saveCommandMessage(member, reqVO, "BALANCE", reply);
             return map("messageId", message.getId(), "reply", reply, "commandType", "BALANCE");
+        }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.PROFIT_LOSS) {
+            String reply = robotReplyTemplate.profitLoss(member.getName(), member.getProfitLoss());
+            MessageDO message = saveCommandMessage(member, reqVO, "PROFIT_LOSS", reply);
+            return map("messageId", message.getId(), "reply", reply, "commandType", "PROFIT_LOSS");
         }
         java.util.regex.Matcher amount = java.util.regex.Pattern.compile("^(上|下)(?:分)?(\\d+(?:\\.\\d+)?)$").matcher(content);
         if (amount.matches()) {
@@ -2480,15 +2497,16 @@ public class LotteryServiceImpl implements LotteryService {
                         item -> bool(item.getEnabled()), (a, b) -> b));
         List<QuickCommandDO> commands = getEffectiveQuickCommands(member.getUserId(), true);
         LocalDateTime roomNow = LocalDateTime.now();
-        String effectiveIssueStatus = issueFreshnessPolicy.effectiveStatus(current, roomNow);
+        String effectiveIssueStatus = roomIssueStatus(current, roomNow);
+        boolean answeringOpen = "OPEN".equals(effectiveIssueStatus);
         LocalDateTime authoritativeSourceTime = issueFreshnessPolicy.authoritativeSourceTime(current, roomNow);
         return map("member", map("id", member.getId(), "name", member.getName(), "balance", money(member.getBalance()),
                         "totalBet", money(member.getTotalBet()), "profitLoss", money(member.getProfitLoss()), "avatar", member.getAvatar()),
                 "room", map("name", value(config.getRoomName(), "幸运5"), "announcement", value(config.getAnnouncement(), ""),
                         "mode", roomMode, "modeName", ROOM_MODE_PRIVATE.equals(roomMode) ? "私聊" : "群聊",
                         "open", bool(state.getRoomOpen()), "online", onlineMembers,
-                        "bettingEnabled", ROOM_MODE_PRIVATE.equals(roomMode)
-                                || switches.getOrDefault("pullEnable", false),
+                        "bettingEnabled", answeringOpen && (ROOM_MODE_PRIVATE.equals(roomMode)
+                                || switches.getOrDefault("pullEnable", false)),
                         "cancelEnabled", switches.getOrDefault("openCancel", false),
                         "features", map("groupImage", switches.getOrDefault("groupImage", false),
                                 "privateImage", switches.getOrDefault("privateImage", false),
@@ -2567,7 +2585,7 @@ public class LotteryServiceImpl implements LotteryService {
                 .eq(IssueDO::getUserId, member.getUserId())
                 .orderByDesc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
         LocalDateTime roomNow = LocalDateTime.now();
-        String effectiveIssueStatus = issueFreshnessPolicy.effectiveStatus(current, roomNow);
+        String effectiveIssueStatus = roomIssueStatus(current, roomNow);
         LocalDateTime authoritativeSourceTime = issueFreshnessPolicy.authoritativeSourceTime(current, roomNow);
         Map<String, Object> issue = current == null
                 ? map("currentPeriod", "", "status", "UNAVAILABLE", "remainingSeconds", 0,
@@ -2615,9 +2633,16 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                         .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
                         .in(MessageDO::getCommandType, "BET", "CHAT", COMMAND_SETTLEMENT,
-                                COMMAND_PAYOUT_SUMMARY)
+                                COMMAND_PERIOD_SUMMARY, COMMAND_PAYOUT_SUMMARY)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
         return mergeMessages(ownMessages, sharedMessages, 100);
+    }
+
+    private String roomIssueStatus(IssueDO issue, LocalDateTime now) {
+        if (issue != null && "OPEN".equals(issue.getStatus()) && issue.getOpenedAt() == null) {
+            return "WAITING_SETTLEMENT";
+        }
+        return issueFreshnessPolicy.effectiveStatus(issue, now);
     }
 
     private LambdaQueryWrapper<MessageDO> ownRoomMessageQuery(MemberDO member) {
@@ -2641,7 +2666,8 @@ public class LotteryServiceImpl implements LotteryService {
                 || item.getMemberId() == null && Objects.equals(item.getMember(), member.getName());
         boolean sharedPayoutSummary = COMMAND_PAYOUT_SUMMARY.equals(item.getCommandType());
         boolean sharedSettlement = COMMAND_SETTLEMENT.equals(item.getCommandType());
-        String sharedReply = sharedPayoutSummary || sharedSettlement ? item.getReply() : "";
+        boolean sharedPeriodSummary = COMMAND_PERIOD_SUMMARY.equals(item.getCommandType());
+        String sharedReply = sharedPayoutSummary || sharedSettlement || sharedPeriodSummary ? item.getReply() : "";
         String playerReply = normalizeCheckMarks(value(item.getReply(), ""));
         if (playerReply.contains("盘口") || playerReply.contains("外盘")) {
             playerReply = "";
@@ -2800,7 +2826,7 @@ public class LotteryServiceImpl implements LotteryService {
         String reply = robotReplyTemplate.periodClosed(member.getName());
         MessageDO message = saveCommandMessage(member, reqVO, "PERIOD_CLOSED", reply);
         message.setStatus("已拒绝");
-        message.setError("封盘中");
+        message.setError("已结束");
         messageMapper.updateById(message);
         return map("messageId", message.getId(), "reply", reply, "commandType", "PERIOD_CLOSED");
     }
@@ -2811,7 +2837,9 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, member.getUserId())
                         .eq(StrUtil.isNotBlank(requestedPeriod), IssueDO::getPeriod, requestedPeriod)
                         .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
-        if (issue == null || !"OPEN".equals(issue.getStatus())) return periodClosedReply(member, reqVO);
+        if (issue == null || !"OPEN".equals(issue.getStatus()) || issue.getOpenedAt() == null) {
+            return periodClosedReply(member, reqVO);
+        }
         if (issueFreshnessPolicy.isStale(issue)) return drawSourceStaleReply(member, reqVO);
         if (issueFreshnessPolicy.isBettingClosed(issue)) return periodClosedReply(member, reqVO);
         return null;
@@ -2827,7 +2855,15 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> balanceNotEnoughReply(MemberDO member, LotteryReqVO.IncomingMessage reqVO) {
-        String reply = robotReplyTemplate.balanceNotEnough(member.getName());
+        BigDecimal required = ZERO;
+        try {
+            required = money(bettingService.parse(reqVO.getContent(), getEffectiveOdds(member.getUserId())).stream()
+                    .map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
+        } catch (ServiceException ignored) {
+            // The original rejection is still authoritative; this best-effort calculation only enriches the reply.
+        }
+        String reply = robotReplyTemplate.balanceNotEnough(member.getName(), reqVO.getContent(), required,
+                member.getBalance());
         MessageDO message = saveCommandMessage(member, reqVO, "BET_REJECTED", reply);
         message.setStatus("已拒绝");
         message.setError("余额不足");

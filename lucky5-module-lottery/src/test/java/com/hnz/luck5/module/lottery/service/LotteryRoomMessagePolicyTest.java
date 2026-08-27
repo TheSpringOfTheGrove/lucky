@@ -36,6 +36,8 @@ class LotteryRoomMessagePolicyTest {
     @Test
     void classifiesReadAndWriteCommandsAsOperations() {
         assertThat(policy.classify("查", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BALANCE);
+        assertThat(policy.classify("盈亏", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.PROFIT_LOSS);
+        assertThat(policy.classify("yk", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.PROFIT_LOSS);
         assertThat(policy.classify("上分100", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.AMOUNT);
         assertThat(policy.classify("退码L5-100", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.CANCEL);
         assertThat(policy.classify("大100 单50", odds)).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);

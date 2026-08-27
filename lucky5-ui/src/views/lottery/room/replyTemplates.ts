@@ -1,6 +1,13 @@
-import type { RoomOrder } from '@/api/lottery/room'
-
 const money = (value: number) => Number(value || 0).toFixed(2)
+
+export const resolveDragonTiger = (numbers: string[], storedResult = '') => {
+  if (['龙', '虎', '和'].includes(storedResult)) return storedResult
+  const settlementNumbers = (numbers || []).slice(0, 4).map(Number)
+  if (settlementNumbers.length !== 4 || settlementNumbers.some(Number.isNaN)) return ''
+  const first = settlementNumbers[0]
+  const last = settlementNumbers[3]
+  return first === last ? '和' : first > last ? '龙' : '虎'
+}
 
 export const roomReplyTemplates = {
   welcome(roomName: string, memberName: string, balance: number, period: string) {
@@ -11,13 +18,8 @@ export const roomReplyTemplates = {
     return status === 'OPEN' ? '^^★★★开始-答题★★★' : '^^★★★停止-上课★★★'
   },
 
-  periodSummary(memberName: string, orders: RoomOrder[]) {
-    if (!orders.length) return ''
-    const lines = orders.map((order) => `[${memberName}]${order.content}`)
-    return `本期成功订单\n${lines.join('\n')}\n------------`
-  },
-
-  draw(period: string, numbers: string[]) {
-    return `^^--| ${period.slice(-3)}期开奖结果-${numbers.join('|')}`
+  draw(period: string, numbers: string[], storedDragonTiger = '') {
+    const dragonTiger = resolveDragonTiger(numbers, storedDragonTiger)
+    return `^^--| ${period.slice(-3)}期开奖结果-${numbers.join('|')}${dragonTiger ? `|${dragonTiger}` : ''}`
   }
 }

@@ -54,6 +54,13 @@ public class LotteryBettingService {
         return result;
     }
 
+    /**
+     * Splits a combined room command for display without changing its text or removing duplicate subcommands.
+     */
+    public List<String> splitCommandsForDisplay(String rawContent) {
+        return List.copyOf(splitCommands(rawContent));
+    }
+
     private List<ParsedBet> parseSingle(String rawContent, List<OddDO> odds) {
         String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(normalize(rawContent)));
         if (content.isBlank()) {

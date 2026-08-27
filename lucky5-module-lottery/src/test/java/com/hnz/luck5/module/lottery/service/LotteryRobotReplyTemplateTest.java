@@ -16,7 +16,7 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
                 .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
-                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n点击退码");
+                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n\n点击退码");
     }
 
     @Test
@@ -58,7 +58,7 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.betReceiptAwaitingDetails("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
                 .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
-                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n正在确认明细")
+                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n\n正在确认明细")
                 .doesNotContain("盘口", "外盘");
         assertThat(template.betFailed("露露", new BigDecimal("360.00")))
                 .isEqualTo("@露露\n下注失败\n下注金额360已退回")
@@ -70,7 +70,9 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.cancelReview("露露"))
                 .isEqualTo("@露露\n退码结果待确认，请联系管理员")
                 .doesNotContain("盘口", "外盘");
-        assertThat(template.balanceNotEnough("露露")).isEqualTo("@露露\n余额不足")
+        assertThat(template.balanceNotEnough("露露", "654倒二定各10", new BigDecimal("360"),
+                new BigDecimal("131")))
+                .isEqualTo("@露露\n【房源不足】\n654倒二定各10\n【此需】：360\n【您目前】：131")
                 .doesNotContain("盘口", "外盘");
         assertThat(template.betRejected("露露", "当前玩法暂不可用"))
                 .isEqualTo("@露露\n下注失败\n当前玩法暂不可用")
@@ -82,7 +84,7 @@ class LotteryRobotReplyTemplateTest {
     @Test
     void shouldFormatClosedAndAmountReplies() {
         assertThat(template.roomClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n当前未开盘");
-        assertThat(template.periodClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n封盘中");
+        assertThat(template.periodClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n已结束");
         assertThat(template.amountPending("旺旺杀米米")).isEqualTo("@旺旺杀米米\n请稍后");
         assertThat(template.amountAudited("旺旺杀米米", "上分", new BigDecimal("100.00"),
                 "已通过", new BigDecimal("65393.87")))
@@ -103,5 +105,27 @@ class LotteryRobotReplyTemplateTest {
                 .isEqualTo("【本次总派送】：6720");
         assertThat(template.payoutSummary(BigDecimal.ZERO))
                 .isEqualTo("【本次总派送】：0");
+        assertThat(template.payoutSummary(List.of(
+                "【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【当前面积】：31052.52",
+                "【露露】入住：\n654X，套数5，房费480\n合房费：480\n【当前面积】：4374.1"),
+                new BigDecimal("1440.00")))
+                .isEqualTo("【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【当前面积】：31052.52"
+                        + "\n--------\n【露露】入住：\n654X，套数5，房费480\n合房费：480\n【当前面积】：4374.1"
+                        + "\n--------\n【本次总派送】：1440");
+    }
+
+    @Test
+    void shouldFormatBalanceProfitAndPeriodSummaryLikeReferenceRobot() {
+        assertThat(template.balance("露露", List.of(
+                new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "654倒二定各10", true),
+                new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "千12百34二定各1", false)),
+                new BigDecimal("4374.10")))
+                .isEqualTo("@露露\n【目前房源】：\n[挂牌时间]194\n654倒二定各10"
+                        + "\n【状态】:房源已录入成功✓✓\n\n[挂牌时间]194\n千12百34二定各1"
+                        + "\n【状态】:正在确认明细\n\n【您目前】：\n4374.1");
+        assertThat(template.profitLoss("露露", new BigDecimal("1265.70")))
+                .isEqualTo("@露露\nyk：1265.7");
+        assertThat(template.periodSummary(List.of("[露露]654倒二定各10", "[露露]654倒二定各10")))
+                .isEqualTo("本期成功订单\n[露露]654倒二定各10\n[露露]654倒二定各10\n------------");
     }
 }

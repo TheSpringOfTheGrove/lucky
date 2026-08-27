@@ -25,10 +25,22 @@ const whiteList = [
   '/oauthLogin/gitee'
 ]
 
+const isPublicRoomPath = (path: string) =>
+  path === '/room' ||
+  path.startsWith('/room/') ||
+  path.startsWith('/r/') ||
+  path.startsWith('/g/') ||
+  path.startsWith('/p/')
+
 // 路由加载前
 router.beforeEach(async (to, from, next) => {
   start()
   loadStart()
+  // 玩家房间不属于后台登录体系。即使浏览器残留后台令牌，也不能触发后台用户初始化和重新登录弹窗。
+  if (isPublicRoomPath(to.path)) {
+    next()
+    return
+  }
   if (getAccessToken()) {
     if (to.path === '/login') {
       next({ path: '/' })
@@ -64,13 +76,7 @@ router.beforeEach(async (to, from, next) => {
       }
     }
   } else {
-    if (
-      whiteList.includes(to.path) ||
-      to.path.startsWith('/room/') ||
-      to.path.startsWith('/r/') ||
-      to.path.startsWith('/g/') ||
-      to.path.startsWith('/p/')
-    ) {
+    if (whiteList.includes(to.path)) {
       next()
     } else {
       next(`/login?redirect=${encodeURIComponent(to.fullPath)}`) // 否则全部重定向到登录页

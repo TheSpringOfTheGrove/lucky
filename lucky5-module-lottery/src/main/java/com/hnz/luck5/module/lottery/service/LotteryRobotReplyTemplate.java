@@ -15,17 +15,36 @@ import java.util.List;
 @Component
 public class LotteryRobotReplyTemplate {
 
+    public record CurrentOrder(String period, String content, boolean confirmed) {
+    }
+
     public String roomClosed(String memberName) {
         return "@" + memberName + "\n当前未开盘";
     }
 
     public String periodClosed(String memberName) {
-        return "@" + memberName + "\n封盘中";
+        return "@" + memberName + "\n已结束";
     }
 
-    public String balance(String memberName, String currentOrders, BigDecimal balance) {
-        return "@" + memberName + "\n【目前房源】：\n" + currentOrders
+    public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
+        String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
+                .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + order.content()
+                        + "\n【状态】:" + (order.confirmed() ? "房源已录入成功✓✓" : "正在确认明细"))
+                .reduce((left, right) -> left + "\n\n" + right)
+                .orElse("目前无房源");
+        return "@" + memberName + "\n【目前房源】：\n" + orders
                 + "\n\n【您目前】：\n" + number(balance);
+    }
+
+    public String profitLoss(String memberName, BigDecimal profitLoss) {
+        return "@" + memberName + "\nyk：" + number(profitLoss);
+    }
+
+    public String periodSummary(List<String> memberCommands) {
+        if (memberCommands == null || memberCommands.isEmpty()) {
+            return "";
+        }
+        return "本期成功订单\n" + String.join("\n", memberCommands) + "\n------------";
     }
 
     public String amountPending(String memberName) {
@@ -81,8 +100,10 @@ public class LotteryRobotReplyTemplate {
         return "@" + memberName + "\n下注失败\n下注金额" + number(refunded) + "已退回";
     }
 
-    public String balanceNotEnough(String memberName) {
-        return "@" + memberName + "\n余额不足";
+    public String balanceNotEnough(String memberName, String content, BigDecimal required, BigDecimal balance) {
+        return "@" + memberName + "\n【房源不足】\n" + content
+                + "\n【此需】：" + number(required)
+                + "\n【您目前】：" + number(balance);
     }
 
     public String betRejected(String memberName, String reason) {
@@ -107,7 +128,7 @@ public class LotteryRobotReplyTemplate {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content
                 + "\n【户型审核成功】✓✓\n【编号】：" + sequence
                 + "\n【套内】：" + itemCount + "\n【套外】：" + number(amount)
-                + "\n【面积】：" + number(balance) + "\n" + action;
+                + "\n【面积】：" + number(balance) + "\n\n" + action;
     }
 
     /**
@@ -148,6 +169,17 @@ public class LotteryRobotReplyTemplate {
 
     public String payoutSummary(BigDecimal periodPayout) {
         return "【本次总派送】：" + number(periodPayout);
+    }
+
+    public String payoutSummary(List<String> memberSettlements, BigDecimal periodPayout) {
+        List<String> visible = memberSettlements == null ? List.of() : memberSettlements.stream()
+                .filter(item -> item != null && !item.isBlank())
+                .toList();
+        if (visible.isEmpty()) {
+            return payoutSummary(periodPayout);
+        }
+        return String.join("\n--------\n", visible)
+                + "\n--------\n" + payoutSummary(periodPayout);
     }
 
     String number(BigDecimal value) {

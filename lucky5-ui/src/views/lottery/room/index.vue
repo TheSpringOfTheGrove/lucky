@@ -16,7 +16,7 @@ import {
 } from '@/api/lottery/room'
 import ScratchCard from './components/ScratchCard.vue'
 import QuickPickDialog from './components/QuickPickDialog.vue'
-import { roomReplyTemplates } from './replyTemplates'
+import { resolveDragonTiger, roomReplyTemplates } from './replyTemplates'
 import logo from '@/assets/imgs/logo.png'
 import memberAvatar from '@/assets/imgs/avatar.jpg'
 
@@ -25,6 +25,12 @@ type ChatType = 'text' | 'order' | 'amount' | 'draw'
 
 const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
 const SCRATCH_PERIOD_SECONDS = 300
+const DRAW_NUMBER_COLOR_CLASSES: Record<string, string> = {
+  '1': 'is-purple',
+  '6': 'is-pink',
+  '8': 'is-blue',
+  '9': 'is-green'
+}
 
 interface ChatItem {
   id: string
@@ -38,6 +44,7 @@ interface ChatItem {
   amountRecord?: RoomAmountRecord
   draw?: RoomDraw
   showTime?: boolean
+  sequenceRank?: number
 }
 
 const route = useRoute()
@@ -62,8 +69,6 @@ const clockNowMs = ref(Date.now())
 const authoritativeClockOffsetMs = ref(0)
 const bettingCutoffAtMs = ref<number | null>(null)
 const autoScratch = ref(localStorage.getItem('lucky5-auto-scratch') !== 'false')
-const visibleDrawPeriods = ref<string[]>([])
-const historyExpanded = ref(false)
 const scratchLauncherTop = ref<number | null>(null)
 const scratchLauncherDragging = ref(false)
 let scratchLauncherDragActive = false
@@ -75,6 +80,7 @@ const scratchLauncherStyle = computed(() =>
 )
 const uniqueId = () =>
   globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
+const drawNumberClass = (number: string) => DRAW_NUMBER_COLOR_CLASSES[number] || 'is-gray'
 
 const credential = computed<RoomCredential>(() => {
   const queryOpenId = typeof route.query.openId === 'string' ? route.query.openId : ''
@@ -175,22 +181,6 @@ const displayedDraws = computed(() => {
   return [candidate, ...draws.filter((draw) => draw.period !== candidate.period)]
 })
 const latestDraw = computed(() => displayedDraws.value[0] || null)
-const pendingDrawIndicator = computed(() => {
-  const candidate = pendingCandidateDraw.value
-  if (candidate) return { period: candidate.period, label: '结算中' }
-
-  const latestPersistedDraw = displayedDraws.value[0]
-  if (
-    latestPersistedDraw &&
-    ['待结算', 'DRAW_PENDING', 'DRAWN', 'SETTLING'].includes(latestPersistedDraw.status)
-  ) {
-    return { period: latestPersistedDraw.period, label: '结算中' }
-  }
-
-  const period = scratchPendingPeriod.value
-  if (!period || !officialDrawBoundaryPassed.value) return null
-  return { period, label: '开奖中' }
-})
 const scratchPreviousResultPeriod = computed(() => {
   const pendingPeriod = scratchPendingPeriod.value
   if (!pendingPeriod) return latestDraw.value?.period || session.value?.issue.currentPeriod || ''
@@ -305,41 +295,39 @@ const chatMessages = computed<ChatItem[]>(() => {
   }
 
   for (const transition of session.value.issueTransitions || []) {
-    if (transition.status === 'CLOSED') {
-      const summary = roomReplyTemplates.periodSummary(
-        session.value.member.name,
-        session.value.orders.filter(
-          (order) => order.period === transition.period && order.status !== '已退码'
-        )
-      )
-      if (summary) {
-        messages.push({
-          id: `issue-summary-${transition.id}`,
-          kind: 'robot',
-          type: 'text',
-          content: summary,
-          createdAt: dayjs(transition.createdAt).subtract(1, 'millisecond').toISOString()
-        })
-      }
-    }
     messages.push({
       id: `issue-transition-${transition.id}`,
       kind: 'robot',
       type: 'text',
       content: roomReplyTemplates.issueTransition(transition.status),
-      createdAt: transition.createdAt
+      createdAt: transition.createdAt,
+      sequenceRank: transition.status === 'CLOSED' ? 10 : transition.status === 'OPEN' ? 60 : undefined
     })
   }
 
-  const visibleDrawPeriodSet = new Set(visibleDrawPeriods.value)
-  for (const draw of session.value.draws.filter((item) => visibleDrawPeriodSet.has(item.period))) {
+  const drawSequenceAnchors = new Map<string, string>()
+  for (const message of session.value.messages) {
+    if (!message.reply || !['SETTLEMENT', 'PAYOUT_SUMMARY'].includes(message.commandType)) continue
+    const replyDelay = message.commandType === 'PAYOUT_SUMMARY' ? 3 : 2
+    const displayedAt = dayjs(message.createdAt).add(replyDelay, 'millisecond')
+    const currentAnchor = dayjs(drawSequenceAnchors.get(message.period))
+    if (!currentAnchor.isValid() || displayedAt.isAfter(currentAnchor)) {
+      drawSequenceAnchors.set(message.period, displayedAt.toISOString())
+    }
+  }
+
+  for (const draw of session.value.draws.filter((item) => Boolean(item.settledAt))) {
+    const sequenceAnchor = drawSequenceAnchors.get(draw.period)
     messages.push({
       id: `draw-${draw.period}`,
       kind: 'robot',
       type: 'draw',
-      content: roomReplyTemplates.draw(draw.period, draw.numbers),
-      createdAt: draw.drawTime || draw.settledAt,
-      draw
+      content: roomReplyTemplates.draw(draw.period, draw.numbers, draw.dragonTiger),
+      createdAt: sequenceAnchor
+        ? dayjs(sequenceAnchor).add(1, 'millisecond').toISOString()
+        : draw.settledAt,
+      draw,
+      sequenceRank: 50
     })
   }
 
@@ -348,7 +336,7 @@ const chatMessages = computed<ChatItem[]>(() => {
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
       message.own === false &&
-      ['BET', 'SETTLEMENT', 'PAYOUT_SUMMARY'].includes(message.commandType) &&
+      ['BET', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType) &&
       Boolean(message.reply)
     if (!['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType)) {
       messages.push({
@@ -380,7 +368,15 @@ const chatMessages = computed<ChatItem[]>(() => {
             message.error ||
             (message.status === '处理中' ? '正在处理' : message.status),
         createdAt: dayjs(message.createdAt).add(robotReplyDelay, 'millisecond').toISOString(),
-        order
+        order,
+        sequenceRank:
+          message.commandType === 'PERIOD_SUMMARY'
+            ? 20
+            : message.commandType === 'SETTLEMENT'
+              ? 30
+              : message.commandType === 'PAYOUT_SUMMARY'
+                ? 40
+                : undefined
       })
     }
   }
@@ -428,6 +424,14 @@ const chatMessages = computed<ChatItem[]>(() => {
     const right = dayjs(b.createdAt)
     const timeDifference =
       (left.isValid() ? left.valueOf() : 0) - (right.isValid() ? right.valueOf() : 0)
+    if (
+      a.sequenceRank !== undefined &&
+      b.sequenceRank !== undefined &&
+      Math.abs(timeDifference) <= 1000 &&
+      a.sequenceRank !== b.sequenceRank
+    ) {
+      return a.sequenceRank - b.sequenceRank
+    }
     return timeDifference || a.id.localeCompare(b.id)
   })
   return messages.map((item, index) => {
@@ -453,68 +457,9 @@ let countdownTimer: number | undefined
 let sessionRequestSequence = 0
 
 const money = (value: number) => Number(value || 0).toFixed(2)
-const recentDraws = computed(() => displayedDraws.value.slice(0, 10))
-// The market can advertise the next period before the just-closed period has a result.
-// During that closed window the header must remain on the period the player actually bet,
-// then advance only after its numbers arrive (or the next period is genuinely open).
-const headerPendingPeriod = computed(() => {
-  const currentSession = session.value
-  const pendingPeriod = scratchPendingPeriod.value
-  const marketPeriod = currentSession?.issue.currentPeriod || ''
-  if (!currentSession || !pendingPeriod || !marketPeriod || pendingPeriod >= marketPeriod) return ''
-  if (hasPendingCandidate.value) return ''
-  if (currentSession.draws.some((draw) => draw.period === pendingPeriod)) return ''
-  if (officialDrawBoundaryPassed.value) return ''
-
-  const nextPeriodIsOpen = currentSession.issue.status === 'OPEN' && scratchRemaining.value > 0
-  return nextPeriodIsOpen ? '' : pendingPeriod
-})
-const currentPeriod = computed(
-  () =>
-    headerPendingPeriod.value ||
-    session.value?.issue.currentPeriod ||
-    session.value?.suggestedPeriod ||
-    ''
-)
-const scheduledDrawAt = computed(() => {
-  const value = headerPendingPeriod.value
-    ? session.value?.issue.pendingDrawTime
-    : session.value?.issue.drawTime
-  return dayjs(value)
-})
-const scheduledDrawTime = computed(() => {
-  return scheduledDrawAt.value.isValid() ? scheduledDrawAt.value.format('HH:mm:ss') : ''
-})
-const sealedCountdown = computed(() => {
-  if (!scheduledDrawAt.value.isValid()) return 0
-  return Math.max(0, Math.ceil((scheduledDrawAt.value.valueOf() - clockNowMs.value) / 1000))
-})
 const drawDisplayTime = (draw: RoomDraw) => {
   const parsed = dayjs(draw.drawTime || draw.settledAt)
-  return parsed.isValid() ? parsed.format('HH:mm:ss') : '--:--:--'
-}
-const issuePresentation = computed(() => {
-  const currentSession = session.value
-  if (headerPendingPeriod.value) return { label: '已封盘', tone: 'closed' }
-  const status = currentSession?.issue.status || 'UNAVAILABLE'
-  if (status === 'OPEN') {
-    if (scratchRemaining.value <= 0) return { label: '已封盘', tone: 'closed' }
-    if (!currentSession?.room.open) return { label: '老板未开盘', tone: 'muted' }
-    if (!currentSession.room.bettingEnabled) return { label: '下注已暂停', tone: 'muted' }
-    return { label: '开盘中', tone: 'open' }
-  }
-  if (status === 'CLOSED') return { label: '已封盘', tone: 'closed' }
-  if (status === 'DRAW_PENDING') return { label: '开奖确认中', tone: 'pending' }
-  if (status === 'DRAW_ABNORMAL') return { label: '开奖异常', tone: 'abnormal' }
-  if (status === 'SOURCE_STALE') return { label: '开奖源异常', tone: 'abnormal' }
-  if (status === 'SETTLED') return { label: '等待下一期', tone: 'muted' }
-  return { label: '等待开盘', tone: 'muted' }
-})
-const formatCountdown = (seconds: number) => {
-  const safeSeconds = Math.max(0, Math.floor(Number(seconds || 0)))
-  const minutes = Math.floor(safeSeconds / 60)
-  const remainder = safeSeconds % 60
-  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+  return parsed.isValid() ? parsed.format('HH:mm') : '--:--'
 }
 const applyAuthoritativeIssueClock = (issue: RoomSession['issue'], responseReceivedAt: number) => {
   const serverTime = dayjs(issue.serverTime)
@@ -536,28 +481,6 @@ const applyAuthoritativeIssueClock = (issue: RoomSession['issue'], responseRecei
   scratchRemaining.value =
     issue.status === 'OPEN' ? Math.max(0, Number(issue.remainingSeconds || 0)) : 0
 }
-const issueTimingText = computed(() => {
-  if (headerPendingPeriod.value) {
-    return `${formatCountdown(sealedCountdown.value)}${
-      scheduledDrawTime.value ? ` · 开奖 ${scheduledDrawTime.value}` : ''
-    }`
-  }
-  const status = session.value?.issue.status || 'UNAVAILABLE'
-  const drawTime = scheduledDrawTime.value ? `开奖 ${scheduledDrawTime.value}` : ''
-  if (status === 'OPEN') {
-    return scratchRemaining.value > 0
-      ? `封盘 ${formatCountdown(scratchRemaining.value)}${drawTime ? ` · ${drawTime}` : ''}`
-      : `${formatCountdown(sealedCountdown.value)}${drawTime ? ` · ${drawTime}` : ''}`
-  }
-  if (status === 'CLOSED') {
-    return `${formatCountdown(sealedCountdown.value)}${drawTime ? ` · ${drawTime}` : ''}`
-  }
-  if (status === 'DRAW_PENDING') return `${drawTime ? `${drawTime} · ` : ''}号码确认中`
-  if (status === 'DRAW_ABNORMAL') return '暂停结算'
-  if (status === 'SOURCE_STALE') return '数据已过期 · 暂停下注'
-  if (status === 'SETTLED') return '本期已结算'
-  return '等待开盘'
-})
 const receiptText = (value: string) => value.replace(/\n点击退码\s*$/, '')
 const messageTime = (value: string) =>
   dayjs(value).isSame(dayjs(), 'day')
@@ -599,15 +522,6 @@ const loadSession = async (quiet = false) => {
     const responseReceivedAt = Date.now()
     if (requestSequence !== sessionRequestSequence) return
     const nextDrawPeriod = nextSession.draws[0]?.period || ''
-    if (!previousDrawPeriod && nextDrawPeriod) {
-      visibleDrawPeriods.value = [nextDrawPeriod]
-    } else if (
-      nextDrawPeriod &&
-      previousDrawPeriod !== nextDrawPeriod &&
-      !visibleDrawPeriods.value.includes(nextDrawPeriod)
-    ) {
-      visibleDrawPeriods.value = [...visibleDrawPeriods.value, nextDrawPeriod]
-    }
     session.value = nextSession
     if (trackedBetMessageId.value !== null) {
       const trackedMessage = nextSession.messages.find(
@@ -660,15 +574,6 @@ const loadDrawState = async () => {
     const responseReceivedAt = Date.now()
     if (requestSequence !== sessionRequestSequence || !session.value) return
     const nextDrawPeriod = nextState.draws[0]?.period || ''
-    if (!previousDrawPeriod && nextDrawPeriod) {
-      visibleDrawPeriods.value = [nextDrawPeriod]
-    } else if (
-      nextDrawPeriod &&
-      previousDrawPeriod !== nextDrawPeriod &&
-      !visibleDrawPeriods.value.includes(nextDrawPeriod)
-    ) {
-      visibleDrawPeriods.value = [...visibleDrawPeriods.value, nextDrawPeriod]
-    }
     session.value = { ...session.value, ...nextState }
     applyAuthoritativeIssueClock(nextState.issue, responseReceivedAt)
     if (
@@ -729,9 +634,8 @@ const updateAutoScratch = (value: boolean) => {
   localStorage.setItem('lucky5-auto-scratch', String(value))
 }
 
-const ROOM_OVERVIEW_HEIGHT = 128
 const clampScratchLauncherTop = (value: number) => {
-  const minimum = ROOM_OVERVIEW_HEIGHT + 12
+  const minimum = 12
   const maximum = Math.max(minimum, window.innerHeight - 66 - 92)
   return Math.min(Math.max(minimum, value), maximum)
 }
@@ -975,8 +879,6 @@ watch(
     trackedBetMessageId.value = null
     betReplyFastPollUntilMs.value = 0
     bettingCutoffAtMs.value = null
-    visibleDrawPeriods.value = []
-    historyExpanded.value = false
     await loadSession()
     await scrollToBottom()
     composerRef.value?.focus()
@@ -1012,13 +914,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    :class="[
-      'chat-room',
-      bottomPanel ? `has-panel-${bottomPanel}` : '',
-      { 'has-pending-draw': pendingDrawIndicator }
-    ]"
-  >
+  <div :class="['chat-room', bottomPanel ? `has-panel-${bottomPanel}` : '']">
     <div v-if="loading" class="room-state-page">
       <span class="room-loader"></span>
     </div>
@@ -1030,7 +926,7 @@ onBeforeUnmount(() => {
 
     <template v-else-if="session">
       <button
-        v-if="session.room.features.prizeCard && scratchResultPeriod && !historyExpanded"
+        v-if="session.room.features.prizeCard && scratchResultPeriod"
         class="scratch-launcher"
         :class="{ 'is-dragging': scratchLauncherDragging }"
         :style="scratchLauncherStyle"
@@ -1057,93 +953,6 @@ onBeforeUnmount(() => {
         @refresh="loadSession(true)"
         @update:auto-popup="updateAutoScratch"
       />
-
-      <header class="room-overview">
-        <div class="room-overview__profile">
-          <div class="room-member">
-            <img :src="memberAvatar" :alt="session.member.name" />
-            <div>
-              <strong>{{ session.member.name }}</strong>
-              <span>{{ session.room.name }} · {{ session.room.modeName }}</span>
-            </div>
-          </div>
-          <div class="room-balance">
-            <span>可用积分</span>
-            <strong>{{ money(session.member.balance) }}</strong>
-          </div>
-        </div>
-
-        <div class="room-overview__market">
-          <div class="room-current-period" :title="currentPeriod || '等待期号'">
-            <span>当前期</span>
-            <strong>{{ currentPeriod || '---' }}</strong>
-          </div>
-          <span :class="['room-status', `is-${issuePresentation.tone}`]">
-            {{ issuePresentation.label }}
-          </span>
-          <strong
-            :class="[
-              'room-countdown',
-              {
-                'is-urgent':
-                  session.issue.status === 'OPEN' && scratchRemaining > 0 && scratchRemaining <= 10
-              }
-            ]"
-          >
-            {{ issueTimingText }}
-          </strong>
-        </div>
-
-        <div class="room-overview__history">
-          <div v-if="pendingDrawIndicator" class="room-pending-draw" role="status">
-            <Icon icon="ep:loading" :size="14" />
-            <strong>{{ pendingDrawIndicator.period }}期</strong>
-            <span>{{ pendingDrawIndicator.label }}</span>
-          </div>
-          <button
-            v-if="latestDraw"
-            class="room-history-latest"
-            type="button"
-            :title="`${latestDraw.period}期 ${latestDraw.numbers.join(' ')}`"
-            :aria-expanded="historyExpanded"
-            @click="historyExpanded = !historyExpanded"
-          >
-            <Icon icon="ep:clock" :size="15" />
-            <span class="room-history-label">最近开奖</span>
-            <strong>{{ latestDraw.period }}</strong>
-            <small class="room-history-latest-time">
-              {{ drawDisplayTime(latestDraw) }}
-            </small>
-            <span class="room-history-numbers room-history-latest-numbers">
-              <i v-for="(number, index) in latestDraw.numbers" :key="index">{{ number }}</i>
-            </span>
-            <Icon :icon="historyExpanded ? 'ep:arrow-up' : 'ep:arrow-down'" :size="12" />
-          </button>
-          <span v-else class="room-history-empty">暂无开奖记录</span>
-        </div>
-
-        <section v-if="historyExpanded" class="room-history-panel">
-          <div class="room-history-panel__title">
-            <strong>近10期开奖</strong>
-            <button type="button" aria-label="关闭开奖记录" @click="historyExpanded = false">
-              <Icon icon="ep:close" :size="16" />
-            </button>
-          </div>
-          <div v-if="recentDraws.length" class="room-history-panel__list">
-            <div v-for="draw in recentDraws" :key="draw.period">
-              <span class="room-history-period">{{ draw.period }}期</span>
-              <span class="room-history-time">{{ drawDisplayTime(draw) }}</span>
-              <span class="room-history-numbers">
-                <i v-for="(number, index) in draw.numbers" :key="`${draw.period}-${index}`">
-                  {{ number }}
-                </i>
-              </span>
-              <small>{{ draw.bigSmall }} · {{ draw.oddEven }}</small>
-            </div>
-          </div>
-          <div v-else class="room-history-panel__empty">暂无开奖记录</div>
-        </section>
-      </header>
 
       <main ref="chatRef" class="chat-stream" aria-live="polite" @scroll.passive="handleChatScroll">
         <article
@@ -1179,7 +988,8 @@ onBeforeUnmount(() => {
                     :class="['lottery-table', { 'is-bold': session.room.features.imageBold }]"
                   >
                     <div class="lottery-table__head">
-                      <strong>期数</strong><strong>时间</strong><strong>成功</strong>
+                      <strong>期数</strong><strong>时间</strong><strong>成功</strong
+                      ><strong aria-hidden="true"></strong>
                     </div>
                     <div
                       v-for="draw in session.draws.slice(0, 15)"
@@ -1195,10 +1005,19 @@ onBeforeUnmount(() => {
                         <i
                           v-for="(number, index) in draw.numbers"
                           :key="`${draw.period}-history-${index}`"
+                          :class="drawNumberClass(number)"
                         >
                           {{ number }}
                         </i>
                       </span>
+                      <strong
+                        :class="[
+                          'lottery-table__dragon-tiger',
+                          `is-${resolveDragonTiger(draw.numbers, draw.dragonTiger)}`
+                        ]"
+                      >
+                        {{ resolveDragonTiger(draw.numbers, draw.dragonTiger) }}
+                      </strong>
                     </div>
                   </div>
                 </template>
@@ -1347,7 +1166,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat-room {
-  --room-overview-height: 128px;
+  --room-overview-height: 0px;
   position: fixed;
   z-index: 1;
   overflow: hidden;
@@ -1356,10 +1175,6 @@ onBeforeUnmount(() => {
   color-scheme: light;
   background: #f5f5f7;
   inset: 0;
-}
-
-.chat-room.has-pending-draw {
-  --room-overview-height: 162px;
 }
 
 .room-overview {
@@ -2339,7 +2154,7 @@ onBeforeUnmount(() => {
 
 .lottery-table__head {
   display: grid;
-  grid-template-columns: 46px 58px 1fr;
+  grid-template-columns: 46px 58px minmax(92px, 1fr) 28px;
   padding: 8px 10px;
   color: #555;
   background: #f1f2f4;
@@ -2349,7 +2164,7 @@ onBeforeUnmount(() => {
 
 .lottery-table__history-row {
   display: grid;
-  grid-template-columns: 46px 58px 1fr;
+  grid-template-columns: 46px 58px minmax(92px, 1fr) 28px;
   padding: 4px 10px;
   border-bottom: 1px solid #eee;
   font-size: 13px;
@@ -2370,8 +2185,45 @@ onBeforeUnmount(() => {
 }
 
 .lottery-table__history-numbers i {
+  color: #707070;
   font-style: normal;
   text-align: center;
+}
+
+.lottery-table__history-numbers i.is-purple {
+  color: #8d3299;
+}
+
+.lottery-table__history-numbers i.is-pink {
+  color: #ff4f82;
+}
+
+.lottery-table__history-numbers i.is-blue {
+  color: #409eff;
+}
+
+.lottery-table__history-numbers i.is-green {
+  color: #10c957;
+}
+
+.lottery-table__dragon-tiger {
+  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+.lottery-table__dragon-tiger.is-龙 {
+  color: #ff1493;
+}
+
+.lottery-table__dragon-tiger.is-虎 {
+  color: #0000ff;
+}
+
+.lottery-table__dragon-tiger.is-和 {
+  color: #00cc44;
 }
 
 .draw-brief {

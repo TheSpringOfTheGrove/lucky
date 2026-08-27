@@ -27,7 +27,9 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -45,6 +47,7 @@ public class LotteryMarketSyncService {
     private final AtomicBoolean syncingAll = new AtomicBoolean();
     private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
+    private final AtomicBoolean repairingPeriodSummaries = new AtomicBoolean();
     private volatile long nextDrawSyncAtMillis;
     private volatile long activeDrawTimeMillis;
     private volatile long queuedDrawTimeMillis;
@@ -58,6 +61,8 @@ public class LotteryMarketSyncService {
     @Resource private Wa55MarketClient marketClient;
     @Resource private LotteryMarketAccountLockService accountLockService;
     @Resource private LotteryDrawVerificationService drawVerificationService;
+    @Resource private LotteryIssueFreshnessPolicy issueFreshnessPolicy;
+    @Resource private LotteryPeriodSummaryService periodSummaryService;
     @Resource private TransactionTemplate transactionTemplate;
     @Lazy @Resource private LotteryService lotteryService;
 
@@ -81,6 +86,12 @@ public class LotteryMarketSyncService {
 
     @Value("${lottery.draw-source.user-id:1}")
     private Long drawSourceUserId;
+
+    private record SnapshotPersistence(boolean newlyOpened, List<String> closedPeriods) {
+    }
+
+    private record PeriodSummaryPublication(Long tenantId, Long userId, String period) {
+    }
 
     @Scheduled(initialDelayString = "${lottery.market.initial-delay-ms:5000}",
             fixedDelayString = "${lottery.market.sync-tick-ms:50}")
@@ -161,6 +172,30 @@ public class LotteryMarketSyncService {
             });
         } finally {
             settlingAll.set(false);
+        }
+    }
+
+    @Scheduled(initialDelayString = "${lottery.market.period-summary-repair-initial-delay-ms:30000}",
+            fixedDelayString = "${lottery.market.period-summary-repair-interval-ms:60000}")
+    public void repairRecentPeriodSummaries() {
+        if (!repairingPeriodSummaries.compareAndSet(false, true)) return;
+        try {
+            List<LotteryConfigDO> configs = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
+                    () -> lotteryConfigMapper.selectList(new LambdaQueryWrapper<LotteryConfigDO>()
+                            .isNotNull(LotteryConfigDO::getUserId))));
+            configs.stream().map(config -> config.getTenantId() + ":" + config.getUserId()).distinct().forEach(key -> {
+                String[] parts = key.split(":", 2);
+                Long tenantId = Long.valueOf(parts[0]);
+                Long userId = Long.valueOf(parts[1]);
+                try {
+                    TenantUtils.execute(tenantId, () -> recentSummaryCandidatePeriods(userId).forEach(period ->
+                            periodSummaryService.publish(userId, period)));
+                } catch (RuntimeException ex) {
+                    LOGGER.error("近期成功订单汇总补偿失败 tenant={} user={}", tenantId, userId, ex);
+                }
+            });
+        } finally {
+            repairingPeriodSummaries.set(false);
         }
     }
 
@@ -274,12 +309,17 @@ public class LotteryMarketSyncService {
                     rootMessage(ex));
             return null;
         }
+        List<PeriodSummaryPublication> summaryPublications = new ArrayList<>();
         for (LotteryConfigDO target : configs) {
             try {
                 TenantUtils.execute(target.getTenantId(), () -> {
-                    boolean newlyOpened = Boolean.TRUE.equals(transactionTemplate.execute(status ->
-                            persistSharedSnapshot(target.getUserId(), snapshot)));
-                    if (newlyOpened) {
+                    SnapshotPersistence persistence = transactionTemplate.execute(status ->
+                            persistSharedSnapshot(target.getUserId(), snapshot));
+                    if (persistence != null) {
+                        persistence.closedPeriods().forEach(period -> summaryPublications.add(
+                                new PeriodSummaryPublication(target.getTenantId(), target.getUserId(), period)));
+                    }
+                    if (persistence != null && persistence.newlyOpened()) {
                         lotteryService.handleMarketIssueOpened(target.getUserId(), snapshot.issue().period());
                     }
                 });
@@ -287,8 +327,19 @@ public class LotteryMarketSyncService {
                 LOGGER.error("共享开奖分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
             }
         }
-        // Settlement is intentionally left to settleAllPending() on another scheduler thread. Publishing the next
-        // period and trusted result must never wait for payout, rebate or downstream order processing.
+        // Publish summaries only after the shared issue/result snapshot has reached every owner. Summary formatting
+        // and order reads must never delay another owner's draw display path.
+        for (PeriodSummaryPublication publication : summaryPublications) {
+            try {
+                TenantUtils.execute(publication.tenantId(), () ->
+                        periodSummaryService.publish(publication.userId(), publication.period()));
+            } catch (RuntimeException ex) {
+                LOGGER.error("期末成功订单汇总失败 tenant={} user={} period={}", publication.tenantId(),
+                        publication.userId(), publication.period(), ex);
+            }
+        }
+        // Settlement is intentionally left to settleAllPending() on another scheduler thread. Trusted numbers are
+        // still published immediately, while the next answering period is released only after payout commits.
         return snapshot;
     }
 
@@ -351,29 +402,40 @@ public class LotteryMarketSyncService {
                 config.getUpstreamUrl(), config.getUpstreamAccount(), password));
     }
 
-    private boolean persistSharedSnapshot(Long userId, Wa55MarketClient.Snapshot snapshot) {
+    private SnapshotPersistence persistSharedSnapshot(Long userId, Wa55MarketClient.Snapshot snapshot) {
         LocalDateTime now = LocalDateTime.now();
-        boolean newlyOpened = upsertCurrentIssue(userId, snapshot.issue(), now);
-        for (Wa55MarketClient.Draw draw : snapshot.draws()) upsertDrawIssue(userId, draw, now);
-        return newlyOpened;
+        SnapshotPersistence persistence = upsertCurrentIssue(userId, snapshot.issue(), now);
+        LinkedHashSet<String> closedPeriods = new LinkedHashSet<>(persistence.closedPeriods());
+        for (Wa55MarketClient.Draw draw : snapshot.draws()) {
+            if (upsertDrawIssue(userId, draw, now)) {
+                closedPeriods.add(draw.period());
+            }
+        }
+        return new SnapshotPersistence(persistence.newlyOpened(), List.copyOf(closedPeriods));
     }
 
-    private boolean upsertCurrentIssue(Long userId, Wa55MarketClient.Issue snapshot, LocalDateTime now) {
-        if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")) return false;
+    private SnapshotPersistence upsertCurrentIssue(Long userId, Wa55MarketClient.Issue snapshot, LocalDateTime now) {
+        if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")) {
+            return new SnapshotPersistence(false, List.of());
+        }
+        List<String> closedPeriods = new ArrayList<>();
         IssueDO issue = findIssue(userId, snapshot.period());
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
         boolean terminal = issue != null && List.of("DRAW_PENDING", "DRAW_ABNORMAL", "DRAWN", "SETTLING", "SETTLED")
                 .contains(issue.getStatus());
         String nextStatus = terminal ? issue.getStatus() : snapshot.status();
-        if ("OPEN".equals(nextStatus)) {
-            List<IssueDO> previous = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
-                    new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "OPEN")
-                            .ne(IssueDO::getPeriod, snapshot.period())));
-            for (IssueDO old : previous) {
-                old.setStatus("CLOSED");
-                old.setClosedAt(now);
-                issueMapper.updateById(old);
+        List<IssueDO> previous = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "OPEN")
+                        .ne(IssueDO::getPeriod, snapshot.period())));
+        for (IssueDO old : previous) {
+            if (!isLaterPeriod(snapshot.period(), old.getPeriod())) continue;
+            boolean formallyOpened = old.getOpenedAt() != null;
+            old.setStatus("CLOSED");
+            old.setClosedAt(now);
+            issueMapper.updateById(old);
+            if (formallyOpened) {
                 transition(userId, old.getPeriod(), "OPEN", "CLOSED", "系统新期开奖", "");
+                closedPeriods.add(old.getPeriod());
             }
         }
         if (issue == null) {
@@ -386,24 +448,65 @@ public class LotteryMarketSyncService {
             issue.setError("");
             issue.setOrderSequence(0);
             issue.setDrawConfirmations(0);
-            issue.setOpenedAt("OPEN".equals(nextStatus) ? now : null);
+            issue.setOpenedAt(null);
             issue.setClosedAt("CLOSED".equals(nextStatus) ? now : null);
             fillIssueSnapshot(issue, snapshot);
             issueMapper.insert(issue);
         } else {
-            if ("OPEN".equals(nextStatus) && issue.getOpenedAt() == null) issue.setOpenedAt(now);
             if ("CLOSED".equals(nextStatus) && issue.getClosedAt() == null) issue.setClosedAt(now);
+            if ("OPEN".equals(nextStatus)) issue.setClosedAt(null);
             issue.setStatus(nextStatus);
             issue.setSource("系统开奖");
             if (!terminal) issue.setError("");
             fillIssueSnapshot(issue, snapshot);
             issueMapper.updateById(issue);
         }
-        if (!Objects.equals(oldStatus, nextStatus)) {
-            transition(userId, snapshot.period(), oldStatus, nextStatus, "系统期号同步",
-                    "{\"marketStatus\":" + snapshot.marketStatus() + "}");
+        if (!Objects.equals(oldStatus, nextStatus) && !"OPEN".equals(nextStatus)) {
+            boolean formallyOpened = issue.getOpenedAt() != null;
+            if (!"CLOSED".equals(nextStatus) || formallyOpened) {
+                transition(userId, snapshot.period(), oldStatus, nextStatus, "系统期号同步",
+                        "{\"marketStatus\":" + snapshot.marketStatus() + "}");
+            }
+            if ("CLOSED".equals(nextStatus) && formallyOpened) {
+                closedPeriods.add(snapshot.period());
+            }
         }
-        return "OPEN".equals(nextStatus) && !"OPEN".equals(oldStatus);
+        boolean newlyOpened = "OPEN".equals(nextStatus)
+                && tryOpenForAnswering(userId, issue, "NEW".equals(oldStatus) ? "NEW" : "WAITING_SETTLEMENT", now);
+        return new SnapshotPersistence(newlyOpened, closedPeriods);
+    }
+
+    /**
+     * Marks a market-visible OPEN issue as formally available for answering. The previous formally opened issue must
+     * already be settled; otherwise this issue remains a harmless preview with {@code openedAt == null}.
+     */
+    private boolean tryOpenForAnswering(Long userId, IssueDO issue, String fromStatus, LocalDateTime now) {
+        if (issue == null || !"OPEN".equals(issue.getStatus()) || issue.getOpenedAt() != null
+                || issueFreshnessPolicy.isStale(issue) || issueFreshnessPolicy.isBettingClosed(issue)) {
+            return false;
+        }
+        IssueDO previousOpened = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .lt(IssueDO::getPeriod, issue.getPeriod()).isNotNull(IssueDO::getOpenedAt)
+                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        if (previousOpened != null && !"SETTLED".equals(previousOpened.getStatus())) {
+            return false;
+        }
+        int opened = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
+                .eq(IssueDO::getStatus, "OPEN").isNull(IssueDO::getOpenedAt)
+                .set(IssueDO::getOpenedAt, now));
+        if (opened != 1) return false;
+        issue.setOpenedAt(now);
+        transition(userId, issue.getPeriod(), fromStatus, "OPEN", "结算完成后开始答题", "");
+        return true;
+    }
+
+    private String releaseWaitingIssue(Long userId, LocalDateTime now) {
+        IssueDO waiting = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "OPEN")
+                        .isNull(IssueDO::getOpenedAt).orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        return tryOpenForAnswering(userId, waiting, "WAITING_SETTLEMENT", now) ? waiting.getPeriod() : "";
     }
 
     private void fillIssueSnapshot(IssueDO issue, Wa55MarketClient.Issue snapshot) {
@@ -416,17 +519,18 @@ public class LotteryMarketSyncService {
         issue.setRawSnapshot(snapshot.raw());
     }
 
-    private void upsertDrawIssue(Long userId, Wa55MarketClient.Draw draw, LocalDateTime now) {
-        if (!draw.period().matches("\\d{8,20}")) return;
+    private boolean upsertDrawIssue(Long userId, Wa55MarketClient.Draw draw, LocalDateTime now) {
+        if (!draw.period().matches("\\d{8,20}")) return false;
         IssueDO issue = findIssue(userId, draw.period());
         if (issue != null
                 && List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus())
                 && Objects.equals(issue.getResult(), draw.result())
                 && (issue.getDrawTime() != null || draw.drawTime() == null)) {
             publishVerifiedDrawIfReady(userId, issue);
-            return;
+            return false;
         }
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
+        boolean formallyOpened = issue != null && issue.getOpenedAt() != null;
         LotteryDrawVerificationService.Decision decision = drawVerificationService.evaluate(oldStatus,
                 issue == null ? "" : issue.getResult(), issue == null ? 0 : issue.getDrawConfirmations(),
                 issue == null ? null : issue.getDrawFirstSeenAt(), draw.result(), now,
@@ -466,6 +570,26 @@ public class LotteryMarketSyncService {
                             + decision.confirmations() + "}");
         }
         publishVerifiedDrawIfReady(userId, issue);
+        return formallyOpened && "OPEN".equals(oldStatus) && !"OPEN".equals(decision.status());
+    }
+
+    private List<String> recentSummaryCandidatePeriods(Long userId) {
+        return DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(new LambdaQueryWrapper<IssueDO>()
+                        .eq(IssueDO::getUserId, userId)
+                        .in(IssueDO::getStatus, "CLOSED", "DRAW_ABNORMAL", "DRAW_PENDING", "DRAWN", "SETTLING", "SETTLED")
+                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 20")))
+                .stream().map(IssueDO::getPeriod).filter(Objects::nonNull).distinct().toList();
+    }
+
+    static boolean isLaterPeriod(String candidate, String current) {
+        if (candidate == null || current == null || !candidate.matches("\\d{8,20}")
+                || !current.matches("\\d{8,20}")) {
+            return false;
+        }
+        if (candidate.length() != current.length()) {
+            return candidate.length() > current.length();
+        }
+        return candidate.compareTo(current) > 0;
     }
 
     private void publishVerifiedDrawIfReady(Long userId, IssueDO issue) {
@@ -486,6 +610,12 @@ public class LotteryMarketSyncService {
                         .orderByAsc(IssueDO::getPeriod).last("LIMIT 10")));
         for (IssueDO issue : candidates) {
             publishVerifiedDrawIfReady(userId, issue);
+            try {
+                periodSummaryService.publish(userId, issue.getPeriod());
+            } catch (RuntimeException ex) {
+                LOGGER.error("期号 {} 用户 {} 结算前成功订单汇总失败", issue.getPeriod(), userId, ex);
+                continue;
+            }
             int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
                     .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
                     .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 2)
@@ -502,6 +632,18 @@ public class LotteryMarketSyncService {
                         .set(IssueDO::getStatus, "DRAWN").set(IssueDO::getError, rootMessage(ex)));
                 transition(userId, issue.getPeriod(), "SETTLING", "DRAWN", "结算失败", rootMessage(ex));
                 LOGGER.error("期号 {} 用户 {} 自动结算失败", issue.getPeriod(), userId, ex);
+                continue;
+            }
+            try {
+                String openedPeriod = transactionTemplate.execute(status ->
+                        releaseWaitingIssue(userId, LocalDateTime.now()));
+                if (openedPeriod != null && !openedPeriod.isBlank()) {
+                    lotteryService.handleMarketIssueOpened(userId, openedPeriod);
+                }
+            } catch (RuntimeException ex) {
+                // Payout has committed at this point. Never roll it back or mislabel it as failed merely because the
+                // next answering period could not be released; the normal snapshot poll will retry the release.
+                LOGGER.error("期号 {} 用户 {} 结算完成，但下一期答题开放失败", issue.getPeriod(), userId, ex);
             }
         }
     }

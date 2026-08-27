@@ -427,7 +427,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `member_id` varchar(64) NULL, `member` varchar(100) NOT NULL DEFAULT '', `period` varchar(40) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
   `status` varchar(30) NOT NULL, `order_id` varchar(64) NULL, `external_id` varchar(100) NULL,
   `error` varchar(1000) NOT NULL DEFAULT '', `command_type` varchar(50) NOT NULL DEFAULT '',
-  `message_type` varchar(30) NOT NULL DEFAULT 'PLAYER', `reply` varchar(2000) NOT NULL DEFAULT '',
+  `message_type` varchar(30) NOT NULL DEFAULT 'PLAYER', `reply` mediumtext NOT NULL,
   `processed_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -505,6 +505,10 @@ PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lu
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='member_id')=0,
   'ALTER TABLE `lucky5_message` ADD COLUMN `member_id` varchar(64) NULL AFTER `channel`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='reply')<>'mediumtext',
+  'ALTER TABLE `lucky5_message` MODIFY COLUMN `reply` mediumtext NOT NULL', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 -- 拉手返水比例与发放明细，兼容已经初始化的数据库。

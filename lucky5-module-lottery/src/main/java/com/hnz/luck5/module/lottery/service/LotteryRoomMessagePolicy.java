@@ -21,6 +21,7 @@ public class LotteryRoomMessagePolicy {
     public enum MessageType {
         CHAT,
         BALANCE,
+        PROFIT_LOSS,
         AMOUNT,
         CANCEL,
         BET
@@ -36,6 +37,9 @@ public class LotteryRoomMessagePolicy {
         String content = rawContent == null ? "" : rawContent.trim();
         if (Set.of("查", "余额").contains(content)) {
             return MessageType.BALANCE;
+        }
+        if (Set.of("盈亏", "yk", "YK").contains(content)) {
+            return MessageType.PROFIT_LOSS;
         }
         if (AMOUNT_COMMAND.matcher(content).matches()) {
             return MessageType.AMOUNT;
