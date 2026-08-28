@@ -62,7 +62,8 @@ public class LotteryBettingService {
     }
 
     private List<ParsedBet> parseSingle(String rawContent, List<OddDO> odds) {
-        String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(normalize(rawContent)));
+        String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(
+                normalizeReferenceAmountAlias(normalize(rawContent))));
         if (content.isBlank()) {
             throw exception(BET_CONTENT_INVALID);
         }
@@ -575,7 +576,9 @@ public class LotteryBettingService {
     private List<String> splitCommands(String rawContent) {
         String value = rawContent == null ? "" : rawContent.trim();
         if (value.isEmpty()) return List.of(value);
-        Matcher amountMatcher = Pattern.compile("各\\d+(?:\\.\\d+)?").matcher(value);
+        Matcher amountMatcher = Pattern.compile(
+                "各\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?")
+                .matcher(value);
         List<String> commands = new ArrayList<>();
         int start = 0;
         while (amountMatcher.find()) {
@@ -593,6 +596,13 @@ public class LotteryBettingService {
     private String normalize(String value) {
         return value == null ? "" : value.trim().replaceAll("[，,、；;\\s]+", "")
                 .replace('：', ':').replace('末', '尾').replace("两定", "二定");
+    }
+
+    private String normalizeReferenceAmountAlias(String content) {
+        Matcher matcher = Pattern.compile(
+                "^(.*(?:倒[一二三四]定|[二三四]定倒))/(\\d+(?:\\.\\d+)?)$").matcher(content);
+        if (!matcher.matches()) return content;
+        return matcher.group(1) + "各" + matcher.group(2);
     }
 
     private String normalizeReverseFixedAlias(String content) {

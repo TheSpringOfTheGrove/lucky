@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -107,6 +108,33 @@ class LotteryBettingServiceTest {
                 });
         assertThat(alias.stream().map(LotteryBettingService.ParsedBet::amount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("2250");
+    }
+
+    @Test
+    void parsesReverseFixedAmountSlashAliasWithoutChangingBasicSlashSyntax() {
+        Map<String, Integer> expectedSizes = Map.of(
+                "一", 28,
+                "二", 258,
+                "三", 912,
+                "四", 1_020);
+        expectedSizes.forEach((count, expectedSize) -> {
+            List<LotteryBettingService.ParsedBet> slash = service.parse("24567861倒" + count + "定/1", odds);
+            List<LotteryBettingService.ParsedBet> canonical = service.parse("24567861倒" + count + "定各1", odds);
+
+            assertThat(slash).hasSize(expectedSize).containsExactlyElementsOf(canonical)
+                    .allSatisfy(bet -> {
+                        assertThat(bet.play()).isEqualTo(count + "定位");
+                        assertThat(bet.amount()).isEqualByComparingTo("1");
+                    });
+        });
+        assertThat(service.parse("24567861三定倒/0.5", odds))
+                .containsExactlyElementsOf(service.parse("24567861倒三定各0.5", odds));
+        assertThat(service.parse("24567861倒三定/1,24567861倒三定/1", odds)).hasSize(1_824);
+        assertThat(service.splitCommandsForDisplay("24567861倒三定/1,24567861倒三定/1"))
+                .containsExactly("24567861倒三定/1", "24567861倒三定/1");
+
+        assertThat(service.parse("123/10", odds).get(0).play()).isEqualTo("三字现");
+        assertThat(service.parse("123定/10", odds).get(0).play()).isEqualTo("三定位");
     }
 
     @Test
