@@ -30,9 +30,10 @@ public class LotteryBettingService {
     private static final int SETTLEMENT_BALL_COUNT = 4;
     private static final int MAX_SINGLE_COMMAND_ITEMS = 10_000;
     private static final int MAX_COMBINED_COMMAND_ITEMS = 100_000;
-    private static final String POSITION_LABELS = "头千百十尾个";
+    private static final String FIVE_POSITION_TWO_ODD_CODE = "regex5d2";
+    private static final String POSITION_LABELS = "头千百十尾个五";
     private static final Map<Character, Integer> POSITION_INDEX = Map.of(
-            '头', 0, '千', 0, '百', 1, '十', 2, '尾', 3, '个', 3);
+            '头', 0, '千', 0, '百', 1, '十', 2, '尾', 3, '个', 3, '五', 4);
     private static final Map<Character, Integer> CHINESE_COUNT = Map.of('一', 1, '二', 2, '三', 3, '四', 4);
 
     public record ParsedBet(String play, String selection, BigDecimal amount, BigDecimal odds) {
@@ -52,6 +53,25 @@ public class LotteryBettingService {
             }
         }
         return result;
+    }
+
+    /**
+     * Expands a quick-pick preview with the owner's enabled plays and rates, but without applying the
+     * final per-bet amount limits. The real room submission always calls {@link #parse(String, List)}
+     * again with the configured limits intact.
+     */
+    public List<ParsedBet> parsePreview(String rawContent, List<OddDO> odds) {
+        List<OddDO> previewOdds = odds.stream().map(source -> {
+            OddDO target = new OddDO();
+            target.setCode(source.getCode());
+            target.setPlay(source.getPlay());
+            target.setItem(source.getItem());
+            target.setRate(source.getRate());
+            target.setSecondaryRate(source.getSecondaryRate());
+            target.setStatus(source.getStatus());
+            return target;
+        }).toList();
+        return parse(rawContent, previewOdds);
     }
 
     /**
@@ -174,29 +194,46 @@ public class LotteryBettingService {
         BigDecimal amount = amount(amountMatcher.group(1));
 
         if (expression.contains("五位二定")) {
-            OddDO odd = configuredOdd("regex2d", amount, odds);
+            OddDO odd = configuredOdd(FIVE_POSITION_TWO_ODD_CODE, amount, odds);
             int modeAt = expression.indexOf("五位二定");
             String before = expression.substring(0, modeAt);
             String after = expression.substring(modeAt + "五位二定".length());
-            Matcher thousandMatcher = Pattern.compile("千([0-9]+)").matcher(before + after);
-            if (!thousandMatcher.find()) throw exception(BET_CONTENT_INVALID);
-            String thousand = thousandMatcher.group(1);
-            Matcher fifthMatcher = Pattern.compile("五([0-9]+)").matcher(modeAt > 0 ? before : after);
-            String fifth = fifthMatcher.find() ? fifthMatcher.group(1) : DIGITS;
-            List<String> selections = new ArrayList<>();
-            for (char first : thousand.toCharArray()) {
-                for (char last : fifth.toCharArray()) selections.add(first + "XXX" + last);
+            String source = before + after;
+            Matcher complex = Pattern.compile("复式([0-9]+)").matcher(source);
+            Matcher reverse = Pattern.compile("([0-9]+)(?:全)?倒").matcher(source);
+            Matcher excludedReverse = Pattern.compile("除全转([0-9]+)").matcher(source);
+            RotatedFixed rotatedFixed = extractRotatedFiveTwo(expression);
+            List<String> selections;
+            if (rotatedFixed != null) {
+                selections = applyRotatedFixedFilter(fullFiveTwoSpace(chars(DIGITS)), rotatedFixed);
+            } else if (complex.find()) {
+                selections = fullFiveTwoSpace(chars(complex.group(1)));
+            } else if (reverse.find()) {
+                selections = reverseFixedSpace(reverse.group(1), 2, 5, true);
+            } else if (excludedReverse.find()) {
+                selections = fullFiveTwoSpace(chars(DIGITS));
+            } else {
+                // Preserve the legacy word order: once the mode token follows a positioned pool,
+                // trailing text is filter text rather than another position declaration.
+                String groupSource = modeAt > 0 && Pattern.compile("[千百十个五]").matcher(before).find()
+                        ? before : source;
+                Map<Integer, Set<Character>> groups = extractFivePositionGroups(groupSource);
+                selections = groups.isEmpty()
+                        ? fullFiveTwoSpace(chars(DIGITS))
+                        : expandFiveTwoPositionExpression(groups);
             }
-            return indexed(selections, "五位二定", amount, odd.getRate(), content.length());
+            selections = applyFilters(selections, expression);
+            if (selections.isEmpty()) throw exception(BET_CONTENT_INVALID);
+            return indexed(new ArrayList<>(new java.util.TreeSet<>(selections)), "五位二定",
+                    amount, odd.getRate(), content.length());
         }
 
-        Matcher currentMatcher = Pattern.compile("([二三四])现").matcher(expression);
+        Matcher currentMatcher = Pattern.compile("([二三四])(?:字)?现").matcher(expression);
         if (currentMatcher.find()) {
             int count = CHINESE_COUNT.get(currentMatcher.group(1).charAt(0));
             String code = "regex" + count + "x";
             OddDO odd = configuredOdd(code, amount, odds);
-            List<String> selections = new ArrayList<>();
-            combinationsWithReplacement(new ArrayList<>(), 0, count, selections);
+            List<String> selections = currentBaseSelections(expression, currentMatcher, count);
             Matcher fullReverse = Pattern.compile("全倒([0-9]+)").matcher(expression);
             if (fullReverse.find()) {
                 List<String> arrangements = new ArrayList<>();
@@ -214,8 +251,18 @@ public class LotteryBettingService {
             return indexed(selections, chineseCount(count) + "字现", amount, odd.getRate(), content.length());
         }
 
-        PairedFixed paired = extractPairedFixed(expression);
-        if (paired != null && paired.exclude()) throw exception(BET_CONTENT_INVALID);
+        Matcher fixedComplex = Pattern.compile("([二三四])(?:字)?定复式([0-9]+)").matcher(expression);
+        if (fixedComplex.find()) {
+            int count = CHINESE_COUNT.get(fixedComplex.group(1).charAt(0));
+            OddDO odd = configuredOdd("regex" + count + "d", amount, odds);
+            List<String> selections = fullFixedSpace(count, 4, chars(fixedComplex.group(2)));
+            selections = applyFilters(selections, expression);
+            if (selections.isEmpty()) throw exception(BET_CONTENT_INVALID);
+            return indexed(new ArrayList<>(new java.util.TreeSet<>(selections)), chineseCount(count) + "定位",
+                    amount, odd.getRate(), content.length());
+        }
+
+        RotatedFixed rotatedFixed = extractRotatedFixed(expression);
 
         Matcher reverseMatcher = Pattern.compile("([0-9]+)(?:全)?倒([一二三四])定").matcher(expression);
         if (reverseMatcher.find()) {
@@ -254,13 +301,13 @@ public class LotteryBettingService {
                     amount, odd.getRate(), content.length());
         }
 
-        int count = paired == null ? detectFixedCount(expression) : paired.count();
+        int count = rotatedFixed == null ? detectFixedCount(expression) : rotatedFixed.count();
         OddDO odd = configuredOdd("regex" + count + "d", amount, odds);
-        List<String> selections = paired == null
+        List<String> selections = rotatedFixed == null
                 ? expandPositionExpression(expression, count)
                 : fullFixedSpace(count);
         selections = applyFilters(selections, expression);
-        if (paired != null) selections = applyPairedFilter(selections, paired);
+        if (rotatedFixed != null) selections = applyRotatedFixedFilter(selections, rotatedFixed);
         if (selections.isEmpty()) throw exception(BET_CONTENT_INVALID);
         return indexed(new ArrayList<>(new java.util.TreeSet<>(selections)), chineseCount(count) + "定位",
                 amount, odd.getRate(), content.length());
@@ -276,6 +323,15 @@ public class LotteryBettingService {
             return completeSumSpace(expression);
         }
         if (groups.isEmpty()) throw exception(BET_CONTENT_INVALID);
+        if (groups.size() >= count) {
+            List<String> result = new ArrayList<>();
+            for (List<Integer> selected : combinations(groups.keySet().stream().sorted().toList(), count)) {
+                Map<Integer, Set<Character>> selectedGroups = new HashMap<>();
+                selected.forEach(position -> selectedGroups.put(position, groups.get(position)));
+                expandCartesian(selected, selectedGroups, 0, "XXXX".toCharArray(), result);
+            }
+            return result;
+        }
         List<Integer> missingPositions = new ArrayList<>(List.of(0, 1, 2, 3));
         missingPositions.removeAll(groups.keySet());
         int missing = count - groups.size();
@@ -333,6 +389,139 @@ public class LotteryBettingService {
         return result;
     }
 
+    private Map<Integer, Set<Character>> extractFivePositionGroups(String value) {
+        String positionExpression = value.replace("五位二定", "");
+        Map<Integer, Set<Character>> result = new HashMap<>();
+        Matcher shared = Pattern.compile("^([0-9]+)((?:千|百|十|个|五){2,5})").matcher(positionExpression);
+        if (shared.find()) {
+            for (char label : shared.group(2).toCharArray()) {
+                addDigits(result, POSITION_INDEX.get(label), shared.group(1));
+            }
+            return result;
+        }
+        Matcher sharedSuffix = Pattern.compile("^((?:千|百|十|个|五){2,5})([0-9]+)").matcher(positionExpression);
+        if (sharedSuffix.find()) {
+            for (char label : sharedSuffix.group(1).toCharArray()) {
+                addDigits(result, POSITION_INDEX.get(label), sharedSuffix.group(2));
+            }
+            return result;
+        }
+        boolean positionFirst = !positionExpression.isEmpty()
+                && "千百十个五".indexOf(positionExpression.charAt(0)) >= 0;
+        Matcher matcher = Pattern.compile(positionFirst ? "([千百十个五])([0-9]+)" : "([0-9]+)([千百十个五])")
+                .matcher(positionExpression);
+        while (matcher.find()) {
+            char label = matcher.group(positionFirst ? 1 : 2).charAt(0);
+            String digits = matcher.group(positionFirst ? 2 : 1);
+            addDigits(result, POSITION_INDEX.get(label), digits);
+        }
+        return result;
+    }
+
+    private List<String> expandFiveTwoPositionExpression(Map<Integer, Set<Character>> groups) {
+        Set<Character> fifth = groups.getOrDefault(4, chars(DIGITS));
+        List<String> result = new ArrayList<>();
+        for (int position = 0; position < 4; position++) {
+            Set<Character> first = groups.get(position);
+            if (first == null) continue;
+            for (Character left : first) {
+                for (Character right : fifth) {
+                    char[] pattern = "XXXXX".toCharArray();
+                    pattern[position] = left;
+                    pattern[4] = right;
+                    result.add(new String(pattern));
+                }
+            }
+        }
+        if (!result.isEmpty()) return result;
+        if (!groups.containsKey(4)) throw exception(BET_CONTENT_INVALID);
+        for (int position = 0; position < 4; position++) {
+            for (Character left : chars(DIGITS)) {
+                for (Character right : fifth) {
+                    char[] pattern = "XXXXX".toCharArray();
+                    pattern[position] = left;
+                    pattern[4] = right;
+                    result.add(new String(pattern));
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<String> fullFiveTwoSpace(Set<Character> pool) {
+        Map<Integer, Set<Character>> groups = new HashMap<>();
+        for (int position = 0; position < 5; position++) groups.put(position, pool);
+        return expandFiveTwoPositionExpression(groups);
+    }
+
+    private List<String> reverseFixedSpace(String digits, int count, int patternLength, boolean fifthPair) {
+        List<String> arrangements = new ArrayList<>();
+        multisetArrangements(digits, count, new StringBuilder(), new boolean[digits.length()], arrangements);
+        List<List<Integer>> positionSets;
+        if (fifthPair) {
+            positionSets = List.of(List.of(0, 4), List.of(1, 4), List.of(2, 4), List.of(3, 4));
+        } else {
+            List<Integer> available = new ArrayList<>();
+            for (int position = 0; position < patternLength; position++) available.add(position);
+            positionSets = combinations(available, count);
+        }
+        Set<String> result = new LinkedHashSet<>();
+        for (List<Integer> positions : positionSets) {
+            for (String arrangement : arrangements) {
+                char[] pattern = "X".repeat(patternLength).toCharArray();
+                for (int index = 0; index < positions.size(); index++) {
+                    pattern[positions.get(index)] = arrangement.charAt(index);
+                }
+                result.add(new String(pattern));
+            }
+        }
+        return new ArrayList<>(result);
+    }
+
+    private List<String> currentBaseSelections(String expression, Matcher currentMatcher, int count) {
+        List<String> full = new ArrayList<>();
+        combinationsWithReplacement(new ArrayList<>(), new ArrayList<>(chars(DIGITS)), 0, count, full);
+
+        String before = expression.substring(0, currentMatcher.start());
+        String after = expression.substring(currentMatcher.end());
+        Matcher complex = Pattern.compile("^复式([0-9]+)").matcher(after);
+        if (complex.find()) {
+            List<String> result = new ArrayList<>();
+            combinationsWithReplacement(new ArrayList<>(), new ArrayList<>(chars(complex.group(1))), 0, count, result);
+            return result;
+        }
+        Matcher trailingPool = Pattern.compile("^([0-9]+)$").matcher(after);
+        if (trailingPool.find()) {
+            List<String> result = new ArrayList<>();
+            combinationsWithReplacement(new ArrayList<>(), new ArrayList<>(chars(trailingPool.group(1))), 0, count, result);
+            return result;
+        }
+
+        Matcher paired = Pattern.compile("^(取|除)?([0-9]+(?:配[0-9]+)+)$").matcher(before);
+        if (!paired.matches()) return full;
+        List<String> pools = Arrays.asList(paired.group(2).split("配"));
+        if (pools.size() != count) throw exception(BET_CONTENT_INVALID);
+        Set<String> matched = new LinkedHashSet<>();
+        expandCurrentPools(pools, 0, new StringBuilder(), matched);
+        if (!"除".equals(paired.group(1))) return new ArrayList<>(matched);
+        full.removeIf(matched::contains);
+        return full;
+    }
+
+    private void expandCurrentPools(List<String> pools, int index, StringBuilder current, Set<String> result) {
+        if (index == pools.size()) {
+            char[] value = current.toString().toCharArray();
+            Arrays.sort(value);
+            result.add(new String(value));
+            return;
+        }
+        for (Character digit : chars(pools.get(index))) {
+            current.append(digit);
+            expandCurrentPools(pools, index + 1, current, result);
+            current.deleteCharAt(current.length() - 1);
+        }
+    }
+
     private List<String> applyFilters(List<String> input, String expression) {
         List<String> result = new ArrayList<>(input);
         Matcher upper = Pattern.compile("上奖([0-9]+)").matcher(expression);
@@ -348,19 +537,20 @@ public class LotteryBettingService {
             });
         }
 
-        Matcher positionConstraint = Pattern.compile("(取|除)((?:头|千|百|十|尾|个)+)([0-9]+)").matcher(expression);
+        Matcher positionConstraint = Pattern.compile("(取|除)((?:头|千|百|十|尾|个|五)+)([0-9]+)").matcher(expression);
         while (positionConstraint.find()) {
             boolean take = "取".equals(positionConstraint.group(1));
             Set<Integer> positions = positionIndexes(positionConstraint.group(2));
             Set<Character> allowed = chars(positionConstraint.group(3));
             result.removeIf(value -> positions.stream().anyMatch(position -> {
+                if (position >= value.length()) return take;
                 char digit = value.charAt(position);
                 boolean matches = digit != 'X' && allowed.contains(digit);
                 return matches != take;
             }));
         }
 
-        Matcher sumMatcher = Pattern.compile("(取|除)?((?:头|千|百|十|尾|个){2,4})合([0-9]+)").matcher(expression);
+        Matcher sumMatcher = Pattern.compile("(取|除)?((?:头|千|百|十|尾|个|五){2,5})合([0-9]+)").matcher(expression);
         while (sumMatcher.find()) {
             boolean take = !"除".equals(sumMatcher.group(1));
             Set<Integer> positions = positionIndexes(sumMatcher.group(2));
@@ -377,11 +567,31 @@ public class LotteryBettingService {
             Set<Character> allowed = chars(threeSum.group(1));
             result.removeIf(value -> !matchesCombinationSum(value, 3, allowed));
         }
-        Matcher contains = Pattern.compile("含([0-9]+)").matcher(expression);
+        Matcher contains = Pattern.compile("(取|除)?含([0-9]+)").matcher(expression);
         while (contains.find()) {
-            Set<Character> allowed = chars(contains.group(1));
-            result.removeIf(value -> value.chars().filter(v -> v != 'X').noneMatch(v -> allowed.contains((char) v)));
+            boolean take = !"除".equals(contains.group(1));
+            Set<Character> allowed = chars(contains.group(2));
+            result.removeIf(value -> value.chars().filter(v -> v != 'X')
+                    .anyMatch(v -> allowed.contains((char) v)) != take);
         }
+
+        Matcher exclude = Pattern.compile("排除([0-9]+)").matcher(expression);
+        while (exclude.find()) {
+            Set<Character> denied = chars(exclude.group(1));
+            result.removeIf(value -> value.chars().filter(v -> v != 'X')
+                    .anyMatch(v -> denied.contains((char) v)));
+        }
+        Matcher rotated = Pattern.compile("(取|除)全转([0-9]+)").matcher(expression);
+        while (rotated.find()) {
+            boolean take = "取".equals(rotated.group(1));
+            int patternLength = result.stream().findFirst().map(String::length).orElse(4);
+            int count = result.stream().findFirst()
+                    .map(value -> (int) value.chars().filter(item -> item != 'X').count()).orElse(0);
+            Set<String> allowed = new HashSet<>(reverseFixedSpace(rotated.group(2), count, patternLength,
+                    patternLength == 5));
+            result.removeIf(value -> allowed.contains(value) != take);
+        }
+
         Matcher range = Pattern.compile("(取|除)值(\\d+)值(\\d+)").matcher(expression);
         while (range.find()) {
             boolean take = "取".equals(range.group(1));
@@ -401,11 +611,24 @@ public class LotteryBettingService {
             result.removeIf(value -> containsAllDigits(value, required) != take);
         }
 
-        Matcher attributes = Pattern.compile("(取|除)([大小单双]{2,4})(?![大小单双重])").matcher(expression);
+        Matcher attributes = Pattern.compile("(取|除)([大小单双X]{2,5})(?![大小单双重])").matcher(expression);
         while (attributes.find()) {
             boolean take = "取".equals(attributes.group(1));
             String pattern = attributes.group(2);
             result.removeIf(value -> matchesAttributePattern(value, pattern) != take);
+        }
+
+        Matcher wildcardPositions = Pattern.compile("(取|除)乘号位置((?:头|千|百|十|尾|个|五)+)").matcher(expression);
+        while (wildcardPositions.find()) {
+            boolean take = "取".equals(wildcardPositions.group(1));
+            Set<Integer> positions = positionIndexes(wildcardPositions.group(2));
+            result.removeIf(value -> {
+                Set<Integer> actual = new LinkedHashSet<>();
+                for (int index = 0; index < value.length(); index++) {
+                    if (value.charAt(index) == 'X') actual.add(index);
+                }
+                return actual.equals(positions) != take;
+            });
         }
 
         String action = null;
@@ -450,6 +673,7 @@ public class LotteryBettingService {
     private boolean matchesPositionSum(String value, Set<Integer> positions, Set<Character> allowed) {
         int sum = 0;
         for (Integer position : positions) {
+            if (position >= value.length()) return false;
             char digit = value.charAt(position);
             if (digit == 'X') return false;
             sum += digit - '0';
@@ -466,6 +690,7 @@ public class LotteryBettingService {
     private boolean matchesAttributePattern(String value, String pattern) {
         if (pattern.length() > value.length()) return false;
         for (int index = 0; index < pattern.length(); index++) {
+            if (pattern.charAt(index) == 'X') continue;
             char digit = value.charAt(index);
             if (digit == 'X') return false;
             int number = digit - '0';
@@ -481,27 +706,48 @@ public class LotteryBettingService {
         return true;
     }
 
-    private PairedFixed extractPairedFixed(String expression) {
-        Matcher matcher = Pattern.compile("^(除)?(?:配)?([0-9]+)配([0-9]+)配?([二三四])定").matcher(expression);
+    private RotatedFixed extractRotatedFixed(String expression) {
+        Matcher matcher = Pattern.compile("^(除)?(?:配)?([0-9]+(?:配[0-9]+)+)配?([二三四])(?:字)?定")
+                .matcher(expression);
         if (!matcher.find()) return null;
-        return new PairedFixed(matcher.group(2), matcher.group(3),
-                CHINESE_COUNT.get(matcher.group(4).charAt(0)), matcher.group(1) != null);
+        int count = CHINESE_COUNT.get(matcher.group(3).charAt(0));
+        List<Set<Character>> pools = Arrays.stream(matcher.group(2).split("配"))
+                .map(this::chars)
+                .toList();
+        if (pools.size() < 2 || pools.size() > count) throw exception(BET_CONTENT_INVALID);
+        return new RotatedFixed(pools, count, matcher.group(1) != null);
     }
 
-    private List<String> applyPairedFilter(List<String> input, PairedFixed paired) {
-        Set<Character> left = chars(paired.leftDigits());
-        Set<Character> right = chars(paired.rightDigits());
+    private RotatedFixed extractRotatedFiveTwo(String expression) {
+        Matcher matcher = Pattern.compile("^(除)?(?:配)?([0-9]+配[0-9]+)配?五位二定")
+                .matcher(expression);
+        if (!matcher.find()) return null;
+        List<Set<Character>> pools = Arrays.stream(matcher.group(2).split("配"))
+                .map(this::chars)
+                .toList();
+        return new RotatedFixed(pools, 2, matcher.group(1) != null);
+    }
+
+    private List<String> applyRotatedFixedFilter(List<String> input, RotatedFixed rotatedFixed) {
         List<String> result = new ArrayList<>(input);
-        result.removeIf(value -> {
-            for (int leftPosition = 0; leftPosition < value.length(); leftPosition++) {
-                if (!left.contains(value.charAt(leftPosition))) continue;
-                for (int rightPosition = 0; rightPosition < value.length(); rightPosition++) {
-                    if (leftPosition != rightPosition && right.contains(value.charAt(rightPosition))) return false;
-                }
-            }
-            return true;
-        });
+        result.removeIf(value -> matchesRotatedPools(value, rotatedFixed.pools(), 0, new boolean[value.length()])
+                == rotatedFixed.exclude());
         return result;
+    }
+
+    private boolean matchesRotatedPools(String value, List<Set<Character>> pools, int poolIndex,
+                                        boolean[] usedPositions) {
+        if (poolIndex == pools.size()) return true;
+        Set<Character> pool = pools.get(poolIndex);
+        for (int position = 0; position < value.length(); position++) {
+            if (usedPositions[position] || value.charAt(position) == 'X' || !pool.contains(value.charAt(position))) {
+                continue;
+            }
+            usedPositions[position] = true;
+            if (matchesRotatedPools(value, pools, poolIndex + 1, usedPositions)) return true;
+            usedPositions[position] = false;
+        }
+        return false;
     }
 
     private Integer explicitFixedCount(String expression) {
@@ -510,12 +756,17 @@ public class LotteryBettingService {
     }
 
     private List<String> fullFixedSpace(int count) {
-        Set<Character> digits = chars(DIGITS);
+        return fullFixedSpace(count, 4, chars(DIGITS));
+    }
+
+    private List<String> fullFixedSpace(int count, int patternLength, Set<Character> digits) {
         List<String> result = new ArrayList<>();
-        for (List<Integer> positions : choosePositions(count)) {
+        List<Integer> available = new ArrayList<>();
+        for (int position = 0; position < patternLength; position++) available.add(position);
+        for (List<Integer> positions : combinations(available, count)) {
             Map<Integer, Set<Character>> groups = new HashMap<>();
             positions.forEach(position -> groups.put(position, digits));
-            expandCartesian(positions, groups, 0, "XXXX".toCharArray(), result);
+            expandCartesian(positions, groups, 0, "X".repeat(patternLength).toCharArray(), result);
         }
         return result;
     }
@@ -553,6 +804,11 @@ public class LotteryBettingService {
 
     private OddDO configuredOdd(String code, BigDecimal amount, List<OddDO> odds) {
         OddDO odd = odds.stream().filter(item -> code.equals(item.getCode())).findFirst().orElse(null);
+        if (odd == null && FIVE_POSITION_TWO_ODD_CODE.equals(code)) {
+            // Existing owners created before the dedicated setting was introduced inherit 二定位
+            // until the idempotent data repair adds their independent 五位二定 row.
+            odd = odds.stream().filter(item -> "regex2d".equals(item.getCode())).findFirst().orElse(null);
+        }
         if (odd == null || !"启用".equals(odd.getStatus()) || odd.getRate() == null || odd.getRate().signum() <= 0) {
             throw exception(PLAY_TYPE_DISABLED);
         }
@@ -659,13 +915,18 @@ public class LotteryBettingService {
     }
 
     private void combinationsWithReplacement(List<Character> current, int start, int count, List<String> result) {
+        combinationsWithReplacement(current, new ArrayList<>(chars(DIGITS)), start, count, result);
+    }
+
+    private void combinationsWithReplacement(List<Character> current, List<Character> source,
+                                             int start, int count, List<String> result) {
         if (current.size() == count) {
             result.add(current.stream().map(String::valueOf).reduce("", String::concat));
             return;
         }
-        for (int index = start; index < DIGITS.length(); index++) {
-            current.add(DIGITS.charAt(index));
-            combinationsWithReplacement(current, index, count, result);
+        for (int index = start; index < source.size(); index++) {
+            current.add(source.get(index));
+            combinationsWithReplacement(current, source, index, count, result);
             current.remove(current.size() - 1);
         }
     }
@@ -759,6 +1020,6 @@ public class LotteryBettingService {
     private record IndexedBet(int index, ParsedBet bet) {
     }
 
-    private record PairedFixed(String leftDigits, String rightDigits, int count, boolean exclude) {
+    private record RotatedFixed(List<Set<Character>> pools, int count, boolean exclude) {
     }
 }

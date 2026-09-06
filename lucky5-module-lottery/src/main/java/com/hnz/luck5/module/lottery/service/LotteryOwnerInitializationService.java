@@ -59,7 +59,7 @@ public class LotteryOwnerInitializationService {
     private static final String SOURCE_AUTO = "AUTO";
     private static final String SOURCE_MANUAL = "MANUAL";
     private static final String SOURCE_REPAIR = "REPAIR";
-    private static final int CURRENT_SCHEMA_VERSION = 2;
+    private static final int CURRENT_SCHEMA_VERSION = 3;
     private static final String DEFAULT_CLOSE_TIME = "23:55";
     private static final int DEFAULT_SETTLE_DELAY = 8;
     private static final LocalDateTime DEFAULT_EXPIRE_AT = LocalDateTime.of(2099, 12, 31, 23, 59, 59);
@@ -350,15 +350,26 @@ public class LotteryOwnerInitializationService {
     }
 
     private void initializeOdds(Long userId) {
-        Set<String> existingCodes = findOdds(userId).stream().map(OddDO::getCode).collect(Collectors.toSet());
-        List<OddTemplate> templates = findOdds(SUPER_ADMIN_USER_ID).stream()
+        List<OddDO> existing = findOdds(userId);
+        Set<String> existingCodes = existing.stream().map(OddDO::getCode).collect(Collectors.toSet());
+        OddDO legacyTwoPosition = existing.stream()
+                .filter(item -> "regex2d".equals(item.getCode()))
+                .findFirst().orElse(null);
+        List<OddTemplate> configuredTemplates = findOdds(SUPER_ADMIN_USER_ID).stream()
                 .map(item -> new OddTemplate(item.getCode(), item.getPlay(), item.getItem(), item.getRate(),
                         item.getSecondaryRate(), item.getMinLimit(), item.getMaxLimit(), item.getStatus()))
                 .toList();
-        if (templates.isEmpty()) {
-            templates = defaultOdds();
-        }
-        templates.stream().filter(template -> !existingCodes.contains(template.code())).forEach(template -> {
+        Set<String> configuredCodes = configuredTemplates.stream().map(OddTemplate::code).collect(Collectors.toSet());
+        List<OddTemplate> templates = java.util.stream.Stream.concat(configuredTemplates.stream(),
+                        defaultOdds().stream().filter(template -> !configuredCodes.contains(template.code())))
+                .toList();
+        templates.stream().filter(template -> !existingCodes.contains(template.code())).forEach(source -> {
+            OddTemplate template = "regex5d2".equals(source.code()) && legacyTwoPosition != null
+                    ? new OddTemplate("regex5d2", "五位二定", legacyTwoPosition.getItem(),
+                            legacyTwoPosition.getRate(), legacyTwoPosition.getSecondaryRate(),
+                            legacyTwoPosition.getMinLimit(), legacyTwoPosition.getMaxLimit(),
+                            legacyTwoPosition.getStatus())
+                    : source;
             OddDO odd = new OddDO().setCode(template.code()).setPlay(template.play())
                     .setItem(value(template.item(), "")).setRate(value(template.rate(), ZERO))
                     .setSecondaryRate(template.secondaryRate()).setMinLimit(template.minLimit())
@@ -508,7 +519,8 @@ public class LotteryOwnerInitializationService {
                 odd("regex4x", "四字现", "360"), odd("regex3x", "三字现", "45"),
                 odd("regex2x", "二字现", "9"), odd("regex4d", "四定位", "9600"),
                 odd("regex4d4", "四条", "7000"), odd("regex3d", "三定位", "960"),
-                odd("regex2d", "二定位", "96"), odd("regex1d", "一定位", "9"),
+                odd("regex2d", "二定位", "96"), odd("regex5d2", "五位二定", "96"),
+                odd("regex1d", "一定位", "9"),
                 odd("regexlh", "龙虎", "0"), odd("regexh", "和", "0"));
     }
 

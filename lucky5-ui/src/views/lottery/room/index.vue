@@ -826,12 +826,6 @@ const openQuickPicker = () => {
   quickPickerVisible.value = true
 }
 
-const useQuickGenerated = (content: string) => {
-  composer.value = content
-  quickPickerVisible.value = false
-  composerRef.value?.focus()
-}
-
 const submitQuickGenerated = async (content: string) => {
   composer.value = content
   quickPickerVisible.value = false
@@ -1157,7 +1151,6 @@ onBeforeUnmount(() => {
         :balance="session.member.balance"
         :credential="credential"
         @close="quickPickerVisible = false"
-        @use="useQuickGenerated"
         @submit="submitQuickGenerated"
       />
     </template>

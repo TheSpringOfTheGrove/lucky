@@ -5,6 +5,7 @@ import { useLucky5Store } from '@/store/modules/lottery'
 type OddsRow = {
   id: string
   label: string
+  fallbackId?: string
   rate: number
   secondaryRate?: number
   minLimit?: number
@@ -21,6 +22,14 @@ const rows = reactive<OddsRow[]>([
   { id: 'regex4d4', label: '四条', rate: 7000 },
   { id: 'regex3d', label: '三定位', rate: 960, secondaryRate: 960, minLimit: 0.1, maxLimit: 100 },
   { id: 'regex2d', label: '二定位', rate: 96, minLimit: 1, maxLimit: 2000 },
+  {
+    id: 'regex5d2',
+    fallbackId: 'regex2d',
+    label: '五位二定',
+    rate: 96,
+    minLimit: 1,
+    maxLimit: 2000
+  },
   { id: 'regex1d', label: '一定位', rate: 9, minLimit: 1, maxLimit: 10000 },
   { id: 'regexlh', label: '龙虎', rate: 0, minLimit: 0, maxLimit: 0 },
   { id: 'regexh', label: '和', rate: 0, minLimit: 0, maxLimit: 0 }
@@ -46,7 +55,9 @@ watch(
   () => store.odds,
   (odds) => {
     rows.forEach((row) => {
-      const saved = odds.find((item) => item.id === row.id || item.play === row.label)
+      const saved =
+        odds.find((item) => item.id === row.id || item.play === row.label) ||
+        (row.fallbackId ? odds.find((item) => item.id === row.fallbackId) : undefined)
       if (!saved) return
       row.rate = Number(saved.rate || 0)
       if (row.secondaryRate !== undefined) row.secondaryRate = Number(saved.secondaryRate || 0)

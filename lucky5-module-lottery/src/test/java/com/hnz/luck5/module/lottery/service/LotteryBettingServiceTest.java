@@ -20,6 +20,7 @@ class LotteryBettingServiceTest {
     void setUp() {
         odds = List.of(
                 odd("regex1d", "一定位", "9"), odd("regex2d", "二定位", "96"),
+                odd("regex5d2", "五位二定", "88"),
                 odd("regex3d", "三定位", "960"), odd("regex4d", "四定位", "9600"),
                 odd("regex2x", "二字现", "9"), odd("regex3x", "三字现", "45"),
                 odd("regex4x", "四字现", "360"), odd("regex4d4", "四条", "7000"),
@@ -93,6 +94,9 @@ class LotteryBettingServiceTest {
 
     @Test
     void parsesReverseFixedAliasWithModeBeforeReverse() {
+        assertThat(service.parse("257全倒二定各10", odds))
+                .hasSize(36)
+                .containsExactlyElementsOf(service.parse("257倒二定各10", odds));
         assertThat(service.parse("253二定倒各5", odds))
                 .containsExactlyElementsOf(service.parse("253倒二定各5", odds));
         assertThat(service.parse("123三定倒各1", odds))
@@ -226,7 +230,92 @@ class LotteryBettingServiceTest {
         assertThat(service.parse("五位二定千12五34各1", odds)).hasSize(4);
         assertThat(service.parse("千12五34五位二定各1", odds)).hasSize(4);
         assertThat(service.parse("千12五位二定五34各1", odds)).hasSize(20);
-        assertThatThrownBy(() -> service.parse("除12配34配二定各1", odds)).isInstanceOf(RuntimeException.class);
+        assertThat(service.parse("除12配34配二定各1", odds)).hasSize(552);
+    }
+
+    @Test
+    void supportsLegacyQuickPickCurrentPoolsAndComplexPool() {
+        assertThat(service.parse("12配34二现各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("13", "14", "23", "24");
+        assertThat(service.parse("除12配34二现各1", odds)).hasSize(51);
+        assertThat(service.parse("二现复式12各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("11", "12", "22");
+    }
+
+    @Test
+    void supportsLegacyQuickPickPositionPoolsAndFifthBallPairs() {
+        assertThat(service.parse("千1百2十3个4二定各1", odds)).hasSize(6);
+        assertThat(service.parse("百12五34五位二定各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("X1XX3", "X1XX4", "X2XX3", "X2XX4");
+        assertThat(service.parse("千1百2十3个4五5五位二定各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1XXX5", "X2XX5", "XX3X5", "XXX45");
+    }
+
+    @Test
+    void supportsLegacyQuickPickRotatedFixedPools() {
+        assertThat(service.parse("配12配3二定各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly(
+                        "13XX", "1X3X", "1XX3", "23XX", "2X3X", "2XX3",
+                        "31XX", "32XX", "3X1X", "3X2X", "3XX1", "3XX2",
+                        "X13X", "X1X3", "X23X", "X2X3", "X31X", "X32X",
+                        "X3X1", "X3X2", "XX13", "XX23", "XX31", "XX32");
+        assertThat(service.parse("除配12配3二定各1", odds)).hasSize(576);
+        assertThat(service.parse("配1配2配3三定各1", odds)).hasSize(24);
+        assertThat(service.parse("配1配2配3配4四定各1", odds)).hasSize(24);
+    }
+
+    @Test
+    void supportsLegacyQuickPickFifthBallGenerationAndFilters() {
+        assertThat(service.parse("五位二定复式12各1", odds)).hasSize(16)
+                .allSatisfy(item -> assertThat(item.odds()).isEqualByComparingTo("88"));
+        assertThat(service.parse("12倒五位二定各1", odds)).hasSize(8);
+        assertThat(service.parse("五位二定除全转12各1", odds)).hasSize(392);
+        assertThat(service.parse("配1配2五位二定各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1XXX2", "2XXX1", "X1XX2", "X2XX1",
+                        "XX1X2", "XX2X1", "XXX12", "XXX21");
+        assertThat(service.parse("除配1配2五位二定各1", odds)).hasSize(392);
+        assertThat(service.parse("五位二定取双重各1", odds)).hasSize(40);
+        assertThat(service.parse("五位二定取千五合5各1", odds)).hasSize(10);
+    }
+
+    @Test
+    void fifthPositionTwoFallsBackToTwoPositionOddsForExistingOwners() {
+        List<OddDO> legacyOdds = odds.stream().filter(item -> !"regex5d2".equals(item.getCode())).toList();
+
+        assertThat(service.parse("五位二定千1五2各1", legacyOdds).get(0).odds())
+                .isEqualByComparingTo("96");
+    }
+
+    @Test
+    void quickPickPreviewIgnoresAmountLimitsButKeepsPlayAvailability() {
+        OddDO limited = odd("regex2d", "二定位", "96");
+        limited.setMinLimit(new BigDecimal("100"));
+
+        assertThatThrownBy(() -> service.parse("千1百2二定各1", List.of(limited)))
+                .isInstanceOf(RuntimeException.class);
+        assertThat(service.parsePreview("千1百2二定各1", List.of(limited))).hasSize(1);
+
+        limited.setStatus("停用");
+        assertThatThrownBy(() -> service.parsePreview("千1百2二定各1", List.of(limited)))
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void supportsLegacyQuickPickComplexAndVisualFilters() {
+        assertThat(service.parse("四定复式12各1", odds)).hasSize(16);
+        assertThat(service.parse("四定复式12除含1各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("2222");
+        assertThat(service.parse("四定复式01取X单双X各1", odds)).hasSize(4);
+        assertThat(service.parse("千1百2二定取乘号位置十个各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("12XX");
     }
 
     @Test

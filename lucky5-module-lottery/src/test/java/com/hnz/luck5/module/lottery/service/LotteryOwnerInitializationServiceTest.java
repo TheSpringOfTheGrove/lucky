@@ -39,6 +39,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -127,9 +128,17 @@ class LotteryOwnerInitializationServiceTest {
         assertThat(integrationCaptor.getValue().getStatus()).isEqualTo("未登录");
 
         ArgumentCaptor<OddDO> oddCaptor = ArgumentCaptor.forClass(OddDO.class);
-        verify(oddMapper).insert(oddCaptor.capture());
-        assertThat(oddCaptor.getValue().getUserId()).isEqualTo(ownerId);
-        assertThat(oddCaptor.getValue().getRate()).isEqualByComparingTo("9.5");
+        verify(oddMapper, atLeastOnce()).insert(oddCaptor.capture());
+        OddDO copiedOdd = oddCaptor.getAllValues().stream()
+                .filter(item -> "regex1d".equals(item.getCode()))
+                .findFirst().orElseThrow();
+        assertThat(copiedOdd.getUserId()).isEqualTo(ownerId);
+        assertThat(copiedOdd.getRate()).isEqualByComparingTo("9.5");
+        OddDO fivePositionTwo = oddCaptor.getAllValues().stream()
+                .filter(item -> "regex5d2".equals(item.getCode()))
+                .findFirst().orElseThrow();
+        assertThat(fivePositionTwo.getPlay()).isEqualTo("五位二定");
+        assertThat(fivePositionTwo.getRate()).isEqualByComparingTo("96");
 
         ArgumentCaptor<QuickCommandDO> commandCaptor = ArgumentCaptor.forClass(QuickCommandDO.class);
         verify(quickCommandMapper).insert(commandCaptor.capture());
@@ -138,7 +147,7 @@ class LotteryOwnerInitializationServiceTest {
     }
 
     @Test
-    void initializeDoesNotOverwriteExistingOwnerData() {
+    void initializeDoesNotOverwriteExistingOwnerDataAndBackfillsMissingOdds() {
         Long ownerId = 201L;
         when(roleService.getRoleList()).thenReturn(List.of());
         when(lotteryConfigMapper.selectOne(any())).thenReturn(new LotteryConfigDO());
@@ -148,7 +157,10 @@ class LotteryOwnerInitializationServiceTest {
         when(chimaConfigMapper.selectOne(any())).thenReturn(new ChimaConfigDO());
         when(switchSettingMapper.selectList(any())).thenReturn(List.of(new SwitchSettingDO()));
         when(integrationMapper.selectList(any())).thenReturn(List.of(new IntegrationDO()));
-        when(oddMapper.selectList(any())).thenReturn(List.of(new OddDO()));
+        OddDO existingTwoPosition = new OddDO().setCode("regex2d").setPlay("二定位")
+                .setRate(new BigDecimal("95.5")).setMinLimit(new BigDecimal("2"))
+                .setMaxLimit(new BigDecimal("888")).setStatus("启用");
+        when(oddMapper.selectList(any())).thenReturn(List.of(existingTwoPosition), List.of(existingTwoPosition));
         when(quickCommandMapper.selectList(any())).thenReturn(List.of(new QuickCommandDO()));
 
         service.initializeCurrentTenant(1L, ownerId, "existing");
@@ -161,13 +173,21 @@ class LotteryOwnerInitializationServiceTest {
         verify(chimaConfigMapper, never()).insert(any(ChimaConfigDO.class));
         verify(switchSettingMapper, never()).insert(any(SwitchSettingDO.class));
         verify(integrationMapper, never()).insert(any(IntegrationDO.class));
-        verify(oddMapper, never()).insert(any(OddDO.class));
+        ArgumentCaptor<OddDO> oddCaptor = ArgumentCaptor.forClass(OddDO.class);
+        verify(oddMapper, atLeastOnce()).insert(oddCaptor.capture());
+        assertThat(oddCaptor.getAllValues()).noneMatch(item -> "regex2d".equals(item.getCode()));
+        OddDO fivePositionTwo = oddCaptor.getAllValues().stream()
+                .filter(item -> "regex5d2".equals(item.getCode()))
+                .findFirst().orElseThrow();
+        assertThat(fivePositionTwo.getRate()).isEqualByComparingTo("95.5");
+        assertThat(fivePositionTwo.getMinLimit()).isEqualByComparingTo("2");
+        assertThat(fivePositionTwo.getMaxLimit()).isEqualByComparingTo("888");
         verify(quickCommandMapper, never()).insert(any(QuickCommandDO.class));
     }
 
     @Test
     void automaticInitializationSkipsAccountWhenAnyInitializationMarkerAlreadyExists() {
-        when(ownerInitializationMapper.insertIfAbsent(1L, 202L, "AUTO", 202L, 2)).thenReturn(0);
+        when(ownerInitializationMapper.insertIfAbsent(1L, 202L, "AUTO", 202L, 3)).thenReturn(0);
 
         boolean initialized = service.initializeAutomaticallyCurrentTenant(1L, 202L, "existing-owner");
 
@@ -183,7 +203,7 @@ class LotteryOwnerInitializationServiceTest {
         marker.setUserId(ownerId);
         marker.setSchemaVersion(1);
         marker.setInitializationCount(1);
-        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 2)).thenReturn(0);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 3)).thenReturn(0);
         when(ownerInitializationMapper.selectOne(any())).thenReturn(marker);
         when(roleService.getRoleList()).thenReturn(List.of());
         LotteryConfigDO config = new LotteryConfigDO().setRoomName("旧房间").setCloseTime("23:55")
@@ -203,7 +223,7 @@ class LotteryOwnerInitializationServiceTest {
         boolean repaired = service.initializeAutomaticallyCurrentTenant(1L, ownerId, "old-owner");
 
         assertThat(repaired).isTrue();
-        assertThat(marker.getSchemaVersion()).isEqualTo(2);
+        assertThat(marker.getSchemaVersion()).isEqualTo(3);
         assertThat(marker.getLastSource()).isEqualTo("REPAIR");
         verify(ownerInitializationMapper).updateById(marker);
     }
@@ -214,10 +234,10 @@ class LotteryOwnerInitializationServiceTest {
         OwnerInitializationDO marker = new OwnerInitializationDO();
         marker.setUserId(ownerId);
         marker.setInitializationCount(1);
-        marker.setSchemaVersion(2);
-        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "MANUAL", 1L, 2)).thenReturn(1);
+        marker.setSchemaVersion(3);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "MANUAL", 1L, 3)).thenReturn(1);
         when(ownerInitializationMapper.selectOne(any())).thenReturn(marker);
-        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 2)).thenReturn(0);
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 3)).thenReturn(0);
         when(roleService.getRoleList()).thenReturn(List.of());
         when(lotteryConfigMapper.selectOne(any())).thenReturn(new LotteryConfigDO());
         when(systemStateMapper.selectOne(any())).thenReturn(new SystemStateDO());

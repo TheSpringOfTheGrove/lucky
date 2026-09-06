@@ -191,7 +191,7 @@ export const placeRoomBetApi = (
   })
 
 export const previewRoomBetApi = (credential: RoomCredential, content: string) =>
-  request<{ count: number; total: number; selections: string[] }>(
+  request<{ count: number; total: number; selections: string[]; selectionsTruncated?: boolean }>(
     '/app-api/lottery/room/bets/preview',
     {
       method: 'POST',

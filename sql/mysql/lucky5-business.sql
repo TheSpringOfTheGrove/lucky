@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_config` (
 CREATE TABLE IF NOT EXISTS `lucky5_owner_initialization` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL,
   `first_source` varchar(20) NOT NULL, `last_source` varchar(20) NOT NULL,
-  `initialization_count` int NOT NULL DEFAULT 1, `schema_version` int NOT NULL DEFAULT 2,
+  `initialization_count` int NOT NULL DEFAULT 1, `schema_version` int NOT NULL DEFAULT 3,
   `first_initialized_at` datetime(6) NOT NULL, `last_initialized_at` datetime(6) NOT NULL,
   `last_operator_user_id` bigint NOT NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -675,8 +675,16 @@ INSERT IGNORE INTO `lucky5_odd` (`tenant_id`,`user_id`,`code`,`play`,`item`,`rat
 (1,1,'regex4x','四字现','',360,'启用'),(1,1,'regex3x','三字现','',45,'启用'),
 (1,1,'regex2x','二字现','',9,'启用'),(1,1,'regex4d','四定位','',9600,'启用'),
 (1,1,'regex4d4','四条','',7000,'启用'),(1,1,'regex3d','三定位','',960,'启用'),
-(1,1,'regex2d','二定位','',96,'启用'),(1,1,'regex1d','一定位','',9,'启用'),
+(1,1,'regex2d','二定位','',96,'启用'),(1,1,'regex5d2','五位二定','',96,'启用'),
+(1,1,'regex1d','一定位','',9,'启用'),
 (1,1,'regexlh','龙虎','',0,'启用'),(1,1,'regexh','和','',0,'启用');
+
+INSERT IGNORE INTO `lucky5_odd`
+  (`tenant_id`,`user_id`,`code`,`play`,`item`,`rate`,`secondary_rate`,`min_limit`,`max_limit`,`status`,`creator`,`updater`)
+SELECT `tenant_id`,`user_id`,'regex5d2','五位二定',`item`,`rate`,`secondary_rate`,`min_limit`,`max_limit`,`status`,
+       `creator`,`updater`
+FROM `lucky5_odd`
+WHERE `code`='regex2d' AND `deleted`=b'0';
 
 INSERT IGNORE INTO `lucky5_quick_command` (`id`,`tenant_id`,`user_id`,`label`,`content`,`sort`,`enabled`) VALUES
 ('QC01',1,1,'11335566778899倒四定各0.5','11335566778899倒四定各0.5',1,b'1'),

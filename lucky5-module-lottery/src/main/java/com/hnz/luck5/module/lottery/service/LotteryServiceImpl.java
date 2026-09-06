@@ -2725,10 +2725,14 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> previewRoomBet(LotteryRoomReqVO.PreviewBet reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             MemberDO member = requireRoomAccess(reqVO).member();
-            List<LotteryBettingService.ParsedBet> items = bettingService.parse(reqVO.getContent(),
+            List<LotteryBettingService.ParsedBet> items = bettingService.parsePreview(reqVO.getContent(),
                     getEffectiveOdds(member.getUserId()));
+            int previewLimit = 500;
             return map("count", items.size(), "total", money(items.stream().map(LotteryBettingService.ParsedBet::amount)
-                    .reduce(ZERO, BigDecimal::add)), "selections", items.stream().map(LotteryBettingService.ParsedBet::selection).toList());
+                            .reduce(ZERO, BigDecimal::add)),
+                    "selections", items.stream().limit(previewLimit)
+                            .map(LotteryBettingService.ParsedBet::selection).toList(),
+                    "selectionsTruncated", items.size() > previewLimit);
         });
     }
 
