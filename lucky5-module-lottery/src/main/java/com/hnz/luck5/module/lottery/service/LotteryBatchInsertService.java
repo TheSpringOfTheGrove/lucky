@@ -19,22 +19,26 @@ import java.util.List;
 public class LotteryBatchInsertService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryBatchInsertService.class);
-    // Connector/J is configured with rewriteBatchedStatements=true. A 5,000-row batch keeps a 69k-item
-    // command to fourteen round trips instead of seventy while remaining comfortably below MySQL's packet limit.
-    private static final int BATCH_SIZE = 5_000;
+    // Do not rely on Connector/J rewriting addBatch() calls: this is not consistently enabled by every
+    // datasource configuration. These are explicit multi-value INSERT statement sizes and are safely below
+    // MySQL's 64 MiB default packet limit for our fixed-size bet item rows.
+    private static final int BET_ITEM_MULTI_VALUE_BATCH_SIZE = 20_000;
+    private static final int MARKET_ROUTE_MULTI_VALUE_BATCH_SIZE = 5_000;
     private static final int SLOW_LOG_ITEM_THRESHOLD = 1_000;
-    private static final String BET_ITEM_INSERT = """
+    private static final String BET_ITEM_INSERT_PREFIX = """
             INSERT INTO lucky5_bet_item
                 (id, user_id, order_id, play, selection, amount, odds, won, payout, tenant_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES
             """;
-    private static final String MARKET_ROUTE_INSERT = """
+    private static final String BET_ITEM_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String MARKET_ROUTE_INSERT_PREFIX = """
             INSERT INTO lucky5_market_route_item
                 (id, user_id, order_id, bet_item_id, period, play, selection, route_type,
                  local_amount, market_amount, odds, local_payout, market_guid, market_bet_id,
                  market_serial_no, market_bet_count, market_odds, status, attempts, last_error, tenant_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES
             """;
+    private static final String MARKET_ROUTE_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
     @Resource
     private JdbcTemplate jdbcTemplate;
@@ -42,49 +46,83 @@ public class LotteryBatchInsertService {
     public void insertBetItems(Long tenantId, List<BetItemDO> items) {
         if (items.isEmpty()) return;
         long startedAt = System.nanoTime();
-        jdbcTemplate.batchUpdate(BET_ITEM_INSERT, items, BATCH_SIZE, (statement, item) -> {
-            statement.setString(1, item.getId());
-            statement.setLong(2, item.getUserId());
-            statement.setString(3, item.getOrderId());
-            statement.setString(4, item.getPlay());
-            statement.setString(5, item.getSelection());
-            statement.setBigDecimal(6, item.getAmount());
-            statement.setBigDecimal(7, item.getOdds());
-            if (item.getWon() == null) statement.setNull(8, Types.BIT);
-            else statement.setBoolean(8, item.getWon());
-            statement.setBigDecimal(9, item.getPayout());
-            statement.setLong(10, tenantId);
-        });
+        forEachChunk(items.size(), BET_ITEM_MULTI_VALUE_BATCH_SIZE, (from, to) -> jdbcTemplate.update(connection -> {
+            var statement = connection.prepareStatement(multiValueSql(BET_ITEM_INSERT_PREFIX, BET_ITEM_VALUES, to - from));
+            int parameterIndex = 1;
+            for (int index = from; index < to; index++) {
+                BetItemDO item = items.get(index);
+                statement.setString(parameterIndex++, item.getId());
+                statement.setLong(parameterIndex++, item.getUserId());
+                statement.setString(parameterIndex++, item.getOrderId());
+                statement.setString(parameterIndex++, item.getPlay());
+                statement.setString(parameterIndex++, item.getSelection());
+                statement.setBigDecimal(parameterIndex++, item.getAmount());
+                statement.setBigDecimal(parameterIndex++, item.getOdds());
+                if (item.getWon() == null) statement.setNull(parameterIndex++, Types.BIT);
+                else statement.setBoolean(parameterIndex++, item.getWon());
+                statement.setBigDecimal(parameterIndex++, item.getPayout());
+                statement.setLong(parameterIndex++, tenantId);
+            }
+            return statement;
+        }));
         logBatchElapsed("bet-item", items.size(), startedAt);
     }
 
     public void insertMarketRoutes(Long tenantId, List<MarketRouteItemDO> items) {
         if (items.isEmpty()) return;
         long startedAt = System.nanoTime();
-        jdbcTemplate.batchUpdate(MARKET_ROUTE_INSERT, items, BATCH_SIZE, (statement, item) -> {
-            statement.setString(1, item.getId());
-            statement.setLong(2, item.getUserId());
-            statement.setString(3, item.getOrderId());
-            statement.setString(4, item.getBetItemId());
-            statement.setString(5, item.getPeriod());
-            statement.setString(6, item.getPlay());
-            statement.setString(7, item.getSelection());
-            statement.setString(8, item.getRouteType());
-            statement.setBigDecimal(9, item.getLocalAmount());
-            statement.setBigDecimal(10, item.getMarketAmount());
-            statement.setBigDecimal(11, item.getOdds());
-            statement.setBigDecimal(12, item.getLocalPayout());
-            statement.setString(13, item.getMarketGuid());
-            statement.setString(14, item.getMarketBetId());
-            statement.setString(15, item.getMarketSerialNo());
-            statement.setInt(16, item.getMarketBetCount());
-            statement.setBigDecimal(17, item.getMarketOdds());
-            statement.setString(18, item.getStatus());
-            statement.setInt(19, item.getAttempts());
-            statement.setString(20, item.getLastError());
-            statement.setLong(21, tenantId);
-        });
+        forEachChunk(items.size(), MARKET_ROUTE_MULTI_VALUE_BATCH_SIZE, (from, to) -> jdbcTemplate.update(connection -> {
+            var statement = connection.prepareStatement(multiValueSql(MARKET_ROUTE_INSERT_PREFIX,
+                    MARKET_ROUTE_VALUES, to - from));
+            int parameterIndex = 1;
+            for (int index = from; index < to; index++) {
+                MarketRouteItemDO item = items.get(index);
+                statement.setString(parameterIndex++, item.getId());
+                statement.setLong(parameterIndex++, item.getUserId());
+                statement.setString(parameterIndex++, item.getOrderId());
+                statement.setString(parameterIndex++, item.getBetItemId());
+                statement.setString(parameterIndex++, item.getPeriod());
+                statement.setString(parameterIndex++, item.getPlay());
+                statement.setString(parameterIndex++, item.getSelection());
+                statement.setString(parameterIndex++, item.getRouteType());
+                statement.setBigDecimal(parameterIndex++, item.getLocalAmount());
+                statement.setBigDecimal(parameterIndex++, item.getMarketAmount());
+                statement.setBigDecimal(parameterIndex++, item.getOdds());
+                statement.setBigDecimal(parameterIndex++, item.getLocalPayout());
+                statement.setString(parameterIndex++, item.getMarketGuid());
+                statement.setString(parameterIndex++, item.getMarketBetId());
+                statement.setString(parameterIndex++, item.getMarketSerialNo());
+                statement.setInt(parameterIndex++, item.getMarketBetCount());
+                statement.setBigDecimal(parameterIndex++, item.getMarketOdds());
+                statement.setString(parameterIndex++, item.getStatus());
+                statement.setInt(parameterIndex++, item.getAttempts());
+                statement.setString(parameterIndex++, item.getLastError());
+                statement.setLong(parameterIndex++, tenantId);
+            }
+            return statement;
+        }));
         logBatchElapsed("market-route", items.size(), startedAt);
+    }
+
+    private void forEachChunk(int size, int chunkSize, ChunkConsumer consumer) {
+        for (int from = 0; from < size; from += chunkSize) {
+            consumer.accept(from, Math.min(from + chunkSize, size));
+        }
+    }
+
+    private String multiValueSql(String prefix, String rowValues, int rows) {
+        StringBuilder sql = new StringBuilder(prefix.length() + (rowValues.length() + 1) * rows);
+        sql.append(prefix);
+        for (int index = 0; index < rows; index++) {
+            if (index > 0) sql.append(',');
+            sql.append(rowValues);
+        }
+        return sql.toString();
+    }
+
+    @FunctionalInterface
+    private interface ChunkConsumer {
+        void accept(int from, int to);
     }
 
     private void logBatchElapsed(String type, int itemCount, long startedAt) {
