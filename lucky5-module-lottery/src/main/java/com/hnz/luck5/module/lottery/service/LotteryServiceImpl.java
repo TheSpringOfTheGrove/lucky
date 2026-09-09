@@ -2,7 +2,9 @@ package com.hnz.luck5.module.lottery.service;
 
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
+import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -63,6 +65,9 @@ public class LotteryServiceImpl implements LotteryService {
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryServiceImpl.class);
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final int LARGE_BET_LOG_ITEM_THRESHOLD = 1_000;
+    /** Local orders persist one immutable expanded-JSON snapshot per submitted sub-command. */
+    private static final String COMPACT_SNAPSHOT_PLAY = "JSON快照";
+    private static final int COMPACT_SNAPSHOT_VERSION = 1;
     private static final Long DEFAULT_OWNER_USER_ID = 1L;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Set<String> INTEGRATION_KEYS = Set.of("blueWhale", "fish", "wechat");
@@ -88,6 +93,10 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private record CancelResult(String id, String status, BigDecimal refunded) {
+    }
+
+    private record CompactBet(String play, String selection, BigDecimal amount, BigDecimal odds,
+                              Boolean won, BigDecimal payout) {
     }
 
     private record RoomAccess(MemberDO member, String mode) {
@@ -315,8 +324,7 @@ public class LotteryServiceImpl implements LotteryService {
         boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         List<BetItemDO> items = !separateDragonRebate || orderIds.isEmpty() ? List.of() : betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, orderIds));
-        Map<String, List<BetItemDO>> itemsByOrder = items.stream()
-                .collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        Map<String, List<BetItemDO>> itemsByOrder = itemsByOrderWithExpandedSnapshots(items);
         List<RebateRecordDO> rebates = rebateRecordMapper.selectList(null);
         return members.stream().map(item -> memberMap(item, rebateCalculator.calculate(item, orders, itemsByOrder,
                 rebates, separateDragonRebate))).toList();
@@ -372,7 +380,8 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> orderMap(OrderDO item, List<BetItemDO> bets, String drawResult) {
-        Map<String, Object> result = orderSummaryMap(item, drawResult, bets.size());
+        Map<String, Object> result = orderSummaryMap(item, drawResult,
+                value(item.getItemCount(), bets.size()));
         result.put("items", bets.stream().map(this::betItemMap).toList());
         return result;
     }
@@ -914,6 +923,21 @@ public class LotteryServiceImpl implements LotteryService {
         OrderDO order = orderMapper.selectOne(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, userId).eq(OrderDO::getId, id));
         if (order == null) throw exception(RECORD_NOT_FOUND);
+        List<BetItemDO> snapshots = betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>()
+                .eq(BetItemDO::getUserId, userId).eq(BetItemDO::getOrderId, id)
+                .eq(BetItemDO::getPlay, COMPACT_SNAPSHOT_PLAY).orderByAsc(BetItemDO::getId));
+        if (!snapshots.isEmpty()) {
+            List<BetItemDO> logicalItems = expandCompactSnapshotItems(snapshots);
+            logicalItems.sort(Comparator.comparing((BetItemDO item) -> Boolean.TRUE.equals(item.getWon())).reversed()
+                    .thenComparing(BetItemDO::getId));
+            int total = logicalItems.size();
+            int from = Math.min((reqVO.getPageNo() - 1) * reqVO.getPageSize(), total);
+            int to = Math.min(from + reqVO.getPageSize(), total);
+            String drawResult = drawResultsForOrders(userId, List.of(order)).get(order.getPeriod());
+            IssueDO issue = issuesForOrders(userId, List.of(order)).get(order.getPeriod());
+            return map("order", orderSummaryMap(order, drawResult, total, issue),
+                    "list", logicalItems.subList(from, to).stream().map(this::betItemMap).toList(), "total", total);
+        }
         PageResult<BetItemDO> page = betItemMapper.selectPage(reqVO, new LambdaQueryWrapper<BetItemDO>()
                 .eq(BetItemDO::getUserId, userId).eq(BetItemDO::getOrderId, id)
                 .orderByDesc(BetItemDO::getWon).orderByAsc(BetItemDO::getId));
@@ -1038,9 +1062,8 @@ public class LotteryServiceImpl implements LotteryService {
                 .eq(OrderDO::getMemberId, id).ne(OrderDO::getOrderType, TYPE_AUTO_PROXY)
                 .orderByDesc(OrderDO::getCreateTime).last("LIMIT 20"));
         List<String> ids = orders.stream().map(OrderDO::getId).toList();
-        Map<String, List<BetItemDO>> items = ids.isEmpty() ? Map.of() : betItemMapper.selectList(
-                new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, ids)).stream()
-                .collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        Map<String, List<BetItemDO>> items = ids.isEmpty() ? Map.of() : itemsByOrderWithExpandedSnapshots(
+                betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().in(BetItemDO::getOrderId, ids)));
         List<RebateRecordDO> rebates = rebateRecordMapper.selectList(new LambdaQueryWrapper<RebateRecordDO>()
                 .eq(RebateRecordDO::getMemberId, id));
         List<BalanceLedgerDO> ledgers = autoProxy ? List.of() : balanceLedgerMapper.selectList(new LambdaQueryWrapper<BalanceLedgerDO>()
@@ -1213,7 +1236,7 @@ public class LotteryServiceImpl implements LotteryService {
         boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         List<BetItemDO> items = !separateDragonRebate || orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId).in(BetItemDO::getOrderId, orderIds)));
-        Map<String, List<BetItemDO>> itemsByOrder = items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId));
+        Map<String, List<BetItemDO>> itemsByOrder = itemsByOrderWithExpandedSnapshots(items);
         List<RebateRecordDO> rebateRecords = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
                 new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)));
         BigDecimal total = ZERO;
@@ -1501,7 +1524,9 @@ public class LotteryServiceImpl implements LotteryService {
         if (issueFreshnessPolicy.isBettingClosed(issue)) throw exception(ISSUE_NOT_OPEN);
         List<OddDO> odds = getEffectiveOdds(member.getUserId());
         long parseStartedAt = System.nanoTime();
-        List<LotteryBettingService.ParsedBet> parsed = bettingService.parse(reqVO.getContent(), odds);
+        List<LotteryBettingService.ParsedCommand> parsedCommands = bettingService.parseCommands(reqVO.getContent(), odds);
+        List<LotteryBettingService.ParsedBet> parsed = parsedCommands.stream()
+                .flatMap(command -> command.items().stream()).toList();
         long parseElapsedMs = elapsedMillis(parseStartedAt);
         boolean hasDragonTiger = parsed.stream().anyMatch(item -> "龙虎".equals(item.play()));
         boolean hasNormal = parsed.stream().anyMatch(item -> !"龙虎".equals(item.play()));
@@ -1564,19 +1589,11 @@ public class LotteryServiceImpl implements LotteryService {
                 LotteryBalanceLedgerService.BET_DEBIT, order.getId(), actor,
                 "期号 " + order.getPeriod() + " 下注 " + order.getContent());
         long itemBuildStartedAt = System.nanoTime();
-        List<BetItemDO> orderItems = new ArrayList<>(parsed.size());
-        for (LotteryBettingService.ParsedBet value : parsed) {
-            BetItemDO item = new BetItemDO();
-            item.setId(detailId());
-            item.setOrderId(order.getId());
-            item.setPlay(value.play());
-            item.setSelection(value.selection());
-            item.setAmount(value.amount());
-            item.setOdds(value.odds());
-            item.setPayout(ZERO);
-            item.setUserId(order.getUserId());
-            orderItems.add(item);
-        }
+        // Boss/local orders never require an external bet id. Persist one compact row for every original
+        // sub-command so the accepted expansion and odds cannot change if parsing rules/configuration change later.
+        List<BetItemDO> orderItems = realMarketOrder
+                ? materializedBetItems(order, parsed)
+                : compactSnapshotItems(order, parsedCommands);
         long itemBuildElapsedMs = elapsedMillis(itemBuildStartedAt);
         long itemInsertStartedAt = System.nanoTime();
         insertBetItems(orderItems);
@@ -1631,6 +1648,126 @@ public class LotteryServiceImpl implements LotteryService {
         return new BetResult(message.getId(), order.getId(), member.getName(), order.getPeriod(), total, balance,
                 parsed.size(), periodSequence, parsed.stream().limit(20).toList(), order.getStatus(), order.getDeliveryMode(),
                 order.getMarketStatus(), false);
+    }
+
+    private List<BetItemDO> materializedBetItems(OrderDO order, List<LotteryBettingService.ParsedBet> parsed) {
+        List<BetItemDO> items = new ArrayList<>(parsed.size());
+        for (LotteryBettingService.ParsedBet value : parsed) {
+            BetItemDO item = new BetItemDO();
+            item.setId(detailId());
+            item.setOrderId(order.getId());
+            item.setPlay(value.play());
+            item.setSelection(value.selection());
+            item.setAmount(value.amount());
+            item.setOdds(value.odds());
+            item.setPayout(ZERO);
+            item.setUserId(order.getUserId());
+            items.add(item);
+        }
+        return items;
+    }
+
+    private List<BetItemDO> compactSnapshotItems(OrderDO order,
+                                                   List<LotteryBettingService.ParsedCommand> commands) {
+        List<BetItemDO> items = new ArrayList<>(commands.size());
+        for (LotteryBettingService.ParsedCommand command : commands) {
+            List<LotteryBettingService.ParsedBet> parsed = command.items();
+            BetItemDO item = new BetItemDO();
+            item.setId(detailId());
+            item.setOrderId(order.getId());
+            item.setPlay(COMPACT_SNAPSHOT_PLAY);
+            item.setSelection("已快照 " + parsed.size() + " 注");
+            item.setSnapshotJson(compactSnapshotJson(command.content(), parsed));
+            item.setAmount(money(parsed.stream().map(LotteryBettingService.ParsedBet::amount)
+                    .reduce(ZERO, BigDecimal::add)));
+            item.setOdds(ZERO);
+            item.setPayout(ZERO);
+            item.setUserId(order.getUserId());
+            items.add(item);
+        }
+        return items;
+    }
+
+    private String compactSnapshotJson(String command, List<LotteryBettingService.ParsedBet> parsed) {
+        List<Map<String, Object>> items = parsed.stream().map(item -> map(
+                "play", item.play(), "selection", item.selection(), "amount", item.amount(), "odds", item.odds(),
+                "won", null, "payout", ZERO)).toList();
+        return JSONUtil.toJsonStr(map("version", COMPACT_SNAPSHOT_VERSION, "command", command, "items", items));
+    }
+
+    private boolean isCompactSnapshot(BetItemDO item) {
+        return COMPACT_SNAPSHOT_PLAY.equals(item.getPlay()) && StrUtil.isNotBlank(item.getSnapshotJson());
+    }
+
+    private List<CompactBet> readCompactSnapshot(BetItemDO item) {
+        if (!isCompactSnapshot(item)) return List.of();
+        try {
+            JSONObject snapshot = JSONUtil.parseObj(item.getSnapshotJson());
+            if (value(snapshot.getInt("version"), 0) != COMPACT_SNAPSHOT_VERSION) {
+                throw exception(BET_CONTENT_INVALID);
+            }
+            JSONArray values = snapshot.getJSONArray("items");
+            if (values == null) throw exception(BET_CONTENT_INVALID);
+            List<CompactBet> result = new ArrayList<>(values.size());
+            for (Object value : values) {
+                JSONObject parsed = JSONUtil.parseObj(value);
+                String play = parsed.getStr("play");
+                String selection = parsed.getStr("selection");
+                BigDecimal amount = parsed.getBigDecimal("amount");
+                BigDecimal odds = parsed.getBigDecimal("odds");
+                if (StrUtil.isBlank(play) || StrUtil.isBlank(selection) || amount == null || odds == null) {
+                    throw exception(BET_CONTENT_INVALID);
+                }
+                result.add(new CompactBet(play, selection, amount, odds, parsed.getBool("won"),
+                        parsed.getBigDecimal("payout")));
+            }
+            return result;
+        } catch (ServiceException serviceException) {
+            throw serviceException;
+        } catch (RuntimeException parseException) {
+            LOGGER.error("Lucky5 compact bet snapshot is invalid: orderId={}, itemId={}", item.getOrderId(), item.getId(), parseException);
+            throw exception(BET_CONTENT_INVALID);
+        }
+    }
+
+    private String settledCompactSnapshotJson(BetItemDO item, List<CompactBet> bets) {
+        JSONObject snapshot = JSONUtil.parseObj(item.getSnapshotJson());
+        List<Map<String, Object>> values = bets.stream().map(bet -> map(
+                "play", bet.play(), "selection", bet.selection(), "amount", bet.amount(), "odds", bet.odds(),
+                "won", bet.won(), "payout", money(bet.payout()))).toList();
+        snapshot.set("items", values);
+        return snapshot.toString();
+    }
+
+    private List<BetItemDO> expandCompactSnapshotItems(List<BetItemDO> storedItems) {
+        List<BetItemDO> result = new ArrayList<>();
+        for (BetItemDO stored : storedItems) {
+            if (!isCompactSnapshot(stored)) {
+                result.add(stored);
+                continue;
+            }
+            List<CompactBet> bets = readCompactSnapshot(stored);
+            for (int index = 0; index < bets.size(); index++) {
+                CompactBet bet = bets.get(index);
+                BetItemDO item = new BetItemDO();
+                item.setId(stored.getId() + ":" + index);
+                item.setOrderId(stored.getOrderId());
+                item.setUserId(stored.getUserId());
+                item.setPlay(bet.play());
+                item.setSelection(bet.selection());
+                item.setAmount(bet.amount());
+                item.setOdds(bet.odds());
+                item.setWon(bet.won());
+                item.setPayout(money(bet.payout()));
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    private Map<String, List<BetItemDO>> itemsByOrderWithExpandedSnapshots(List<BetItemDO> items) {
+        return items.stream().collect(Collectors.groupingBy(BetItemDO::getOrderId,
+                Collectors.collectingAndThen(Collectors.toList(), this::expandCompactSnapshotItems)));
     }
 
     private void insertBetItems(List<BetItemDO> items) {
@@ -1941,6 +2078,30 @@ public class LotteryServiceImpl implements LotteryService {
                             .eq(BetItemDO::getOrderId, order.getId())));
             BigDecimal payout = ZERO;
             for (BetItemDO item : items) {
+                if (isCompactSnapshot(item)) {
+                    List<CompactBet> settledBets = new ArrayList<>();
+                    for (CompactBet compact : readCompactSnapshot(item)) {
+                        LotteryBettingService.ParsedBet parsed = new LotteryBettingService.ParsedBet(compact.play(),
+                                compact.selection(), compact.amount(), compact.odds());
+                        boolean won = bettingService.isWinning(parsed, draw);
+                        BigDecimal itemPayout = won ? money(compact.amount().multiply(compact.odds())) : ZERO;
+                        settledBets.add(new CompactBet(compact.play(), compact.selection(), compact.amount(), compact.odds(),
+                                won, itemPayout));
+                        payout = payout.add(itemPayout);
+                        if (won) {
+                            winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
+                                    .add(compact.selection() + "，套数" + robotReplyTemplate.number(compact.amount())
+                                            + "，房费" + robotReplyTemplate.number(itemPayout));
+                            winningPayouts.merge(order.getMemberName(), itemPayout, BigDecimal::add);
+                            winningMemberIds.put(order.getMemberName(), order.getMemberId());
+                        }
+                    }
+                    item.setWon(settledBets.stream().anyMatch(bet -> Boolean.TRUE.equals(bet.won())));
+                    item.setPayout(money(settledBets.stream().map(CompactBet::payout).reduce(ZERO, BigDecimal::add)));
+                    item.setSnapshotJson(settledCompactSnapshotJson(item, settledBets));
+                    betItemMapper.updateById(item);
+                    continue;
+                }
                 LotteryBettingService.ParsedBet parsed = new LotteryBettingService.ParsedBet(item.getPlay(), item.getSelection(),
                         item.getAmount(), item.getOdds());
                 boolean won = bettingService.isWinning(parsed, draw);
@@ -2997,7 +3158,7 @@ public class LotteryServiceImpl implements LotteryService {
         List<BetItemDO> items = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, member.getUserId())
                         .eq(BetItemDO::getOrderId, order.getId())));
-        List<LotteryBettingService.ParsedBet> parsed = items.stream().map(item -> new LotteryBettingService.ParsedBet(
+        List<LotteryBettingService.ParsedBet> parsed = expandCompactSnapshotItems(items).stream().map(item -> new LotteryBettingService.ParsedBet(
                 item.getPlay(), item.getSelection(), item.getAmount(), item.getOdds())).toList();
         return new BetResult(message.getId(), order.getId(), member.getName(), order.getPeriod(), money(order.getAmount()),
                 money(member.getBalance()), parsed.size(), value(order.getPeriodSequence(), 0), parsed,

@@ -19,6 +19,11 @@ public class BetItemDO extends LotteryUserBaseDO {
     private String orderId;
     private String play;
     private String selection;
+    /**
+     * A compact local-order snapshot. One row represents one original sub-command and contains its
+     * fully expanded selections, odds and (after settlement) outcomes. External-market rows keep this null.
+     */
+    private String snapshotJson;
     private BigDecimal amount;
     private BigDecimal odds;
     private Boolean won;

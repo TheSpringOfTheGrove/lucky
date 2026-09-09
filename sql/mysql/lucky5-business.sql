@@ -259,7 +259,7 @@ PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lu
 
 CREATE TABLE IF NOT EXISTS `lucky5_bet_item` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `order_id` varchar(64) NOT NULL, `play` varchar(100) NOT NULL,
-  `selection` varchar(100) NOT NULL, `amount` decimal(18,2) NOT NULL, `odds` decimal(12,4) NOT NULL,
+  `selection` varchar(100) NOT NULL, `snapshot_json` mediumtext NULL, `amount` decimal(18,2) NOT NULL, `odds` decimal(12,4) NOT NULL,
   `won` bit(1) NULL, `payout` decimal(18,2) NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -267,6 +267,14 @@ CREATE TABLE IF NOT EXISTS `lucky5_bet_item` (
   PRIMARY KEY (`id`), KEY `idx_lucky5_bet_order` (`tenant_id`,`user_id`,`order_id`),
   KEY `idx_lucky5_bet_selection` (`tenant_id`,`user_id`,`play`,`selection`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 拆分注项';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_bet_item' AND column_name='snapshot_json')=0,
+  'ALTER TABLE `lucky5_bet_item` ADD COLUMN `snapshot_json` mediumtext NULL AFTER `selection`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `order_id` varchar(64) NOT NULL,

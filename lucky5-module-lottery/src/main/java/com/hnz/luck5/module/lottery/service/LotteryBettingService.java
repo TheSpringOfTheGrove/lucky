@@ -39,18 +39,36 @@ public class LotteryBettingService {
     public record ParsedBet(String play, String selection, BigDecimal amount, BigDecimal odds) {
     }
 
+    /**
+     * Keeps the original sub-command next to its expanded selections. This lets persistence snapshot
+     * the exact accepted interpretation once, rather than parsing the text again at query or settlement time.
+     */
+    public record ParsedCommand(String content, List<ParsedBet> items) {
+    }
+
     public record DrawResult(String result, List<Integer> digits, String bigSmall, String oddEven,
                              String dragonTiger) {
     }
 
     public List<ParsedBet> parse(String rawContent, List<OddDO> odds) {
-        List<String> commands = splitCommands(rawContent);
         List<ParsedBet> result = new ArrayList<>();
-        for (String command : commands) {
-            result.addAll(parseSingle(command, odds));
+        for (ParsedCommand command : parseCommands(rawContent, odds)) {
+            result.addAll(command.items());
             if (result.size() > MAX_COMBINED_COMMAND_ITEMS) {
                 throw exception(BET_LIMIT_INVALID);
             }
+        }
+        return result;
+    }
+
+    public List<ParsedCommand> parseCommands(String rawContent, List<OddDO> odds) {
+        List<ParsedCommand> result = new ArrayList<>();
+        int itemCount = 0;
+        for (String command : splitCommands(rawContent)) {
+            List<ParsedBet> items = parseSingle(command, odds);
+            itemCount += items.size();
+            if (itemCount > MAX_COMBINED_COMMAND_ITEMS) throw exception(BET_LIMIT_INVALID);
+            result.add(new ParsedCommand(command, items));
         }
         return result;
     }

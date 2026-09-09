@@ -27,10 +27,10 @@ public class LotteryBatchInsertService {
     private static final int SLOW_LOG_ITEM_THRESHOLD = 1_000;
     private static final String BET_ITEM_INSERT_PREFIX = """
             INSERT INTO lucky5_bet_item
-                (id, user_id, order_id, play, selection, amount, odds, won, payout, tenant_id)
+                (id, user_id, order_id, play, selection, snapshot_json, amount, odds, won, payout, tenant_id)
             VALUES
             """;
-    private static final String BET_ITEM_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String BET_ITEM_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String MARKET_ROUTE_INSERT_PREFIX = """
             INSERT INTO lucky5_market_route_item
                 (id, user_id, order_id, bet_item_id, period, play, selection, route_type,
@@ -56,6 +56,7 @@ public class LotteryBatchInsertService {
                 statement.setString(parameterIndex++, item.getOrderId());
                 statement.setString(parameterIndex++, item.getPlay());
                 statement.setString(parameterIndex++, item.getSelection());
+                statement.setString(parameterIndex++, item.getSnapshotJson());
                 statement.setBigDecimal(parameterIndex++, item.getAmount());
                 statement.setBigDecimal(parameterIndex++, item.getOdds());
                 if (item.getWon() == null) statement.setNull(parameterIndex++, Types.BIT);

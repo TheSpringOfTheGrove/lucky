@@ -200,6 +200,11 @@ class LotteryBettingServiceTest {
 
         assertThat(service.splitCommandsForDisplay(content)).hasSize(14);
         assertThat(service.parse(content, odds)).hasSize(69_141);
+        assertThat(service.parseCommands(content, odds))
+                .hasSize(14)
+                .allSatisfy(command -> assertThat(command.content()).startsWith("13680配"));
+        assertThat(service.parseCommands(content, odds).stream().mapToInt(command -> command.items().size()).sum())
+                .isEqualTo(69_141);
     }
 
     @Test
