@@ -6,9 +6,12 @@ import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.stereotype.Service;
 
 import java.sql.Types;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.List;
 
 /**
@@ -39,6 +42,11 @@ public class LotteryBatchInsertService {
             VALUES
             """;
     private static final String MARKET_ROUTE_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String SETTLED_BET_ITEM_UPDATE = """
+            UPDATE lucky5_bet_item
+            SET won = ?, payout = ?, snapshot_json = ?, update_time = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ? AND tenant_id = ?
+            """;
 
     @Resource
     private JdbcTemplate jdbcTemplate;
@@ -103,6 +111,35 @@ public class LotteryBatchInsertService {
             return statement;
         }));
         logBatchElapsed("market-route", items.size(), startedAt);
+    }
+
+    /**
+     * Settlement updates the compact JSON row once, or the legacy physical row once.  Keeping this a
+     * JDBC batch removes the per-row ORM round trip while retaining the caller's surrounding transaction.
+     */
+    public void updateSettledBetItems(Long tenantId, List<BetItemDO> items) {
+        if (items.isEmpty()) return;
+        long startedAt = System.nanoTime();
+        forEachChunk(items.size(), MARKET_ROUTE_MULTI_VALUE_BATCH_SIZE, (from, to) -> jdbcTemplate.batchUpdate(
+                SETTLED_BET_ITEM_UPDATE, new BatchPreparedStatementSetter() {
+                    @Override
+                    public void setValues(PreparedStatement statement, int index) throws SQLException {
+                        BetItemDO item = items.get(from + index);
+                        if (item.getWon() == null) statement.setNull(1, Types.BIT);
+                        else statement.setBoolean(1, item.getWon());
+                        statement.setBigDecimal(2, item.getPayout());
+                        statement.setString(3, item.getSnapshotJson());
+                        statement.setString(4, item.getId());
+                        statement.setLong(5, item.getUserId());
+                        statement.setLong(6, tenantId);
+                    }
+
+                    @Override
+                    public int getBatchSize() {
+                        return to - from;
+                    }
+                }));
+        logBatchElapsed("settled-bet-item", items.size(), startedAt);
     }
 
     private void forEachChunk(int size, int chunkSize, ChunkConsumer consumer) {

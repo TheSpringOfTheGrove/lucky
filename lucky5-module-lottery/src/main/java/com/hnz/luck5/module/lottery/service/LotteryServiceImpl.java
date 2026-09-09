@@ -99,6 +99,9 @@ public class LotteryServiceImpl implements LotteryService {
                               Boolean won, BigDecimal payout) {
     }
 
+    private record SettlementOrderPlan(OrderDO order, List<BetItemDO> items, BigDecimal payout) {
+    }
+
     private record RoomAccess(MemberDO member, String mode) {
         String channel() {
             return ROOM_MODE_PRIVATE.equals(mode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
@@ -2017,6 +2020,7 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> settlePeriodInternal(Long userId, String period, LotteryReqVO.Settle reqVO, String actor) {
+        long settlementStartedAt = System.nanoTime();
         if (reqVO == null || StrUtil.isBlank(reqVO.getResult())) throw exception(BET_CONTENT_INVALID);
         String normalizedResult = normalizeFiveDigitDraw(reqVO.getResult());
         if (LotteryDrawVerificationService.ZERO_RESULT.equals(normalizedResult)) throw exception(DRAW_RESULT_ABNORMAL);
@@ -2072,10 +2076,21 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, List<String>> winningLines = new LinkedHashMap<>();
         Map<String, BigDecimal> winningPayouts = new HashMap<>();
         Map<String, String> winningMemberIds = new HashMap<>();
+        List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
+        List<BetItemDO> allItems = orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() ->
+                betItemMapper.selectList(new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId)
+                        .in(BetItemDO::getOrderId, orderIds).orderByAsc(BetItemDO::getId)));
+        Map<String, List<BetItemDO>> itemsByOrder = allItems.stream()
+                .collect(Collectors.groupingBy(BetItemDO::getOrderId, LinkedHashMap::new, Collectors.toList()));
+        Map<String, MemberDO> membersById = orders.isEmpty() ? Map.of() : DataPermissionUtils.executeIgnore(() ->
+                memberMapper.selectList(new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
+                        .in(MemberDO::getId, orders.stream().map(OrderDO::getMemberId).distinct().toList())))
+                .stream().collect(Collectors.toMap(MemberDO::getId, Function.identity(), (first, ignored) -> first,
+                        LinkedHashMap::new));
+        List<BetItemDO> settledItems = new ArrayList<>(allItems.size());
+        Map<String, List<SettlementOrderPlan>> settlementPlansByMember = new LinkedHashMap<>();
         for (OrderDO order : orders) {
-            List<BetItemDO> items = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
-                    new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId)
-                            .eq(BetItemDO::getOrderId, order.getId())));
+            List<BetItemDO> items = itemsByOrder.getOrDefault(order.getId(), List.of());
             BigDecimal payout = ZERO;
             for (BetItemDO item : items) {
                 if (isCompactSnapshot(item)) {
@@ -2099,7 +2114,7 @@ public class LotteryServiceImpl implements LotteryService {
                     item.setWon(settledBets.stream().anyMatch(bet -> Boolean.TRUE.equals(bet.won())));
                     item.setPayout(money(settledBets.stream().map(CompactBet::payout).reduce(ZERO, BigDecimal::add)));
                     item.setSnapshotJson(settledCompactSnapshotJson(item, settledBets));
-                    betItemMapper.updateById(item);
+                    settledItems.add(item);
                     continue;
                 }
                 LotteryBettingService.ParsedBet parsed = new LotteryBettingService.ParsedBet(item.getPlay(), item.getSelection(),
@@ -2108,7 +2123,7 @@ public class LotteryServiceImpl implements LotteryService {
                 item.setWon(won);
                 item.setPayout(won ? money(item.getAmount().multiply(item.getOdds())) : ZERO);
                 payout = payout.add(item.getPayout());
-                betItemMapper.updateById(item);
+                settledItems.add(item);
                 if (won) {
                     winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
                             .add(item.getSelection() + "，套数" + robotReplyTemplate.number(item.getAmount())
@@ -2118,33 +2133,13 @@ public class LotteryServiceImpl implements LotteryService {
                 }
             }
             payout = money(payout);
-            marketRoutingService.settle(userId, order.getId(), items);
             int orderVersion = value(order.getVersion(), 0);
             order.setWin(payout);
             order.setStatus(payout.signum() > 0 ? "已中奖" : "未中奖");
             order.setSettledAt(LocalDateTime.now());
             order.setVersion(orderVersion + 1);
-            int settled = orderMapper.update(order, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, order.getId())
-                    .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
-                    .eq(OrderDO::getVersion, orderVersion));
-            if (settled != 1) throw exception(BET_STATE_CHANGED);
-            MemberDO member = requireMember(order.getMemberId(), userId);
-            int memberVersion = value(member.getVersion(), 0);
-            BigDecimal balanceBefore = money(member.getBalance());
-            member.setBalance(money(balanceBefore.add(payout)));
-            member.setProfitLoss(money(value(member.getProfitLoss(), ZERO).add(payout.subtract(order.getAmount()))));
-            member.setVersion(memberVersion + 1);
-            int memberUpdated = memberMapper.update(member, new LambdaUpdateWrapper<MemberDO>()
-                    .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, userId)
-                    .eq(MemberDO::getVersion, memberVersion));
-            if (memberUpdated != 1) throw exception(BET_STATE_CHANGED);
-            if (payout.signum() > 0) {
-                balanceLedgerService.recordAppliedChange(member, balanceBefore, member.getBalance(),
-                        LotteryBalanceLedgerService.PAYOUT, order.getId(), actor,
-                        "期号 " + period + " 派奖");
-            }
-            messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
-                    .eq(MessageDO::getOrderId, order.getId()).set(MessageDO::getStatus, order.getStatus()));
+            settlementPlansByMember.computeIfAbsent(order.getMemberId(), ignored -> new ArrayList<>())
+                    .add(new SettlementOrderPlan(order, items, payout));
             boolean autoProxyOrder = isAutoProxyOrder(order);
             settlementTotals.add(order.getAmount(), payout, autoProxyOrder);
             if (!autoProxyOrder) {
@@ -2152,6 +2147,48 @@ public class LotteryServiceImpl implements LotteryService {
                         "payout", payout, "status", order.getStatus()));
             }
         }
+        batchInsertService.updateSettledBetItems(TenantContextHolder.getRequiredTenantId(), settledItems);
+        for (SettlementOrderPlan plan : settlementPlansByMember.values().stream().flatMap(List::stream).toList()) {
+            OrderDO order = plan.order();
+            int settled = orderMapper.update(order, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, order.getId())
+                    .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
+                    .eq(OrderDO::getVersion, value(order.getVersion(), 1) - 1));
+            if (settled != 1) throw exception(BET_STATE_CHANGED);
+            marketRoutingService.settle(userId, order.getId(), plan.items());
+        }
+        for (Map.Entry<String, List<SettlementOrderPlan>> entry : settlementPlansByMember.entrySet()) {
+            MemberDO member = membersById.get(entry.getKey());
+            if (member == null) throw exception(MEMBER_NOT_FOUND);
+            List<SettlementOrderPlan> memberPlans = entry.getValue();
+            BigDecimal memberPayout = money(memberPlans.stream().map(SettlementOrderPlan::payout)
+                    .reduce(ZERO, BigDecimal::add));
+            BigDecimal memberBet = money(memberPlans.stream().map(plan -> plan.order().getAmount())
+                    .reduce(ZERO, BigDecimal::add));
+            int memberVersion = value(member.getVersion(), 0);
+            BigDecimal balanceBefore = money(member.getBalance());
+            member.setBalance(money(balanceBefore.add(memberPayout)));
+            member.setProfitLoss(money(value(member.getProfitLoss(), ZERO).add(memberPayout.subtract(memberBet))));
+            member.setVersion(memberVersion + 1);
+            int memberUpdated = memberMapper.update(member, new LambdaUpdateWrapper<MemberDO>()
+                    .eq(MemberDO::getId, member.getId()).eq(MemberDO::getUserId, userId)
+                    .eq(MemberDO::getVersion, memberVersion));
+            if (memberUpdated != 1) throw exception(BET_STATE_CHANGED);
+            BigDecimal ledgerBalance = balanceBefore;
+            for (SettlementOrderPlan plan : memberPlans) {
+                if (plan.payout().signum() <= 0) continue;
+                BigDecimal nextLedgerBalance = money(ledgerBalance.add(plan.payout()));
+                balanceLedgerService.recordAppliedChange(member, ledgerBalance, nextLedgerBalance,
+                        LotteryBalanceLedgerService.PAYOUT, plan.order().getId(), actor,
+                        "期号 " + period + " 派奖");
+                ledgerBalance = nextLedgerBalance;
+            }
+        }
+        orders.stream().collect(Collectors.groupingBy(OrderDO::getStatus)).forEach((status, statusOrders) ->
+                messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                        .in(MessageDO::getOrderId, statusOrders.stream().map(OrderDO::getId).toList())
+                        .set(MessageDO::getStatus, status)));
+        LOGGER.info("Lucky5 period settlement applied: period={}, orders={}, members={}, storedItems={}, elapsedMs={}",
+                period, orders.size(), settlementPlansByMember.size(), allItems.size(), elapsedMillis(settlementStartedAt));
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, userId).eq(IssueDO::getPeriod, period)));
         DrawDO record = oldDraw;
