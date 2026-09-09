@@ -60,9 +60,10 @@ const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
 const betReplyFastPollUntilMs = ref(0)
-const trackedBetMessageId = ref<number | null>(null)
+const trackedBetMessageIds = ref<number[]>([])
 const sessionStartedAt = ref(new Date().toISOString())
 const autoFollowMessages = ref(true)
+const unreadMessageKeys = ref<string[]>([])
 const scratchVisible = ref(false)
 const scratchRemaining = ref(0)
 const clockNowMs = ref(Date.now())
@@ -301,7 +302,8 @@ const chatMessages = computed<ChatItem[]>(() => {
       type: 'text',
       content: roomReplyTemplates.issueTransition(transition.status),
       createdAt: transition.createdAt,
-      sequenceRank: transition.status === 'CLOSED' ? 10 : transition.status === 'OPEN' ? 60 : undefined
+      sequenceRank:
+        transition.status === 'CLOSED' ? 10 : transition.status === 'OPEN' ? 60 : undefined
     })
   }
 
@@ -363,10 +365,12 @@ const chatMessages = computed<ChatItem[]>(() => {
         kind: 'robot',
         type: order ? 'order' : 'text',
         content: order
-          ? message.reply || '下注成功'
-          : message.reply ||
-            message.error ||
-            (message.status === '处理中' ? '正在处理' : message.status),
+          ? formatRobotReply(message.reply || '下注成功')
+          : formatRobotReply(
+              message.reply ||
+                message.error ||
+                (message.status === '处理中' ? '正在处理' : message.status)
+            ),
         createdAt: dayjs(message.createdAt).add(robotReplyDelay, 'millisecond').toISOString(),
         order,
         sequenceRank:
@@ -453,8 +457,13 @@ const keyboardRows = [
 ]
 
 let refreshTimer: number | undefined
+let drawRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 let sessionRequestSequence = 0
+let drawStateRequestSequence = 0
+let lastDrawStateAppliedAt = 0
+let chatMessageBaselineReady = false
+const knownChatMessageVersions = new Set<string>()
 
 const money = (value: number) => Number(value || 0).toFixed(2)
 const drawDisplayTime = (draw: RoomDraw) => {
@@ -482,6 +491,96 @@ const applyAuthoritativeIssueClock = (issue: RoomSession['issue'], responseRecei
     issue.status === 'OPEN' ? Math.max(0, Number(issue.remainingSeconds || 0)) : 0
 }
 const receiptText = (value: string) => value.replace(/\n点击退码\s*$/, '')
+const chatMessageVersion = (message: ChatItem) =>
+  [message.id, message.content, message.order?.status || '', message.order?.win || ''].join(
+    '\u0000'
+  )
+const isUnreadEligibleMessage = (message: ChatItem) =>
+  !['room-welcome', 'room-announcement'].includes(message.id) &&
+  !message.id.startsWith('pending-') &&
+  message.kind !== 'member'
+const markKnownChatMessages = () => {
+  for (const message of chatMessages.value) {
+    if (isUnreadEligibleMessage(message)) knownChatMessageVersions.add(chatMessageVersion(message))
+  }
+}
+const clearUnreadMessages = () => {
+  unreadMessageKeys.value = []
+}
+const collectUnreadMessages = (wasFollowing: boolean) => {
+  if (!chatMessageBaselineReady) {
+    markKnownChatMessages()
+    chatMessageBaselineReady = true
+    return
+  }
+  const nextUnreadKeys: string[] = []
+  for (const message of chatMessages.value) {
+    if (!isUnreadEligibleMessage(message)) continue
+    const version = chatMessageVersion(message)
+    if (knownChatMessageVersions.has(version)) continue
+    knownChatMessageVersions.add(version)
+    if (!wasFollowing) nextUnreadKeys.push(version)
+  }
+  if (wasFollowing) {
+    clearUnreadMessages()
+  } else if (nextUnreadKeys.length) {
+    unreadMessageKeys.value = [...unreadMessageKeys.value, ...nextUnreadKeys]
+  }
+}
+const resetChatMessageTracking = () => {
+  chatMessageBaselineReady = false
+  knownChatMessageVersions.clear()
+  clearUnreadMessages()
+}
+const formatRobotReply = (value: string) =>
+  value
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const parts = line
+        .split(/[，,、；;]/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+      if (
+        parts.length < 2 ||
+        !parts.every((part) =>
+          /(?:各\d+(?:\.\d+)?|(?:倒[一二三四]定|[二三四]定倒)\/\d+(?:\.\d+)?)$/.test(part)
+        )
+      ) {
+        return [line]
+      }
+      return parts
+    })
+    .join('\n')
+
+const copyInstruction = async (message: ChatItem) => {
+  if (message.kind === 'robot' || !message.content.trim()) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(message.content)
+    } else {
+      const input = document.createElement('textarea')
+      input.value = message.content
+      input.setAttribute('readonly', '')
+      input.style.position = 'fixed'
+      input.style.opacity = '0'
+      document.body.appendChild(input)
+      try {
+        input.select()
+        if (!document.execCommand('copy')) throw new Error('copy failed')
+      } finally {
+        input.remove()
+      }
+    }
+    await ElMessageBox.alert('复制成功', {
+      confirmButtonText: '确定',
+      showClose: false,
+      center: true,
+      customClass: 'room-copy-success'
+    })
+  } catch (reason) {
+    if (reason !== 'cancel' && reason !== 'close') ElMessage.error('复制失败')
+  }
+}
 const messageTime = (value: string) =>
   dayjs(value).isSame(dayjs(), 'day')
     ? dayjs(value).format('HH:mm')
@@ -496,12 +595,14 @@ const scrollToBottom = async (behavior: ScrollBehavior = 'auto') => {
   await nextTick()
   chatRef.value?.scrollTo({ top: chatRef.value.scrollHeight, behavior })
   autoFollowMessages.value = true
+  clearUnreadMessages()
 }
 
 const handleChatScroll = () => {
   const stream = chatRef.value
   if (!stream) return
   autoFollowMessages.value = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 80
+  if (autoFollowMessages.value) clearUnreadMessages()
 }
 
 const loadSession = async (quiet = false) => {
@@ -513,7 +614,9 @@ const loadSession = async (quiet = false) => {
   const requestSequence = ++sessionRequestSequence
   if (!quiet) loading.value = true
   try {
+    const requestStartedAt = Date.now()
     const previousDrawPeriod = session.value?.draws[0]?.period || ''
+    const wasFollowing = autoFollowMessages.value
     const previousMessageStatus = new Map(
       (session.value?.messages || []).map((message) => [message.id, message.status])
     )
@@ -521,16 +624,27 @@ const loadSession = async (quiet = false) => {
     const nextSession = await getRoomSessionApi(credential.value)
     const responseReceivedAt = Date.now()
     if (requestSequence !== sessionRequestSequence) return
-    const nextDrawPeriod = nextSession.draws[0]?.period || ''
-    session.value = nextSession
-    if (trackedBetMessageId.value !== null) {
-      const trackedMessage = nextSession.messages.find(
-        (message) => message.id === trackedBetMessageId.value
-      )
-      if (trackedMessage && !trackedMessage.reply?.trim().endsWith('提交中')) {
-        trackedBetMessageId.value = null
-        betReplyFastPollUntilMs.value = 0
-      }
+    const preserveNewerDrawState = lastDrawStateAppliedAt > requestStartedAt
+    const currentDrawState = session.value
+    const appliedSession =
+      preserveNewerDrawState && currentDrawState
+        ? {
+            ...nextSession,
+            suggestedPeriod: currentDrawState.suggestedPeriod,
+            issue: currentDrawState.issue,
+            draws: currentDrawState.draws
+          }
+        : nextSession
+    const nextDrawPeriod = appliedSession.draws[0]?.period || ''
+    session.value = appliedSession
+    await nextTick()
+    collectUnreadMessages(wasFollowing)
+    if (trackedBetMessageIds.value.length) {
+      trackedBetMessageIds.value = trackedBetMessageIds.value.filter((messageId) => {
+        const trackedMessage = nextSession.messages.find((message) => message.id === messageId)
+        return !trackedMessage || trackedMessage.reply?.trim().endsWith('提交中')
+      })
+      if (!trackedBetMessageIds.value.length) betReplyFastPollUntilMs.value = 0
     }
     if (hadSession) {
       for (const message of nextSession.messages) {
@@ -543,7 +657,7 @@ const loadSession = async (quiet = false) => {
         }
       }
     }
-    applyAuthoritativeIssueClock(nextSession.issue, responseReceivedAt)
+    applyAuthoritativeIssueClock(appliedSession.issue, responseReceivedAt)
     if (
       previousDrawPeriod &&
       nextDrawPeriod &&
@@ -567,14 +681,18 @@ const loadDrawState = async () => {
     await loadSession(true)
     return
   }
-  const requestSequence = ++sessionRequestSequence
+  const requestSequence = ++drawStateRequestSequence
   try {
     const previousDrawPeriod = session.value.draws[0]?.period || ''
+    const wasFollowing = autoFollowMessages.value
     const nextState = await getRoomDrawStateApi(credential.value)
     const responseReceivedAt = Date.now()
-    if (requestSequence !== sessionRequestSequence || !session.value) return
+    if (requestSequence !== drawStateRequestSequence || !session.value) return
     const nextDrawPeriod = nextState.draws[0]?.period || ''
     session.value = { ...session.value, ...nextState }
+    await nextTick()
+    collectUnreadMessages(wasFollowing)
+    lastDrawStateAppliedAt = responseReceivedAt
     applyAuthoritativeIssueClock(nextState.issue, responseReceivedAt)
     if (
       previousDrawPeriod &&
@@ -587,46 +705,47 @@ const loadDrawState = async () => {
     }
     error.value = ''
   } catch (reason: any) {
-    if (requestSequence !== sessionRequestSequence) return
+    if (requestSequence !== drawStateRequestSequence) return
     error.value = reason?.message || '开奖状态刷新失败'
   }
 }
 
 const scheduleSessionRefresh = () => {
   if (refreshTimer) window.clearTimeout(refreshTimer)
-  const waitingForResult = Boolean(scratchPendingPeriod.value && !hasPendingCandidate.value)
-  const waitingForBetReply = Date.now() < betReplyFastPollUntilMs.value
-  // The scratch countdown includes a five-second display compensation, so 15 means the
-  // authoritative market draw is at most ten seconds away. Poll faster only in this small window.
-  const approachingOfficialDraw = waitingForResult && scratchDrawRemaining.value <= 15
-  const delay = waitingForCandidateAtBoundary.value
-    ? 250
-    : approachingOfficialDraw
-      ? 500
-      : waitingForBetReply
-        ? 1000
-        : scratchVisible.value || waitingForResult
-          ? 2000
-          : 5000
+  const waitingForBetReply = trackedBetMessageIds.value.length > 0
+  const fastBetReplyPoll = waitingForBetReply && Date.now() < betReplyFastPollUntilMs.value
+  const delay = fastBetReplyPoll ? 1000 : 5000
   refreshTimer = window.setTimeout(async () => {
-    if (waitingForCandidateAtBoundary.value || approachingOfficialDraw) {
-      await loadDrawState()
-    } else {
-      await loadSession(true)
-    }
+    await loadSession(true)
     scheduleSessionRefresh()
+    scheduleDrawStateRefresh()
   }, delay)
 }
 
-let boundaryRefreshInFlight = false
+const scheduleDrawStateRefresh = () => {
+  if (drawRefreshTimer) window.clearTimeout(drawRefreshTimer)
+  const waitingForResult = Boolean(scratchPendingPeriod.value && !hasPendingCandidate.value)
+  // The scratch countdown includes a five-second display compensation, so 15 means the
+  // authoritative market draw is at most ten seconds away. Poll faster only in this small window.
+  const approachingOfficialDraw = waitingForResult && scratchDrawRemaining.value <= 15
+  if (
+    !waitingForCandidateAtBoundary.value &&
+    !approachingOfficialDraw &&
+    !scratchVisible.value &&
+    !waitingForResult
+  ) {
+    drawRefreshTimer = undefined
+    return
+  }
+  const delay = waitingForCandidateAtBoundary.value ? 250 : approachingOfficialDraw ? 500 : 2000
+  drawRefreshTimer = window.setTimeout(async () => {
+    await loadDrawState()
+    scheduleDrawStateRefresh()
+  }, delay)
+}
+
 watch(waitingForCandidateAtBoundary, (waiting) => {
-  if (!waiting || boundaryRefreshInFlight) return
-  if (refreshTimer) window.clearTimeout(refreshTimer)
-  boundaryRefreshInFlight = true
-  void loadDrawState().finally(() => {
-    boundaryRefreshInFlight = false
-    scheduleSessionRefresh()
-  })
+  if (waiting) scheduleDrawStateRefresh()
 })
 
 const updateAutoScratch = (value: boolean) => {
@@ -702,7 +821,7 @@ const moveScratchLauncherByTouch = (event: TouchEvent) => {
 const openScratchCard = () => {
   if (suppressScratchLauncherClick) return
   scratchVisible.value = true
-  scheduleSessionRefresh()
+  scheduleDrawStateRefresh()
 }
 
 const handleRoomResize = () => {
@@ -760,15 +879,12 @@ const submitChat = async () => {
     })
     optimisticMessage.serverMessageId = result.messageId
     if (optimisticRobotMessage) optimisticRobotMessage.serverMessageId = result.messageId
+    if (optimisticRobotMessage && result.reply) optimisticRobotMessage.content = result.reply
+    if (result.commandType === 'BET' && result.reply?.trim().endsWith('提交中')) {
+      trackedBetMessageIds.value = [...new Set([...trackedBetMessageIds.value, result.messageId])]
+      betReplyFastPollUntilMs.value = Math.max(betReplyFastPollUntilMs.value, Date.now() + 30_000)
+    }
     await loadSession(true)
-    const responseMessage = session.value?.messages.find(
-      (message) => message.id === result.messageId
-    )
-    trackedBetMessageId.value = result.commandType === 'BET' ? result.messageId : null
-    betReplyFastPollUntilMs.value =
-      result.commandType === 'BET' && responseMessage?.reply?.trim().endsWith('提交中')
-        ? Date.now() + 30_000
-        : 0
     scheduleSessionRefresh()
     if (session.value.messages.some((message) => message.id === result.messageId)) {
       localMessages.value = localMessages.value.filter(
@@ -776,8 +892,6 @@ const submitChat = async () => {
       )
     }
   } catch (reason: any) {
-    trackedBetMessageId.value = null
-    betReplyFastPollUntilMs.value = 0
     localMessages.value = localMessages.value.filter(
       (message) => message.id !== optimisticMessageId && message.id !== optimisticRobotMessageId
     )
@@ -870,7 +984,8 @@ watch(
     if (!credential.value.openId || credentialKey === previousCredentialKey) return
     sessionStartedAt.value = new Date().toISOString()
     localMessages.value = []
-    trackedBetMessageId.value = null
+    resetChatMessageTracking()
+    trackedBetMessageIds.value = []
     betReplyFastPollUntilMs.value = 0
     bettingCutoffAtMs.value = null
     await loadSession()
@@ -887,6 +1002,7 @@ onMounted(async () => {
   await scrollToBottom()
   composerRef.value?.focus()
   scheduleSessionRefresh()
+  scheduleDrawStateRefresh()
   countdownTimer = window.setInterval(() => {
     clockNowMs.value = Date.now() + authoritativeClockOffsetMs.value
     if (session.value?.issue.status === 'OPEN') {
@@ -903,6 +1019,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('mousemove', moveScratchLauncherByMouse)
   window.removeEventListener('mouseup', finishScratchLauncherMouseDrag)
   if (refreshTimer) window.clearTimeout(refreshTimer)
+  if (drawRefreshTimer) window.clearTimeout(drawRefreshTimer)
   if (countdownTimer) window.clearInterval(countdownTimer)
 })
 </script>
@@ -1067,12 +1184,27 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
 
-                <pre v-else>{{ message.content }}</pre>
+                <pre
+                  v-else
+                  :class="{ 'is-copyable': message.kind !== 'robot' }"
+                  @click.stop="copyInstruction(message)"
+                  >{{ message.content }}</pre
+                >
               </div>
             </div>
           </div>
         </article>
       </main>
+
+      <button
+        v-if="unreadMessageKeys.length"
+        class="new-message-tip"
+        type="button"
+        :aria-label="`回到最新消息，${unreadMessageKeys.length} 条未读`"
+        @click="scrollToBottom('smooth')"
+      >
+        <span aria-hidden="true">▼</span>{{ unreadMessageKeys.length }}条新消息
+      </button>
 
       <form class="chat-composer" @submit.prevent="submitChat">
         <div
@@ -1563,6 +1695,29 @@ onBeforeUnmount(() => {
   -webkit-overflow-scrolling: touch;
 }
 
+.new-message-tip {
+  position: fixed;
+  right: 18px;
+  bottom: calc(58px + env(safe-area-inset-bottom));
+  z-index: 7;
+  min-height: 32px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 20px;
+  color: #08a737;
+  background: #fff;
+  border: 1px solid #e1e5e1;
+  border-radius: 18px;
+  box-shadow: 0 2px 8px rgb(35 72 40 / 18%);
+}
+
+.new-message-tip span {
+  margin-right: 5px;
+  font-size: 15px;
+}
+
 .reference-receipt {
   white-space: pre-wrap;
   line-height: 1.45;
@@ -1736,6 +1891,20 @@ onBeforeUnmount(() => {
   word-break: break-word;
   white-space: pre-wrap;
   user-select: text;
+}
+
+.chat-bubble pre.is-copyable {
+  cursor: pointer;
+}
+
+:global(.room-copy-success .el-message-box__message) {
+  justify-content: center;
+  color: #00b83f;
+  font-size: 17px;
+}
+
+:global(.room-copy-success .el-message-box__btns) {
+  justify-content: center;
 }
 
 .receipt-title,

@@ -20,6 +20,13 @@ class LotteryRobotReplyTemplateTest {
     }
 
     @Test
+    void shouldPutEachCombinedInstructionOnItsOwnLine() {
+        assertThat(template.betReceipt("玩家2", "20260809194", "2501各2,5201各2,2015各2", 2, 3,
+                new BigDecimal("6"), new BigDecimal("100")))
+                .contains("[挂牌时间]194\n2501各2\n5201各2\n2015各2\n【户型审核成功】");
+    }
+
+    @Test
     void shouldRemoveBalanceAndCancelActionFromPublicGroupReceipt() {
         String privateReceipt = template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360"), new BigDecimal("26764.45"));

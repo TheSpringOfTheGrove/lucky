@@ -69,6 +69,9 @@ public class LotteryMarketSyncService {
     @Value("${lottery.market.draw-confirmation-delay-ms:5000}")
     private long drawConfirmationDelayMs;
 
+    @Value("${lottery.market.settlement-recovery-seconds:120}")
+    private long settlementRecoverySeconds;
+
     @Value("${lottery.market.sync-interval-ms:2000}")
     private long normalDrawSyncIntervalMs;
 
@@ -154,12 +157,20 @@ public class LotteryMarketSyncService {
     public void settleAllPending() {
         if (!settlingAll.compareAndSet(false, true)) return;
         try {
+            LocalDateTime staleSettlementBefore = staleSettlementBefore(LocalDateTime.now());
             List<IssueDO> pending = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(
-                    () -> issueMapper.selectList(new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getStatus, "DRAWN")
+                    () -> issueMapper.selectList(new LambdaQueryWrapper<IssueDO>()
+                            .select(IssueDO::getTenantId, IssueDO::getUserId)
+                            .and(status -> status.eq(IssueDO::getStatus, "DRAWN")
+                                    .or(stale -> stale.eq(IssueDO::getStatus, "SETTLING")
+                                            .and(started -> started.isNull(IssueDO::getSettlementStartedAt)
+                                                    .or().le(IssueDO::getSettlementStartedAt, staleSettlementBefore))))
                             .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
                             .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
                             .ge(IssueDO::getDrawConfirmations, 2)
-                            .orderByAsc(IssueDO::getPeriod).last("LIMIT 200"))));
+                            // Select every affected owner once. A LIMIT on issue rows lets a pile of old or
+                            // externally-blocked rows starve newer owners forever.
+                            .groupBy(IssueDO::getTenantId, IssueDO::getUserId))));
             pending.stream().map(issue -> issue.getTenantId() + ":" + issue.getUserId()).distinct().forEach(key -> {
                 String[] parts = key.split(":", 2);
                 Long tenantId = Long.valueOf(parts[0]);
@@ -454,12 +465,20 @@ public class LotteryMarketSyncService {
             issueMapper.insert(issue);
         } else {
             if ("CLOSED".equals(nextStatus) && issue.getClosedAt() == null) issue.setClosedAt(now);
+            boolean clearStaleClosedAt = "OPEN".equals(nextStatus) && issue.getClosedAt() != null;
             if ("OPEN".equals(nextStatus)) issue.setClosedAt(null);
             issue.setStatus(nextStatus);
             issue.setSource("系统开奖");
             if (!terminal) issue.setError("");
             fillIssueSnapshot(issue, snapshot);
             issueMapper.updateById(issue);
+            // MyBatis-Plus ignores null values in updateById by default. A period first arrives as a CLOSED preview,
+            // so explicitly clear that preview timestamp when the same period becomes market-visible OPEN.
+            if (clearStaleClosedAt) {
+                issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                        .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getStatus, "OPEN").set(IssueDO::getClosedAt, null));
+            }
         }
         if (!Objects.equals(oldStatus, nextStatus) && !"OPEN".equals(nextStatus)) {
             boolean formallyOpened = issue.getOpenedAt() != null;
@@ -485,11 +504,14 @@ public class LotteryMarketSyncService {
                 || issueFreshnessPolicy.isStale(issue) || issueFreshnessPolicy.isBettingClosed(issue)) {
             return false;
         }
-        IssueDO previousOpened = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+        IssueDO previousIssue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
-                        .lt(IssueDO::getPeriod, issue.getPeriod()).isNotNull(IssueDO::getOpenedAt)
+                        .lt(IssueDO::getPeriod, issue.getPeriod())
                         .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
-        if (previousOpened != null && !"SETTLED".equals(previousOpened.getStatus())) {
+        // Only the immediately preceding period can gate the next one. Searching every historical opened period
+        // lets an old abandoned CLOSED row block all future periods even after many newer periods have settled.
+        if (previousIssue != null && previousIssue.getOpenedAt() != null
+                && !"SETTLED".equals(previousIssue.getStatus())) {
             return false;
         }
         int opened = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
@@ -602,12 +624,9 @@ public class LotteryMarketSyncService {
     }
 
     private void settlePending(Long userId) {
-        List<IssueDO> candidates = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
-                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
-                        .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
-                        .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
-                        .ge(IssueDO::getDrawConfirmations, 2)
-                        .orderByAsc(IssueDO::getPeriod).last("LIMIT 10")));
+        LocalDateTime staleSettlementBefore = staleSettlementBefore(LocalDateTime.now());
+        IssueDO liveCandidate = findLiveSettlementCandidate(userId, staleSettlementBefore);
+        List<IssueDO> candidates = liveCandidate == null ? List.of() : List.of(liveCandidate);
         for (IssueDO issue : candidates) {
             publishVerifiedDrawIfReady(userId, issue);
             try {
@@ -616,21 +635,39 @@ public class LotteryMarketSyncService {
                 LOGGER.error("期号 {} 用户 {} 结算前成功订单汇总失败", issue.getPeriod(), userId, ex);
                 continue;
             }
-            int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
-                    .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
-                    .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 2)
-                    .set(IssueDO::getStatus, "SETTLING").set(IssueDO::getSettlementStartedAt, LocalDateTime.now())
-                    .set(IssueDO::getError, ""));
-            if (claimed != 1) continue;
-            transition(userId, issue.getPeriod(), "DRAWN", "SETTLING", "自动结算", "");
+            boolean recoveringStaleSettlement = "SETTLING".equals(issue.getStatus());
+            if (!recoveringStaleSettlement) {
+                int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                        .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getStatus, "DRAWN")
+                        .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 2)
+                        .set(IssueDO::getStatus, "SETTLING").set(IssueDO::getSettlementStartedAt, LocalDateTime.now())
+                        .set(IssueDO::getError, ""));
+                if (claimed != 1) continue;
+                transition(userId, issue.getPeriod(), "DRAWN", "SETTLING", "自动结算", "");
+            } else {
+                int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                        .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getStatus, "SETTLING")
+                        .and(started -> started.isNull(IssueDO::getSettlementStartedAt)
+                                .or().le(IssueDO::getSettlementStartedAt, staleSettlementBefore))
+                        .set(IssueDO::getSettlementStartedAt, LocalDateTime.now()));
+                if (claimed != 1) continue;
+                LOGGER.warn("检测到超时结算并自动接管 user={} period={} startedAt={}", userId,
+                        issue.getPeriod(), issue.getSettlementStartedAt());
+            }
             try {
                 lotteryService.settlePeriodForUser(userId, issue.getPeriod(), issue.getResult(), "system");
             } catch (RuntimeException ex) {
-                issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
-                        .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
-                        .eq(IssueDO::getStatus, "SETTLING")
-                        .set(IssueDO::getStatus, "DRAWN").set(IssueDO::getError, rootMessage(ex)));
-                transition(userId, issue.getPeriod(), "SETTLING", "DRAWN", "结算失败", rootMessage(ex));
+                // A freshly claimed failure is returned to DRAWN for the normal retry loop. A stale SETTLING row
+                // may still be owned by another slow instance, so leave it claimed and retry idempotently later.
+                if (!recoveringStaleSettlement) {
+                    issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
+                            .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
+                            .eq(IssueDO::getStatus, "SETTLING")
+                            .set(IssueDO::getStatus, "DRAWN").set(IssueDO::getError, rootMessage(ex)));
+                    transition(userId, issue.getPeriod(), "SETTLING", "DRAWN", "结算失败", rootMessage(ex));
+                }
                 LOGGER.error("期号 {} 用户 {} 自动结算失败", issue.getPeriod(), userId, ex);
                 continue;
             }
@@ -646,6 +683,47 @@ public class LotteryMarketSyncService {
                 LOGGER.error("期号 {} 用户 {} 结算完成，但下一期答题开放失败", issue.getPeriod(), userId, ex);
             }
         }
+    }
+
+    /**
+     * Recovers only a settlement that can still block the live flow. Historical SETTLING rows may require manual
+     * reconciliation, but retrying all of them every five seconds can starve current DRAWN periods and flood logs.
+     */
+    private IssueDO findLiveSettlementCandidate(Long userId, LocalDateTime staleBefore) {
+        IssueDO latest = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        if (latest == null) return null;
+        IssueDO candidate = latest;
+        if (!List.of("DRAWN", "SETTLING").contains(candidate.getStatus())) {
+            if (latest.getOpenedAt() != null) return null;
+            candidate = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                    new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                            .lt(IssueDO::getPeriod, latest.getPeriod())
+                            .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        }
+        if (isReadyDrawnSettlement(candidate)) return candidate;
+        return isRecoverableStaleSettlement(candidate, staleBefore) ? candidate : null;
+    }
+
+    static boolean isReadyDrawnSettlement(IssueDO issue) {
+        return issue != null && "DRAWN".equals(issue.getStatus())
+                && issue.getResult() != null && !issue.getResult().isBlank()
+                && !LotteryDrawVerificationService.ZERO_RESULT.equals(issue.getResult())
+                && (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) >= 2;
+    }
+
+    static boolean isRecoverableStaleSettlement(IssueDO issue, LocalDateTime staleBefore) {
+        return issue != null && "SETTLING".equals(issue.getStatus())
+                && issue.getResult() != null && !issue.getResult().isBlank()
+                && !LotteryDrawVerificationService.ZERO_RESULT.equals(issue.getResult())
+                && (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) >= 2
+                && (issue.getSettlementStartedAt() == null
+                || !issue.getSettlementStartedAt().isAfter(staleBefore));
+    }
+
+    private LocalDateTime staleSettlementBefore(LocalDateTime now) {
+        return now.minusSeconds(Math.max(30, settlementRecoverySeconds));
     }
 
     private void updateConnection(Long userId, String status, String lineUrl, String account, BigDecimal balance,

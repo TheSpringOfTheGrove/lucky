@@ -15,6 +15,8 @@ import java.util.List;
 @Component
 public class LotteryRobotReplyTemplate {
 
+    private final LotteryBettingService bettingService = new LotteryBettingService();
+
     public record CurrentOrder(String period, String content, boolean confirmed) {
     }
 
@@ -28,7 +30,7 @@ public class LotteryRobotReplyTemplate {
 
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
         String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
-                .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + order.content()
+                .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())
                         + "\n【状态】:" + (order.confirmed() ? "房源已录入成功✓✓" : "正在确认明细"))
                 .reduce((left, right) -> left + "\n\n" + right)
                 .orElse("目前无房源");
@@ -101,7 +103,7 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String balanceNotEnough(String memberName, String content, BigDecimal required, BigDecimal balance) {
-        return "@" + memberName + "\n【房源不足】\n" + content
+        return "@" + memberName + "\n【房源不足】\n" + displayCommands(content)
                 + "\n【此需】：" + number(required)
                 + "\n【您目前】：" + number(balance);
     }
@@ -125,10 +127,14 @@ public class LotteryRobotReplyTemplate {
 
     private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                               BigDecimal amount, BigDecimal balance, String action) {
-        return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + content
+        return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + displayCommands(content)
                 + "\n【户型审核成功】✓✓\n【编号】：" + sequence
                 + "\n【套内】：" + itemCount + "\n【套外】：" + number(amount)
                 + "\n【面积】：" + number(balance) + "\n\n" + action;
+    }
+
+    private String displayCommands(String content) {
+        return String.join("\n", bettingService.splitCommandsForDisplay(content));
     }
 
     /**

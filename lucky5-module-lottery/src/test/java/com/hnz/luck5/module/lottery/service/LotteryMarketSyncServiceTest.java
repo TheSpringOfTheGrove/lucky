@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 class LotteryMarketSyncServiceTest {
@@ -55,6 +56,76 @@ class LotteryMarketSyncServiceTest {
         assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(null, now)).isTrue();
         assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(now.minusSeconds(29), now)).isFalse();
         assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(now.minusSeconds(30), now)).isTrue();
+    }
+
+    @Test
+    void retriesASettlementAfterTheConfiguredRecoveryTimeoutWithASafeMinimum() {
+        LocalDateTime now = LocalDateTime.of(2026, 9, 6, 16, 30);
+        ReflectionTestUtils.setField(service, "settlementRecoverySeconds", 120L);
+
+        assertThat((LocalDateTime) ReflectionTestUtils.invokeMethod(service, "staleSettlementBefore", now))
+                .isEqualTo(now.minusSeconds(120));
+
+        ReflectionTestUtils.setField(service, "settlementRecoverySeconds", 5L);
+        assertThat((LocalDateTime) ReflectionTestUtils.invokeMethod(service, "staleSettlementBefore", now))
+                .isEqualTo(now.minusSeconds(30));
+    }
+
+    @Test
+    void onlyTreatsTimedOutVerifiedSettlementsAsRecoverable() {
+        LocalDateTime staleBefore = LocalDateTime.of(2026, 9, 6, 16, 30);
+        IssueDO stale = new IssueDO();
+        stale.setStatus("SETTLING");
+        stale.setResult("32092");
+        stale.setDrawConfirmations(2);
+        stale.setSettlementStartedAt(staleBefore.minusSeconds(1));
+
+        assertThat(LotteryMarketSyncService.isRecoverableStaleSettlement(stale, staleBefore)).isTrue();
+
+        stale.setSettlementStartedAt(staleBefore.plusSeconds(1));
+        assertThat(LotteryMarketSyncService.isRecoverableStaleSettlement(stale, staleBefore)).isFalse();
+
+        stale.setSettlementStartedAt(staleBefore.minusSeconds(1));
+        stale.setDrawConfirmations(1);
+        assertThat(LotteryMarketSyncService.isRecoverableStaleSettlement(stale, staleBefore)).isFalse();
+
+        stale.setDrawConfirmations(2);
+        stale.setResult(LotteryDrawVerificationService.ZERO_RESULT);
+        assertThat(LotteryMarketSyncService.isRecoverableStaleSettlement(stale, staleBefore)).isFalse();
+    }
+
+    @Test
+    void ignoresHistoricalDrawnRowsWhenTheLatestIssueIsAlreadyOpen() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueDO latest = openIssue(208L, "20260906208");
+        latest.setOpenedAt(LocalDateTime.of(2026, 9, 6, 17, 15));
+        when(issueMapper.selectOne(any())).thenReturn(latest);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+
+        IssueDO candidate = ReflectionTestUtils.invokeMethod(service, "findLiveSettlementCandidate", 229L,
+                LocalDateTime.of(2026, 9, 6, 17, 14));
+
+        assertThat(candidate).isNull();
+        verify(issueMapper, times(1)).selectOne(any());
+    }
+
+    @Test
+    void settlesTheImmediatePreviousDrawnIssueBehindAnUnopenedPreview() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueDO preview = openIssue(209L, "20260906209");
+        IssueDO previous = openIssue(208L, "20260906208");
+        previous.setStatus("DRAWN");
+        previous.setResult("50309");
+        previous.setDrawConfirmations(2);
+        when(issueMapper.selectOne(any())).thenReturn(preview, previous);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+
+        IssueDO candidate = ReflectionTestUtils.invokeMethod(service, "findLiveSettlementCandidate", 229L,
+                LocalDateTime.of(2026, 9, 6, 17, 14));
+
+        assertThat(candidate).isSameAs(previous);
+        assertThat(LotteryMarketSyncService.isReadyDrawnSettlement(candidate)).isTrue();
+        verify(issueMapper, times(2)).selectOne(any());
     }
 
     @Test
@@ -131,7 +202,8 @@ class LotteryMarketSyncServiceTest {
         Boolean newlyOpened = ReflectionTestUtils.invokeMethod(persistence, "newlyOpened");
         assertThat(newlyOpened).isFalse();
         assertThat(next.getOpenedAt()).isNull();
-        verify(issueMapper, never()).update(any(), any());
+        // The first update only clears the stale CLOSED-preview timestamp; openedAt must remain untouched.
+        verify(issueMapper, times(1)).update(any(), any());
     }
 
     @Test
@@ -159,6 +231,41 @@ class LotteryMarketSyncServiceTest {
         assertThat(newlyOpened).isTrue();
         assertThat(next.getOpenedAt()).isEqualTo(now);
         assertThat(next.getClosedAt()).isNull();
+        verify(transitionMapper).insert(any(IssueTransitionDO.class));
+    }
+
+    @Test
+    void opensCurrentIssueWhenTheImmediatePreviousIssueSettledAfterAnOlderAbandonedPeriod() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        LotteryIssueFreshnessPolicy freshnessPolicy = mock(LotteryIssueFreshnessPolicy.class);
+        IssueDO current = openIssue(196L, "20260906196");
+        current.setClosedAt(nowMinusMinutes(1));
+        IssueDO immediatelyPrevious = openIssue(195L, "20260906195");
+        immediatelyPrevious.setStatus("SETTLED");
+        // A much older opened-but-abandoned row exists in production. It is deliberately not returned by the
+        // latest-period query and therefore cannot permanently block newer settled periods.
+        IssueDO abandoned = openIssue(29L, "20260829029");
+        abandoned.setOpenedAt(nowMinusMinutes(10));
+        abandoned.setStatus("CLOSED");
+        when(issueMapper.selectOne(any())).thenReturn(current, immediatelyPrevious);
+        when(issueMapper.selectList(any())).thenReturn(List.of());
+        when(issueMapper.update(any(), any())).thenReturn(1);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "issueFreshnessPolicy", freshnessPolicy);
+        LocalDateTime now = LocalDateTime.of(2026, 9, 6, 16, 18);
+
+        Object persistence = ReflectionTestUtils.invokeMethod(service, "upsertCurrentIssue", 1L,
+                new Wa55MarketClient.Issue(current.getPeriod(), "OPEN", 0, 74, now, now,
+                        "20260906197", now.plusSeconds(112), "{}"), now);
+
+        Boolean newlyOpened = ReflectionTestUtils.invokeMethod(persistence, "newlyOpened");
+        assertThat(newlyOpened).isTrue();
+        assertThat(current.getOpenedAt()).isEqualTo(now);
+        assertThat(current.getClosedAt()).isNull();
+        assertThat(abandoned.getStatus()).isEqualTo("CLOSED");
+        verify(issueMapper, times(2)).update(any(), any());
         verify(transitionMapper).insert(any(IssueTransitionDO.class));
     }
 
