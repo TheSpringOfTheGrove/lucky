@@ -1,14 +1,9 @@
 package com.hnz.luck5.module.lottery.service;
 
-import com.hnz.luck5.framework.common.exception.ServiceException;
-import com.hnz.luck5.module.lottery.dal.dataobject.OddDO;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
-
-import static com.hnz.luck5.module.lottery.enums.ErrorCodeConstants.BET_CONTENT_INVALID;
 
 /**
  * Distinguishes room chat from commands that can change or expose business state.
@@ -27,13 +22,16 @@ public class LotteryRoomMessagePolicy {
         BET
     }
 
-    private final LotteryBettingService bettingService;
-
-    public LotteryRoomMessagePolicy(LotteryBettingService bettingService) {
-        this.bettingService = bettingService;
-    }
-
-    public MessageType classify(String rawContent, List<OddDO> odds) {
+    /**
+     * Identifies the small set of non-betting room commands without parsing betting expressions.
+     *
+     * <p>A room message that is not one of these commands is always a betting attempt: valid betting
+     * expressions are parsed exactly once by the transactional placement path, while invalid text is
+     * persisted there as {@code BET_REJECTED}. Parsing here used to expand a large command once merely
+     * to classify it and then expand it a second time to place it. A 69,141-item legacy command therefore
+     * paid the full CPU and allocation cost twice before any database work began.</p>
+     */
+    public MessageType classify(String rawContent) {
         String content = rawContent == null ? "" : rawContent.trim();
         if (Set.of("查", "余额").contains(content)) {
             return MessageType.BALANCE;
@@ -47,18 +45,9 @@ public class LotteryRoomMessagePolicy {
         if (CANCEL_COMMAND.matcher(content).matches()) {
             return MessageType.CANCEL;
         }
-        try {
-            bettingService.parse(content, odds);
-            return MessageType.BET;
-        } catch (ServiceException ex) {
-            if (BET_CONTENT_INVALID.getCode().equals(ex.getCode())) {
-                // The room input is command-only. Every unrecognized message must enter the rejection flow so
-                // the original text remains visible and the player receives an explicit "指令错误" reply.
-                return MessageType.BET;
-            }
-            // The parser recognized a bet but rejected a limit or configuration. It is still an operation.
-            return MessageType.BET;
-        }
+        // The room input is command-only. Both valid and invalid remaining messages go through the same
+        // transactional placement/rejection path so the original text and a clear robot response are retained.
+        return MessageType.BET;
     }
 
     /**

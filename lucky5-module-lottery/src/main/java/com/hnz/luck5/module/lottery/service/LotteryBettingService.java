@@ -654,11 +654,42 @@ public class LotteryBettingService {
     }
 
     private boolean matchesCombinationSum(String value, int count, Set<Character> allowed) {
-        List<Integer> digits = value.chars().filter(item -> item != 'X').map(item -> item - '0').boxed().toList();
-        return combinations(digits, count).stream().anyMatch(part -> {
-            int sum = part.stream().mapToInt(Integer::intValue).sum() % 10;
-            return allowed.contains((char) ('0' + sum));
-        });
+        // This filter sits on the hot path for high-volume four-position commands. The former generic
+        // combination helper created boxed integers, lists and streams for every candidate (up to 10,000 per
+        // subcommand). Only two- and three-number sums are part of the command grammar, so evaluate their
+        // position combinations directly without per-candidate allocation.
+        if (count == 2) {
+            for (int first = 0; first < value.length(); first++) {
+                char left = value.charAt(first);
+                if (left == 'X') continue;
+                for (int second = first + 1; second < value.length(); second++) {
+                    char right = value.charAt(second);
+                    if (right != 'X' && allowed.contains((char) ('0' + (left - '0' + right - '0') % 10))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        if (count == 3) {
+            for (int first = 0; first < value.length(); first++) {
+                char left = value.charAt(first);
+                if (left == 'X') continue;
+                for (int second = first + 1; second < value.length(); second++) {
+                    char middle = value.charAt(second);
+                    if (middle == 'X') continue;
+                    for (int third = second + 1; third < value.length(); third++) {
+                        char right = value.charAt(third);
+                        if (right != 'X' && allowed.contains((char) ('0'
+                                + (left - '0' + middle - '0' + right - '0') % 10))) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        return false;
     }
 
     private Set<Integer> positionIndexes(String labels) {

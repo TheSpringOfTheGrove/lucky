@@ -19,7 +19,9 @@ import java.util.List;
 public class LotteryBatchInsertService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryBatchInsertService.class);
-    private static final int BATCH_SIZE = 1_000;
+    // Connector/J is configured with rewriteBatchedStatements=true. A 5,000-row batch keeps a 69k-item
+    // command to fourteen round trips instead of seventy while remaining comfortably below MySQL's packet limit.
+    private static final int BATCH_SIZE = 5_000;
     private static final int SLOW_LOG_ITEM_THRESHOLD = 1_000;
     private static final String BET_ITEM_INSERT = """
             INSERT INTO lucky5_bet_item

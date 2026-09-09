@@ -196,8 +196,9 @@ class LotteryBettingServiceTest {
         String content = List.of("035", "203", "028", "258", "235", "269", "429",
                         "640", "670", "709", "358", "047", "368", "568")
                 .stream().map(right -> "13680配" + right + suffix)
-                .collect(java.util.stream.Collectors.joining(" "));
+                .collect(java.util.stream.Collectors.joining(","));
 
+        assertThat(service.splitCommandsForDisplay(content)).hasSize(14);
         assertThat(service.parse(content, odds)).hasSize(69_141);
     }
 

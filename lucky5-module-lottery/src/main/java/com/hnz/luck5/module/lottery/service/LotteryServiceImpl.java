@@ -2207,8 +2207,7 @@ public class LotteryServiceImpl implements LotteryService {
                     "orderId", existing.getOrderId(), "status", existing.getStatus(), "reply", existing.getReply(),
                     "commandType", existing.getCommandType());
         }
-        LotteryRoomMessagePolicy.MessageType messageType = roomMessagePolicy.classify(content,
-                getEffectiveOdds(member.getUserId()));
+        LotteryRoomMessagePolicy.MessageType messageType = roomMessagePolicy.classify(content);
         if (messageType == LotteryRoomMessagePolicy.MessageType.CHAT) {
             if (roomMessagePolicy.looksLikeBetIntent(content)) {
                 if (!roomOperationAvailable(member.getUserId(), reqVO.getChannel())) {
