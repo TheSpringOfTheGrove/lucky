@@ -96,7 +96,7 @@ class LotteryMarketOrderDispatchServiceTest {
     }
 
     @Test
-    void keepsExplicitlyAcceptedBatchForReadOnlyVerificationInsteadOfManualReview() {
+    void immediatelyConfirmsExactAcceptedBatchWhenOnlyDetailIdsAreMissing() {
         Wa55MarketOrderClient.Credentials credentials = new Wa55MarketOrderClient.Credentials(
                 "https://market.example", "owner", "secret");
         Wa55MarketOrderClient.BetRequest request = new Wa55MarketOrderClient.BetRequest(
@@ -114,6 +114,7 @@ class LotteryMarketOrderDispatchServiceTest {
         service.submit(9L, "order-1");
 
         verify(stateService).markAcceptedBatchesVerifying(anyLong(), any(), any(), any(LocalDateTime.class));
+        verify(stateService).confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1");
         verify(stateService, never()).markManualReview(anyLong(), any(), any());
         verify(marketSyncService).recordSuccessfulSubmission(9L, new BigDecimal("100.00"), BigDecimal.ONE);
         verify(balanceRefreshService).refresh(1L, 9L);
@@ -144,7 +145,7 @@ class LotteryMarketOrderDispatchServiceTest {
     }
 
     @Test
-    void keepsAcceptedReceiptWhenDetailVerificationEventuallyNeedsManualReview() {
+    void confirmsAcceptedReceiptAfterLegacyDetailVerificationTimeout() {
         Wa55MarketOrderClient.Credentials credentials = new Wa55MarketOrderClient.Credentials(
                 "https://market.example", "owner", "secret");
         Wa55MarketOrderClient.BetRequest request = new Wa55MarketOrderClient.BetRequest(
@@ -156,8 +157,7 @@ class LotteryMarketOrderDispatchServiceTest {
 
         service.verify(9L, "order-1");
 
-        verify(stateService).markAcceptedDetailsManualReview(9L, "order-1",
-                "盘口已明确受理，但等待下注明细标识超过五分钟，请人工核对；禁止重投或退款");
+        verify(stateService).confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1");
         verify(marketClient, never()).verifyAccepted(any(), any(), any());
         verify(stateService, never()).markManualReview(anyLong(), any(), any());
     }

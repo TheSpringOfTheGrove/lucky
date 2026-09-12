@@ -50,7 +50,14 @@ public class LotteryMarketOrderDispatchService {
                 }
                 stateService.markAcceptedBatchesVerifying(userId, orderId, result.acceptedBatches(),
                         LocalDateTime.now().plusSeconds(VERIFICATION_RETRY_SECONDS));
-                LOGGER.info("盘口批量已明确受理，转只读明细确认 user={} order={} batches={} routes={}",
+                // 批次已明确回传受理结果时，路由表中的每一条都带有该批次标识。若全部路由的
+                // 注数、金额都已覆盖本地订单，逐注 ID 只是盘口的可选回传字段，不能再阻塞封盘和结算。
+                // 状态服务会再次校验全量路由、金额和无明细 ID 条件，失败时才保留只读回查。
+                boolean acceptedWithoutDetailIds =
+                        stateService.confirmAcceptedDetailsWithoutIdentifiers(userId, orderId);
+                LOGGER.info(acceptedWithoutDetailIds
+                                ? "盘口批量已明确受理，缺少逐注明细标识，已按批次结果自动确认 user={} order={} batches={} routes={}"
+                                : "盘口批量已明确受理，转只读明细确认 user={} order={} batches={} routes={}",
                         userId, orderId, result.acceptedBatches().size(), result.acceptedBatches().stream()
                                 .mapToInt(Wa55MarketOrderClient.AcceptedBatch::betCount).sum());
                 BigDecimal acceptedAmount = result.confirmations().stream()
@@ -216,7 +223,11 @@ public class LotteryMarketOrderDispatchService {
                         } else if ("CANCEL_REQUESTED".equals(order.getMarketStatus())) {
                             cancel(order.getUserId(), order.getId());
                         } else if ("VERIFYING".equals(order.getMarketStatus())) {
-                            verify(order.getUserId(), order.getId());
+                            // 老版本留下的“明确受理但无逐注 ID”订单同样先走安全的批次确认，
+                            // 避免服务重启后继续无意义轮询并阻塞下一期开盘。
+                            if (!stateService.confirmAcceptedDetailsWithoutIdentifiers(order.getUserId(), order.getId())) {
+                                verify(order.getUserId(), order.getId());
+                            }
                         } else if ("MANUAL_REVIEW".equals(order.getMarketStatus())) {
                             stateService.confirmAcceptedDetailsWithoutIdentifiers(order.getUserId(), order.getId());
                         } else {
