@@ -174,6 +174,18 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void doesNotTurnVisualFiltersIntoStandaloneBigSmallBets() {
+        List<LotteryBettingService.ParsedBet> bets = service.parse(
+                "112233445566778009倒四定配023578配234578千百合123456789两数合0248三数合234567含23456"
+                        + "除大大小双除单单单大除三重除值19值19除四兄弟除大大大小除小小小大各0.3", odds);
+
+        assertThat(bets).isNotEmpty().allSatisfy(bet -> {
+            assertThat(bet.play()).isEqualTo("四定位");
+            assertThat(bet.selection()).matches("[0-9X]{4}");
+        });
+    }
+
+    @Test
     void matchesHistoricalInheritedFilterActionCounts() {
         assertThat(service.parse(
                 "千9375百234571908十123457896取两数合1357三数合13579248除三兄弟三重各1", odds)).hasSize(139);

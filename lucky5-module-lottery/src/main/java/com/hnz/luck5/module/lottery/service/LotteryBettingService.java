@@ -108,7 +108,11 @@ public class LotteryBettingService {
         List<IndexedBet> values = new ArrayList<>();
         values.addAll(parseReference(content, odds));
 
-        Matcher groupMatcher = Pattern.compile("([大小单双龙虎和]{2,})各(\\d+(?:\\.\\d+)?)").matcher(content);
+        // A trailing visual filter such as "除小小小大各0.3" is part of a positioning expression, not four
+        // standalone 大小 bets. Require a real token boundary so the matcher cannot restart in the middle of a
+        // 取/除 filter chain.
+        Matcher groupMatcher = Pattern.compile("(?<![取除大小单双龙虎和])([大小单双龙虎和]{2,})各(\\d+(?:\\.\\d+)?)")
+                .matcher(content);
         while (groupMatcher.find()) {
             BigDecimal amount = amount(groupMatcher.group(2));
             for (char selection : groupMatcher.group(1).toCharArray()) {
