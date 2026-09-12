@@ -118,6 +118,7 @@ export interface RoomSession {
     messageType: 'PLAYER' | 'AUTO_PROXY'
     own: boolean
     createdAt: string
+    updatedAt?: string | null
   }>
   quickCommands: Array<{
     id: string

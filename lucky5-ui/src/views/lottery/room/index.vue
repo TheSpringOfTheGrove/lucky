@@ -38,6 +38,7 @@ interface ChatItem {
   type: ChatType
   content: string
   createdAt: string
+  displayTimeAt?: string
   serverMessageId?: number
   senderName?: string
   order?: RoomOrder
@@ -347,6 +348,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         type: 'text',
         content: message.content,
         createdAt: message.createdAt,
+        displayTimeAt: message.createdAt,
         senderName: message.member
       })
     }
@@ -372,6 +374,9 @@ const chatMessages = computed<ChatItem[]>(() => {
                 (message.status === '处理中' ? '正在处理' : message.status)
             ),
         createdAt: dayjs(message.createdAt).add(robotReplyDelay, 'millisecond').toISOString(),
+        // 机器人回复可能在外盘确认或审核后被更新；气泡时间以最后一次修改为准，
+        // 但排序仍保持原始消息时间，避免更新后的旧回复打乱聊天时序。
+        displayTimeAt: message.updatedAt || message.createdAt,
         order,
         sequenceRank:
           message.commandType === 'PERIOD_SUMMARY'
@@ -585,6 +590,7 @@ const messageTime = (value: string) =>
   dayjs(value).isSame(dayjs(), 'day')
     ? dayjs(value).format('HH:mm')
     : dayjs(value).format('MM-DD HH:mm')
+const bubbleTime = (value: string) => dayjs(value).format('HH:mm:ss')
 const orderStatusClass = (status: string) => {
   if (status === '已中奖') return 'is-win'
   if (status === '未中奖' || status === '已退码') return 'is-failed'
@@ -1191,6 +1197,9 @@ onBeforeUnmount(() => {
                   >{{ message.content }}</pre
                 >
               </div>
+              <div class="chat-bubble-time">{{
+                bubbleTime(message.displayTimeAt || message.createdAt)
+              }}</div>
             </div>
           </div>
         </article>
@@ -1895,6 +1904,17 @@ onBeforeUnmount(() => {
 
 .chat-bubble pre.is-copyable {
   cursor: pointer;
+}
+
+.chat-bubble-time {
+  margin-top: 3px;
+  color: #9a9a9a;
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.chat-message-member .chat-bubble-time {
+  text-align: right;
 }
 
 :global(.room-copy-success .el-message-box__message) {

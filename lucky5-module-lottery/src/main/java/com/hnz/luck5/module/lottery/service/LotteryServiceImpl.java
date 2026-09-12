@@ -540,7 +540,8 @@ public class LotteryServiceImpl implements LotteryService {
                 "content", item.getContent(), "status", item.getStatus(), "orderId", item.getOrderId(), "error", item.getError(),
                 "commandType", item.getCommandType(), "messageType", value(item.getMessageType(), TYPE_PLAYER),
                 "reply", normalizeCheckMarks(item.getReply()), "processedAt", date(item.getProcessedAt()),
-                "createdAt", date(item.getCreateTime()), "time", date(item.getCreateTime()));
+                "createdAt", date(item.getCreateTime()), "updatedAt", date(item.getUpdateTime()),
+                "time", date(item.getCreateTime()));
     }
 
     private List<Map<String, Object>> messageDisplayRows(MessageDO item) {
