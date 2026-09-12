@@ -118,7 +118,10 @@ export interface RoomSession {
     messageType: 'PLAYER' | 'AUTO_PROXY'
     own: boolean
     createdAt: string
-    updatedAt?: string | null
+    /** 玩家原始指令的发送时间；后续机器人回复更新不会改变该时间。 */
+    sentAt?: string | null
+    /** 仅机器人回复使用的最后修改时间。 */
+    replyUpdatedAt?: string | null
   }>
   quickCommands: Array<{
     id: string

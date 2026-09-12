@@ -38,7 +38,7 @@ interface ChatItem {
   type: ChatType
   content: string
   createdAt: string
-  displayTimeAt?: string
+  displayTimeAt: string
   serverMessageId?: number
   senderName?: string
   order?: RoomOrder
@@ -282,7 +282,8 @@ const chatMessages = computed<ChatItem[]>(() => {
         session.value.member.balance,
         session.value.suggestedPeriod
       ),
-      createdAt: dayjs(firstDate).subtract(2, 'second').toISOString()
+      createdAt: dayjs(firstDate).subtract(2, 'second').toISOString(),
+      displayTimeAt: dayjs(firstDate).subtract(2, 'second').toISOString()
     }
   ]
 
@@ -292,7 +293,8 @@ const chatMessages = computed<ChatItem[]>(() => {
       kind: 'robot',
       type: 'text',
       content: session.value.room.announcement,
-      createdAt: dayjs(firstDate).subtract(1, 'second').toISOString()
+      createdAt: dayjs(firstDate).subtract(1, 'second').toISOString(),
+      displayTimeAt: dayjs(firstDate).subtract(1, 'second').toISOString()
     })
   }
 
@@ -303,6 +305,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       type: 'text',
       content: roomReplyTemplates.issueTransition(transition.status),
       createdAt: transition.createdAt,
+      displayTimeAt: transition.createdAt,
       sequenceRank:
         transition.status === 'CLOSED' ? 10 : transition.status === 'OPEN' ? 60 : undefined
     })
@@ -329,6 +332,9 @@ const chatMessages = computed<ChatItem[]>(() => {
       createdAt: sequenceAnchor
         ? dayjs(sequenceAnchor).add(1, 'millisecond').toISOString()
         : draw.settledAt,
+      displayTimeAt: sequenceAnchor
+        ? dayjs(sequenceAnchor).add(1, 'millisecond').toISOString()
+        : draw.settledAt,
       draw,
       sequenceRank: 50
     })
@@ -348,7 +354,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         type: 'text',
         content: message.content,
         createdAt: message.createdAt,
-        displayTimeAt: message.createdAt,
+        displayTimeAt: message.sentAt || message.createdAt,
         senderName: message.member
       })
     }
@@ -374,9 +380,9 @@ const chatMessages = computed<ChatItem[]>(() => {
                 (message.status === '处理中' ? '正在处理' : message.status)
             ),
         createdAt: dayjs(message.createdAt).add(robotReplyDelay, 'millisecond').toISOString(),
-        // 机器人回复可能在外盘确认或审核后被更新；气泡时间以最后一次修改为准，
+        // 机器人回复可能在外盘确认或审核后被更新；气泡时间以最后一次回复修改为准，
         // 但排序仍保持原始消息时间，避免更新后的旧回复打乱聊天时序。
-        displayTimeAt: message.updatedAt || message.createdAt,
+        displayTimeAt: message.replyUpdatedAt || message.createdAt,
         order,
         sequenceRank:
           message.commandType === 'PERIOD_SUMMARY'
@@ -405,7 +411,8 @@ const chatMessages = computed<ChatItem[]>(() => {
         kind: 'member',
         type: 'text',
         content: `${amountRecord.type === '上分' ? '上' : '下'}${money(amountRecord.amount)}`,
-        createdAt: amountRecord.createdAt
+        createdAt: amountRecord.createdAt,
+        displayTimeAt: amountRecord.createdAt
       })
     }
     if (!relatedMessage) {
@@ -415,6 +422,9 @@ const chatMessages = computed<ChatItem[]>(() => {
         type: 'amount',
         content: `${amountRecord.type}${isMemberRequest ? '申请' : ''}${amountRecord.status}`,
         createdAt:
+          amountRecord.auditedAt ||
+          dayjs(amountRecord.createdAt).add(1, 'millisecond').toISOString(),
+        displayTimeAt:
           amountRecord.auditedAt ||
           dayjs(amountRecord.createdAt).add(1, 'millisecond').toISOString(),
         amountRecord
@@ -850,12 +860,14 @@ const submitChat = async () => {
 
   const externalId = uniqueId()
   const optimisticMessageId = `pending-member-message-${externalId}`
+  const submittedAt = new Date().toISOString()
   const optimisticMessage: ChatItem = {
     id: optimisticMessageId,
     kind: 'member',
     type: 'text',
     content,
-    createdAt: new Date().toISOString(),
+    createdAt: submittedAt,
+    displayTimeAt: submittedAt,
     senderName: session.value.member.name
   }
   const optimisticRobotMessageId = `pending-robot-message-${externalId}`
@@ -865,7 +877,8 @@ const submitChat = async () => {
         kind: 'robot',
         type: 'text',
         content: `@${session.value.member.name}\n提交中`,
-        createdAt: dayjs(optimisticMessage.createdAt).add(1, 'millisecond').toISOString()
+        createdAt: dayjs(optimisticMessage.createdAt).add(1, 'millisecond').toISOString(),
+        displayTimeAt: dayjs(optimisticMessage.createdAt).add(1, 'millisecond').toISOString()
       }
     : null
   bottomPanel.value = ''
@@ -1197,9 +1210,7 @@ onBeforeUnmount(() => {
                   >{{ message.content }}</pre
                 >
               </div>
-              <div class="chat-bubble-time">{{
-                bubbleTime(message.displayTimeAt || message.createdAt)
-              }}</div>
+              <div class="chat-bubble-time">{{ bubbleTime(message.displayTimeAt) }}</div>
             </div>
           </div>
         </article>
