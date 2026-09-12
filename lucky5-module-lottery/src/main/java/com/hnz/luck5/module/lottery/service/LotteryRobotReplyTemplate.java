@@ -125,6 +125,12 @@ public class LotteryRobotReplyTemplate {
         return betReceipt(memberName, period, content, sequence, itemCount, amount, balance, "正在确认明细");
     }
 
+    /** The external market returned an exact accepted count and amount, but not every row identifier yet. */
+    public String betReceiptAcceptedWithoutDetails(String memberName, String period, String content, int sequence,
+                                                   int itemCount, BigDecimal amount, BigDecimal balance) {
+        return betReceipt(memberName, period, content, sequence, itemCount, amount, balance, "已受理");
+    }
+
     private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                               BigDecimal amount, BigDecimal balance, String action) {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + displayCommands(content)

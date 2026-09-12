@@ -2690,11 +2690,11 @@ public class LotteryServiceImpl implements LotteryService {
         IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, member.getUserId())
                 .orderByDesc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
-        List<IssueTransitionDO> transitions = DataPermissionUtils.executeIgnore(() ->
-                issueTransitionMapper.selectList(new LambdaQueryWrapper<IssueTransitionDO>()
-                        .eq(IssueTransitionDO::getUserId, member.getUserId())
-                        .in(IssueTransitionDO::getToStatus, "OPEN", "CLOSED")
-                        .orderByDesc(IssueTransitionDO::getCreateTime).last("LIMIT 60")));
+        // Query OPEN/CLOSED separately so MySQL can stop on the status-time index. An IN predicate across both
+        // statuses forces a filesort over an owner's entire historical transition stream on busy rooms.
+        List<IssueTransitionDO> openedTransitions = roomIssueTransitions(member.getUserId(), "OPEN");
+        List<IssueTransitionDO> closedTransitions = roomIssueTransitions(member.getUserId(), "CLOSED");
+        List<IssueTransitionDO> transitions = mergeIssueTransitions(openedTransitions, closedTransitions, 60);
         Map<String, Boolean> switches = DataPermissionUtils.executeIgnore(() -> switchSettingMapper.selectList(
                 new LambdaQueryWrapper<SwitchSettingDO>().eq(SwitchSettingDO::getUserId, member.getUserId())))
                 .stream().collect(Collectors.toMap(SwitchSettingDO::getSettingKey,
@@ -2822,11 +2822,19 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private List<MessageDO> roomMessages(MemberDO member, String roomMode) {
-        List<MessageDO> ownMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                ownRoomMessageQuery(member)
-                        .eq(MessageDO::getChannel, ROOM_MODE_PRIVATE.equals(roomMode)
-                                ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP)
+        String channel = ROOM_MODE_PRIVATE.equals(roomMode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
+        // Keep the legacy member-name fallback, but run it separately. Combining it with the stable member_id in
+        // one OR predicate prevents MySQL from using the room-member time index and made polling wait seconds.
+        List<MessageDO> memberMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                        .eq(MessageDO::getMemberId, member.getId()).eq(MessageDO::getChannel, channel)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 80")));
+        List<MessageDO> legacyMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                        .isNull(MessageDO::getMemberId).eq(MessageDO::getMember, member.getName())
+                        .eq(MessageDO::getChannel, channel)
+                        .orderByDesc(MessageDO::getCreateTime).last("LIMIT 80")));
+        List<MessageDO> ownMessages = mergeMessages(memberMessages, legacyMessages, 80);
         if (ROOM_MODE_PRIVATE.equals(roomMode)) {
             List<MessageDO> settlements = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
                     ownRoomMessageQuery(member).eq(MessageDO::getCommandType, COMMAND_SETTLEMENT)
@@ -3188,6 +3196,21 @@ public class LotteryServiceImpl implements LotteryService {
         message.setUserId(member.getUserId());
         messageMapper.insert(message);
         return message;
+    }
+
+    private List<IssueTransitionDO> roomIssueTransitions(Long userId, String toStatus) {
+        return DataPermissionUtils.executeIgnore(() -> issueTransitionMapper.selectList(
+                new LambdaQueryWrapper<IssueTransitionDO>().eq(IssueTransitionDO::getUserId, userId)
+                        .eq(IssueTransitionDO::getToStatus, toStatus)
+                        .orderByDesc(IssueTransitionDO::getCreateTime).last("LIMIT 60")));
+    }
+
+    private List<IssueTransitionDO> mergeIssueTransitions(List<IssueTransitionDO> first,
+                                                           List<IssueTransitionDO> second, int limit) {
+        return java.util.stream.Stream.concat(first.stream(), second.stream())
+                .collect(Collectors.toMap(IssueTransitionDO::getId, Function.identity(), (left, ignored) -> left))
+                .values().stream().sorted(Comparator.comparing(IssueTransitionDO::getCreateTime).reversed())
+                .limit(limit).toList();
     }
 
     /**

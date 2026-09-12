@@ -10,10 +10,12 @@ import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.IssueTransitionDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.LotteryConfigDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MarketConnectionDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.IssueTransitionMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.LotteryConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketConnectionMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.OrderMapper;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +35,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -56,6 +59,7 @@ public class LotteryMarketSyncService {
     @Resource private MarketConnectionMapper marketConnectionMapper;
     @Resource private IssueMapper issueMapper;
     @Resource private IssueTransitionMapper issueTransitionMapper;
+    @Resource private OrderMapper orderMapper;
     @Resource private ObjectMapper objectMapper;
     @Resource private MarketCredentialService credentialService;
     @Resource private Wa55MarketClient marketClient;
@@ -703,7 +707,30 @@ public class LotteryMarketSyncService {
                             .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
         }
         if (isReadyDrawnSettlement(candidate)) return candidate;
-        return isRecoverableStaleSettlement(candidate, staleBefore) ? candidate : null;
+        if (isRecoverableStaleSettlement(candidate, staleBefore)) return candidate;
+        return findAcceptedWithoutIdentifiersHistoricalCandidate(userId);
+    }
+
+    /**
+     * Old DRAWN issues normally stay untouched so they cannot crowd out the live settlement queue. The sole
+     * exception is a market order whose batch was conclusively accepted (same count and amount) and was later
+     * promoted from MANUAL_REVIEW because the market never exposed per-row ids. These orders are safe to settle,
+     * but they were previously unable to re-enter the live-only queue.
+     */
+    private IssueDO findAcceptedWithoutIdentifiersHistoricalCandidate(Long userId) {
+        List<OrderDO> accepted = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
+                new LambdaQueryWrapper<OrderDO>().select(OrderDO::getPeriod).eq(OrderDO::getUserId, userId)
+                        .eq(OrderDO::getStatus, "未开奖").eq(OrderDO::getMarketStatus, "CONFIRMED")
+                        .likeRight(OrderDO::getMarketError, "盘口已明确受理，逐注明细编号未返回")));
+        Set<String> periods = accepted.stream().map(OrderDO::getPeriod)
+                .filter(period -> period != null && !period.isBlank()).collect(java.util.stream.Collectors.toSet());
+        if (periods.isEmpty()) return null;
+        List<IssueDO> candidates = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).in(IssueDO::getPeriod, periods)
+                        .eq(IssueDO::getStatus, "DRAWN").isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
+                        .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
+                        .ge(IssueDO::getDrawConfirmations, 2).orderByAsc(IssueDO::getPeriod).last("LIMIT 1")));
+        return candidates.isEmpty() ? null : candidates.get(0);
     }
 
     static boolean isReadyDrawnSettlement(IssueDO issue) {

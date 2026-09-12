@@ -142,8 +142,11 @@ interface ApiEnvelope<T> {
 const request = async <T>(url: string, options?: RequestInit) => {
   const response = await fetch(url, {
     ...options,
+    // Room replies are live state. Never allow a browser, proxy, or service worker to replay a stale session.
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache, no-store, max-age=0',
       ...options?.headers
     }
   })
@@ -173,7 +176,7 @@ const normalizeDraw = (draw: RoomDraw): RoomDraw => {
 
 export const getRoomSessionApi = async (credential: RoomCredential) => {
   const session = await request<RoomSession>(
-    `/app-api/lottery/room/session?${credentialQuery(credential)}`
+    `/app-api/lottery/room/session?${credentialQuery(credential)}&_=${Date.now()}`
   )
   return { ...session, draws: (session.draws || []).map(normalizeDraw) }
 }

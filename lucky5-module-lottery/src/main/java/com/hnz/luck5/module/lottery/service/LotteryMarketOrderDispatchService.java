@@ -103,8 +103,7 @@ public class LotteryMarketOrderDispatchService {
                 stateService.verificationContext(userId, orderId);
         if (context == null || context.requests().isEmpty()) return;
         if (verificationExpired(context)) {
-            stateService.markAcceptedDetailsManualReview(userId, orderId,
-                    "盘口已明确受理，但等待下注明细标识超过五分钟，请人工核对；禁止重投或退款");
+            stateService.confirmAcceptedDetailsWithoutIdentifiers(userId, orderId);
             return;
         }
         try {
@@ -126,9 +125,7 @@ public class LotteryMarketOrderDispatchService {
                     userId, orderId, result.confirmations().size(), result.unresolvedBatches().size());
         } catch (RuntimeException ex) {
             if (verificationExpired(context)) {
-                stateService.markAcceptedDetailsManualReview(userId, orderId,
-                        "盘口已明确受理，但只读回查连续五分钟未完成，请人工核对；禁止重投或退款："
-                                + ex.getMessage());
+                stateService.confirmAcceptedDetailsWithoutIdentifiers(userId, orderId);
             } else {
                 stateService.scheduleVerificationRetry(userId, orderId,
                         "盘口已明确受理，只读回查暂未完成：" + ex.getMessage(), LocalDateTime.now()
@@ -220,6 +217,8 @@ public class LotteryMarketOrderDispatchService {
                             cancel(order.getUserId(), order.getId());
                         } else if ("VERIFYING".equals(order.getMarketStatus())) {
                             verify(order.getUserId(), order.getId());
+                        } else if ("MANUAL_REVIEW".equals(order.getMarketStatus())) {
+                            stateService.confirmAcceptedDetailsWithoutIdentifiers(order.getUserId(), order.getId());
                         } else {
                             submit(order.getUserId(), order.getId());
                         }

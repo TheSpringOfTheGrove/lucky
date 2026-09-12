@@ -693,7 +693,8 @@ const loadSession = async (quiet = false) => {
     if (trackedBetMessageIds.value.length) {
       trackedBetMessageIds.value = trackedBetMessageIds.value.filter((messageId) => {
         const trackedMessage = nextSession.messages.find((message) => message.id === messageId)
-        return !trackedMessage || trackedMessage.reply?.trim().endsWith('提交中')
+        const trackedOrder = nextSession.orders.find((order) => order.id === trackedMessage?.orderId)
+        return Boolean(trackedOrder?.processing) || trackedMessage?.reply?.trim().endsWith('提交中')
       })
       if (!trackedBetMessageIds.value.length) betReplyFastPollUntilMs.value = 0
     }

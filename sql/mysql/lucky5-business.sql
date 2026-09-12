@@ -202,7 +202,8 @@ CREATE TABLE IF NOT EXISTS `lucky5_amount_record` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), KEY `idx_lucky5_amount_status` (`tenant_id`,`user_id`,`status`,`create_time`),
-  KEY `idx_lucky5_amount_member` (`tenant_id`,`user_id`,`member_id`)
+  KEY `idx_lucky5_amount_member` (`tenant_id`,`user_id`,`member_id`),
+  KEY `idx_lucky5_amount_member_time` (`tenant_id`,`user_id`,`member_id`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 上下分记录';
 
 CREATE TABLE IF NOT EXISTS `lucky5_balance_ledger` (
@@ -246,7 +247,8 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_order_sequence` (`tenant_id`,`user_id`,`period`,`period_sequence`),
-  KEY `idx_lucky5_order_period` (`tenant_id`,`user_id`,`period`,`status`), KEY `idx_lucky5_order_member` (`tenant_id`,`user_id`,`member_id`)
+  KEY `idx_lucky5_order_period` (`tenant_id`,`user_id`,`period`,`status`), KEY `idx_lucky5_order_member` (`tenant_id`,`user_id`,`member_id`),
+  KEY `idx_lucky5_order_member_time` (`tenant_id`,`user_id`,`member_id`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 订单';
 
 SET @lucky5_ddl = IF(
@@ -388,8 +390,14 @@ CREATE TABLE IF NOT EXISTS `lucky5_issue_transition` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_issue_transition_legacy` (`tenant_id`,`user_id`,`legacy_id`),
-  KEY `idx_lucky5_issue_transition` (`tenant_id`,`user_id`,`period`,`create_time`)
+  KEY `idx_lucky5_issue_transition` (`tenant_id`,`user_id`,`period`,`create_time`),
+  KEY `idx_lucky5_issue_transition_status_time` (`tenant_id`,`user_id`,`to_status`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 期号流转';
+
+SET @lucky5_ddl = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+  AND table_name='lucky5_issue_transition' AND index_name='idx_lucky5_issue_transition_status_time')=0,
+  'ALTER TABLE `lucky5_issue_transition` ADD KEY `idx_lucky5_issue_transition_status_time` (`tenant_id`,`user_id`,`to_status`,`create_time`)', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_preset_order` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member` varchar(100) NOT NULL DEFAULT '', `content` varchar(2000) NOT NULL,
@@ -441,8 +449,28 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_message_legacy` (`tenant_id`,`user_id`,`legacy_id`),
-  UNIQUE KEY `uk_lucky5_message_external` (`tenant_id`,`user_id`,`external_id`), KEY `idx_lucky5_message_time` (`tenant_id`,`user_id`,`channel`,`create_time`)
+  UNIQUE KEY `uk_lucky5_message_external` (`tenant_id`,`user_id`,`external_id`), KEY `idx_lucky5_message_time` (`tenant_id`,`user_id`,`channel`,`create_time`),
+  KEY `idx_lucky5_message_member_time` (`tenant_id`,`user_id`,`member_id`,`channel`,`create_time`),
+  KEY `idx_lucky5_message_legacy_member_time` (`tenant_id`,`user_id`,`member`,`channel`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 消息';
+
+-- Existing installations keep their data volume. Add the polling indexes idempotently as well.
+SET @lucky5_ddl = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+  AND table_name='lucky5_order' AND index_name='idx_lucky5_order_member_time')=0,
+  'ALTER TABLE `lucky5_order` ADD KEY `idx_lucky5_order_member_time` (`tenant_id`,`user_id`,`member_id`,`create_time`)', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+  AND table_name='lucky5_amount_record' AND index_name='idx_lucky5_amount_member_time')=0,
+  'ALTER TABLE `lucky5_amount_record` ADD KEY `idx_lucky5_amount_member_time` (`tenant_id`,`user_id`,`member_id`,`create_time`)', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+  AND table_name='lucky5_message' AND index_name='idx_lucky5_message_member_time')=0,
+  'ALTER TABLE `lucky5_message` ADD KEY `idx_lucky5_message_member_time` (`tenant_id`,`user_id`,`member_id`,`channel`,`create_time`)', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
+  AND table_name='lucky5_message' AND index_name='idx_lucky5_message_legacy_member_time')=0,
+  'ALTER TABLE `lucky5_message` ADD KEY `idx_lucky5_message_legacy_member_time` (`tenant_id`,`user_id`,`member`,`channel`,`create_time`)', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_rebate_record` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `normal_bet` decimal(18,2) NOT NULL DEFAULT 0,

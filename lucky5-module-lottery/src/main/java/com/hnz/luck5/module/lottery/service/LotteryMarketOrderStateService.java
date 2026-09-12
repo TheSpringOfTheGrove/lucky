@@ -1,5 +1,6 @@
 package com.hnz.luck5.module.lottery.service;
 
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
@@ -304,6 +305,43 @@ public class LotteryMarketOrderStateService {
                 .set(MessageDO::getError, safe(error)));
     }
 
+    /**
+     * An exact upstream accepted count and amount are conclusive that the order reached the market.  Some market
+     * accounts never expose one identifier per row afterwards, so do not leave settlement blocked forever just
+     * because those optional identifiers are absent. This method never submits, cancels, or refunds an order.
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean confirmAcceptedDetailsWithoutIdentifiers(Long userId, String orderId) {
+        OrderDO order = order(userId, orderId);
+        if (order == null || !"未开奖".equals(order.getStatus())
+                || !Set.of("VERIFYING", "MANUAL_REVIEW").contains(order.getMarketStatus())) return false;
+        List<MarketRouteItemDO> marketRoutes = routes(userId, orderId).stream()
+                .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+        boolean acceptedWithoutIdentifiers = !marketRoutes.isEmpty()
+                && marketRoutes.stream().allMatch(item -> Set.of("VERIFYING", "MANUAL_REVIEW").contains(item.getStatus())
+                        && item.getMarketGuid() != null && !item.getMarketGuid().isBlank()
+                        && (item.getMarketBetId() == null || item.getMarketBetId().isBlank()))
+                && money(marketRoutes.stream().map(MarketRouteItemDO::getMarketAmount)
+                        .reduce(ZERO, BigDecimal::add)).compareTo(money(order.getAmount())) == 0;
+        if (!acceptedWithoutIdentifiers) return false;
+        int version = value(order.getVersion(), 0);
+        String note = "盘口已明确受理，逐注明细编号未返回；已确认受理，不能退码";
+        int changed = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
+                .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
+                .in(OrderDO::getMarketStatus, "VERIFYING", "MANUAL_REVIEW").eq(OrderDO::getVersion, version)
+                .set(OrderDO::getMarketStatus, "CONFIRMED").set(OrderDO::getMarketError, note)
+                .set(OrderDO::getVersion, version + 1));
+        if (changed != 1) return false;
+        LocalDateTime now = LocalDateTime.now();
+        routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
+                .eq(MarketRouteItemDO::getUserId, userId).eq(MarketRouteItemDO::getOrderId, orderId)
+                .in(MarketRouteItemDO::getStatus, "VERIFYING", "MANUAL_REVIEW")
+                .set(MarketRouteItemDO::getStatus, "CONFIRMED").set(MarketRouteItemDO::getConfirmedAt, now)
+                .set(MarketRouteItemDO::getLastError, note));
+        updateAcceptedWithoutDetailsMessage(userId, orderId);
+        return true;
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public ManualReviewResult confirmManualReviewAccepted(Long userId, String orderId, String externalOrderId) {
         OrderDO order = order(userId, orderId);
@@ -409,7 +447,7 @@ public class LotteryMarketOrderStateService {
         LocalDateTime stale = LocalDateTime.now().minusMinutes(2);
         LocalDateTime now = LocalDateTime.now();
         List<OrderDO> candidates = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
-                .in(OrderDO::getMarketStatus, "PENDING", "RETRY", "SUBMITTING", "VERIFYING",
+                .in(OrderDO::getMarketStatus, "PENDING", "RETRY", "SUBMITTING", "VERIFYING", "MANUAL_REVIEW",
                         "CANCEL_REQUESTED", "CANCEL_PENDING")
                 .orderByAsc(OrderDO::getCreateTime).last("LIMIT 200")));
         return candidates.stream().filter(order -> {
@@ -428,6 +466,13 @@ public class LotteryMarketOrderStateService {
                                 .eq(MarketRouteItemDO::getStatus, "VERIFYING")
                                 .and(wrapper -> wrapper.isNull(MarketRouteItemDO::getNextRetryAt)
                                         .or().le(MarketRouteItemDO::getNextRetryAt, now)))) > 0;
+            }
+            if ("MANUAL_REVIEW".equals(order.getMarketStatus())) {
+                List<MarketRouteItemDO> routes = routes(order.getUserId(), order.getId()).stream()
+                        .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+                return !routes.isEmpty() && routes.stream().allMatch(item ->
+                        "MANUAL_REVIEW".equals(item.getStatus()) && StrUtil.isNotBlank(item.getMarketGuid())
+                                && StrUtil.isBlank(item.getMarketBetId()));
             }
             return order.getUpdateTime() == null || !order.getUpdateTime().isAfter(stale);
         }).toList();
@@ -491,6 +536,27 @@ public class LotteryMarketOrderStateService {
 
     private void updateConfirmedMessage(Long userId, String orderId) {
         updateBetReceiptMessage(userId, orderId, true);
+    }
+
+    private void updateAcceptedWithoutDetailsMessage(Long userId, String orderId) {
+        OrderDO order = order(userId, orderId);
+        if (order == null) return;
+        MemberDO member = DataPermissionUtils.executeIgnore(() -> memberMapper.selectOne(
+                new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getId, order.getMemberId())
+                        .eq(MemberDO::getUserId, userId).last("LIMIT 1")));
+        long itemCount = value(order.getItemCount(), 0);
+        if (itemCount <= 0) {
+            itemCount = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectCount(
+                    new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId)
+                            .eq(BetItemDO::getOrderId, orderId)));
+        }
+        String reply = robotReplyTemplate.betReceiptAcceptedWithoutDetails(order.getMemberName(), order.getPeriod(),
+                order.getContent(), value(order.getPeriodSequence(), 0), Math.toIntExact(itemCount),
+                money(order.getAmount()), member == null ? ZERO : money(member.getBalance()));
+        messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, "已受理")
+                .set(MessageDO::getReply, reply).set(MessageDO::getProcessedAt, LocalDateTime.now())
+                .set(MessageDO::getError, ""));
     }
 
     private void updateBetReceiptMessage(Long userId, String orderId, boolean detailsConfirmed) {
