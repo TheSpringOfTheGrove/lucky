@@ -1257,7 +1257,7 @@ onBeforeUnmount(() => {
       </main>
 
       <button
-        v-if="unreadMessageKeys.length"
+        v-if="!autoFollowMessages"
         class="new-message-tip"
         type="button"
         :aria-label="`回到最新消息，${unreadMessageKeys.length} 条未读`"
