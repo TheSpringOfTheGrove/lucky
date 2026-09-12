@@ -36,6 +36,8 @@ public final class LotteryRoomReqVO {
         private String content;
         @Size(max = 100)
         private String externalId;
+        /** Milliseconds since epoch when the member pressed send. */
+        private Long sentAt;
     }
 
     @Data
@@ -54,6 +56,8 @@ public final class LotteryRoomReqVO {
         private String content;
         @Size(max = 100)
         private String externalId;
+        /** Milliseconds since epoch when the member pressed send. */
+        private Long sentAt;
     }
 
     @Data

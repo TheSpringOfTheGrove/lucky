@@ -39,8 +39,10 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
@@ -85,6 +87,7 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String CHANNEL_WEB_PRIVATE = "网页私聊";
     private static final Duration MEMBER_HEARTBEAT_WRITE_INTERVAL = Duration.ofSeconds(15);
     private static final Duration MEMBER_ONLINE_TIMEOUT = Duration.ofSeconds(90);
+    private static final Duration ROOM_CLIENT_TIME_TOLERANCE = Duration.ofMinutes(10);
 
     private record BetResult(Long messageId, String orderId, String member, String period, BigDecimal amount,
                              BigDecimal balance, int itemCount, int periodSequence,
@@ -1633,6 +1636,7 @@ public class LotteryServiceImpl implements LotteryService {
                 : robotReplyTemplate.betReceipt(member.getName(), order.getPeriod(), order.getContent(),
                         periodSequence, parsed.size(), total, balance));
         message.setProcessedAt(LocalDateTime.now());
+        message.setCreateTime(roomMessageCreateTime(reqVO.getSentAt()));
         message.setUserId(member.getUserId());
         messageMapper.insert(message);
         if ("跟".equals(order.getSource())) {
@@ -2493,6 +2497,7 @@ public class LotteryServiceImpl implements LotteryService {
         bet.setContent(reqVO.getContent());
         bet.setChannel(reqVO.getChannel());
         bet.setExternalId(reqVO.getExternalId());
+        bet.setSentAt(reqVO.getSentAt());
         BetResult result;
         try {
             result = placeBetInternal(bet, actor);
@@ -2903,6 +2908,7 @@ public class LotteryServiceImpl implements LotteryService {
             bet.setChannel(access.channel());
             bet.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null
                     : "room:" + access.mode() + ":" + member.getId() + ":" + reqVO.getExternalId());
+            bet.setSentAt(reqVO.getSentAt());
             try {
                 return betResultMap(placeBetInternal(bet, member.getName()));
             } catch (ServiceException ex) {
@@ -2913,6 +2919,7 @@ public class LotteryServiceImpl implements LotteryService {
                 rejected.setContent(reqVO.getContent());
                 rejected.setChannel(access.channel());
                 rejected.setExternalId(bet.getExternalId());
+                rejected.setSentAt(reqVO.getSentAt());
                 if (isBalanceNotEnough(ex)) return balanceNotEnoughReply(member, rejected);
                 if (isSafeBetRejection(ex)) return betRejectedReply(member, rejected, ex);
                 throw ex;
@@ -2949,6 +2956,7 @@ public class LotteryServiceImpl implements LotteryService {
             message.setChannel(access.channel());
             message.setExternalId(StrUtil.isBlank(reqVO.getExternalId()) ? null
                     : "room:" + access.mode() + ":" + member.getId() + ":" + reqVO.getExternalId());
+            message.setSentAt(reqVO.getSentAt());
             return processIncomingMessageInternal(message, member.getName());
         });
     }
@@ -3176,9 +3184,27 @@ public class LotteryServiceImpl implements LotteryService {
         message.setMessageType(isAutoProxy(member) ? TYPE_AUTO_PROXY : TYPE_PLAYER);
         message.setReply(reply);
         message.setProcessedAt(LocalDateTime.now());
+        message.setCreateTime(roomMessageCreateTime(reqVO.getSentAt()));
         message.setUserId(member.getUserId());
         messageMapper.insert(message);
         return message;
+    }
+
+    /**
+     * A room message belongs to the moment the member pressed send, not the later moment an
+     * asynchronous parser or market request finishes. Keep malformed or wildly skewed clocks
+     * from arbitrarily reordering the shared room history.
+     */
+    private LocalDateTime roomMessageCreateTime(Long sentAt) {
+        if (sentAt == null || sentAt <= 0) return null;
+        try {
+            LocalDateTime candidate = LocalDateTime.ofInstant(Instant.ofEpochMilli(sentAt), ZoneId.systemDefault());
+            LocalDateTime now = LocalDateTime.now();
+            return candidate.isBefore(now.minus(ROOM_CLIENT_TIME_TOLERANCE))
+                    || candidate.isAfter(now.plus(ROOM_CLIENT_TIME_TOLERANCE)) ? null : candidate;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private MemberDO findMemberByName(String name) {

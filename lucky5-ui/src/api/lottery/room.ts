@@ -187,7 +187,7 @@ export const getRoomDrawStateApi = async (credential: RoomCredential) => {
 
 export const placeRoomBetApi = (
   credential: RoomCredential,
-  data: { period: string; content: string; externalId: string }
+  data: { period: string; content: string; externalId: string; sentAt?: number }
 ) =>
   request<{ orderId: string; balance: number }>('/app-api/lottery/room/bets', {
     method: 'POST',
@@ -205,7 +205,7 @@ export const previewRoomBetApi = (credential: RoomCredential, content: string) =
 
 export const sendRoomMessageApi = (
   credential: RoomCredential,
-  data: { period?: string; content: string; externalId: string }
+  data: { period?: string; content: string; externalId: string; sentAt?: number }
 ) =>
   request<{ messageId: number; reply: string; commandType: string; orderId?: string }>(
     '/app-api/lottery/room/messages',

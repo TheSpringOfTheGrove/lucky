@@ -273,6 +273,8 @@ public final class LotteryReqVO {
         private String channel;
         @Size(max = 100)
         private String externalId;
+        /** Original member send time in milliseconds since epoch, when supplied by a room client. */
+        private Long sentAt;
     }
 
     @Data
@@ -288,6 +290,8 @@ public final class LotteryReqVO {
         private String channel;
         @Size(max = 100)
         private String externalId;
+        /** Original member send time in milliseconds since epoch, when supplied by a room client. */
+        private Long sentAt;
     }
 
     @Data

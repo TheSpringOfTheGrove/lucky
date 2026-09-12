@@ -60,6 +60,9 @@ const composerPanelRef = ref<HTMLElement>()
 const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
+// 乐观消息被服务端记录替换后，仍保留用户第一次点击发送时看到的时间。
+// 服务端创建时间可能与浏览器时间相差一秒，不能因此让玩家气泡的时间跳变。
+const playerSentAtOverrides = ref<Record<number, string>>({})
 const betReplyFastPollUntilMs = ref(0)
 const trackedBetMessageIds = ref<number[]>([])
 const sessionStartedAt = ref(new Date().toISOString())
@@ -105,6 +108,37 @@ const credential = computed<RoomCredential>(() => {
     roomMode
   }
 })
+
+const playerSentAtStorageKey = computed(
+  () =>
+    `lucky5-room-sent-at:${credential.value.tenantId}:${credential.value.openId}:${credential.value.roomMode || 'DEFAULT'}`
+)
+const restorePlayerSentAtOverrides = () => {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(playerSentAtStorageKey.value) || '{}')
+    playerSentAtOverrides.value = Object.fromEntries(
+      Object.entries(parsed).filter(
+        ([messageId, sentAt]) => Number.isFinite(Number(messageId)) && typeof sentAt === 'string'
+      )
+    )
+  } catch {
+    playerSentAtOverrides.value = {}
+  }
+}
+const rememberPlayerSentAt = (messageId: number, sentAt: string) => {
+  const entries = Object.entries({ ...playerSentAtOverrides.value, [messageId]: sentAt }).slice(
+    -120
+  )
+  playerSentAtOverrides.value = Object.fromEntries(entries)
+  try {
+    sessionStorage.setItem(
+      playerSentAtStorageKey.value,
+      JSON.stringify(playerSentAtOverrides.value)
+    )
+  } catch {
+    // 不能写入会话存储时，当前页面仍保留首次发送时间。
+  }
+}
 
 const orderById = computed(() =>
   Object.fromEntries((session.value?.orders || []).map((order) => [order.id, order]))
@@ -354,7 +388,8 @@ const chatMessages = computed<ChatItem[]>(() => {
         type: 'text',
         content: message.content,
         createdAt: message.createdAt,
-        displayTimeAt: message.sentAt || message.createdAt,
+        displayTimeAt:
+          playerSentAtOverrides.value[message.id] || message.sentAt || message.createdAt,
         senderName: message.member
       })
     }
@@ -894,9 +929,11 @@ const submitChat = async () => {
     const result = await sendRoomMessageApi(credential.value, {
       period: session.value.issue.status === 'OPEN' ? session.value.suggestedPeriod : undefined,
       content,
-      externalId
+      externalId,
+      sentAt: new Date(submittedAt).getTime()
     })
     optimisticMessage.serverMessageId = result.messageId
+    rememberPlayerSentAt(result.messageId, submittedAt)
     if (optimisticRobotMessage) optimisticRobotMessage.serverMessageId = result.messageId
     if (optimisticRobotMessage && result.reply) optimisticRobotMessage.content = result.reply
     if (result.commandType === 'BET' && result.reply?.trim().endsWith('提交中')) {
@@ -1003,6 +1040,7 @@ watch(
     if (!credential.value.openId || credentialKey === previousCredentialKey) return
     sessionStartedAt.value = new Date().toISOString()
     localMessages.value = []
+    restorePlayerSentAtOverrides()
     resetChatMessageTracking()
     trackedBetMessageIds.value = []
     betReplyFastPollUntilMs.value = 0
@@ -1015,6 +1053,7 @@ watch(
 
 onMounted(async () => {
   restoreScratchLauncherTop()
+  restorePlayerSentAtOverrides()
   window.addEventListener('resize', handleRoomResize)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   await loadSession()
