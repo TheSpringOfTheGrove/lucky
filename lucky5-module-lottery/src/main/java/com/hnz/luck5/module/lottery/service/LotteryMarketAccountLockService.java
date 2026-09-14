@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.function.Supplier;
 
-/** Serializes every login and remote operation performed with one owner's market account. */
+/** Serializes only write operations performed with one owner's market account. */
 @Service
 @RequiredArgsConstructor
 public class LotteryMarketAccountLockService {
@@ -53,7 +53,10 @@ public class LotteryMarketAccountLockService {
     }
 
     private RLock lock(Long tenantId, Long userId) {
-        return redissonClient.getFairLock(KEY_PREFIX + tenantId + ":" + userId);
+        // A fair lock preserves cancelled/dead waiters for a grace period.  That is useful for a human queue but
+        // disastrous for a time-sensitive market write: a live BatchBet may wait tens of seconds with no active
+        // order.  A normal re-entrant lock still guarantees one write at a time without this stale-queue penalty.
+        return redissonClient.getLock(KEY_PREFIX + tenantId + ":" + userId);
     }
 
     private void unlock(RLock lock) {

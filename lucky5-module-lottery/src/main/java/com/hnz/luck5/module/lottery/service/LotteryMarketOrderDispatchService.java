@@ -107,8 +107,8 @@ public class LotteryMarketOrderDispatchService {
     }
 
     public void verify(Long userId, String orderId) {
-        Long tenantId = TenantContextHolder.getRequiredTenantId();
-        accountLockService.execute(tenantId, userId, () -> verifyLocked(userId, orderId));
+        // Detail reconciliation is read-only.  It must never delay a new BatchBet for the same owner.
+        verifyLocked(userId, orderId);
     }
 
     private void verifyLocked(Long userId, String orderId) {

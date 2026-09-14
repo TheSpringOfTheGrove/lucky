@@ -21,4 +21,16 @@ public class LotteryMarketAsyncConfiguration {
         executor.initialize();
         return executor;
     }
+
+    @Bean("lotteryMarketReadExecutor")
+    public Executor lotteryMarketReadExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("lottery-market-read-");
+        executor.setWaitForTasksToCompleteOnShutdown(false);
+        executor.initialize();
+        return executor;
+    }
 }

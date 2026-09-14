@@ -50,12 +50,12 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
-    void refreshesAnUnconfiguredOwnerConnectionFiveMinutesAfterTheLastSuccessfulRefresh() {
+    void refreshesOwnerBalanceThirtySecondsAfterTheLastSuccessfulRefresh() {
         LocalDateTime now = LocalDateTime.of(2026, 8, 18, 15, 30);
 
         assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(null, now)).isTrue();
-        assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(now.minusMinutes(4).minusSeconds(59), now)).isFalse();
-        assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(now.minusMinutes(5), now)).isTrue();
+        assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(now.minusSeconds(29), now)).isFalse();
+        assertThat(LotteryMarketSyncService.ownerConnectionRefreshDue(now.minusSeconds(30), now)).isTrue();
     }
 
     @Test
