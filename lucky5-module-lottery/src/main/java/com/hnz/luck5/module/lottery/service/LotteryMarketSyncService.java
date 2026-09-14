@@ -132,7 +132,8 @@ public class LotteryMarketSyncService {
                 try {
                     if (!configured(config)) {
                         TenantUtils.execute(config.getTenantId(), () -> syncOwnerConnection(config));
-                    } else if (ownerConnectionRefreshDue(config.getUserId(), LocalDateTime.now())) {
+                } else if (TenantUtils.execute(config.getTenantId(),
+                        () -> ownerConnectionRefreshDue(config.getUserId(), LocalDateTime.now()))) {
                         // Reads use their own executor and never take the BatchBet write lock.  A completed read
                         // writes lastSyncAt, so the next scheduled read is exactly 30 seconds later.
                         balanceRefreshService.refresh(config.getTenantId(), config.getUserId());
