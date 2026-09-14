@@ -50,6 +50,7 @@ public class LotteryMarketOrderStateService {
     @Resource private LotteryBalanceLedgerService balanceLedgerService;
     @Resource private LotteryRobotReplyTemplate robotReplyTemplate;
     @Resource private LotteryIssueFreshnessPolicy issueFreshnessPolicy;
+    @Resource private LotteryMarketRoutingService marketRoutingService;
 
     public boolean isCancellationWindowOpen(Long userId, String period) {
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
@@ -77,18 +78,17 @@ public class LotteryMarketOrderStateService {
                 .filter(item -> SUBMITTABLE.contains(item.getStatus()))
                 .toList();
         LocalDateTime now = LocalDateTime.now();
-        routes.forEach(route -> routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
-                .eq(MarketRouteItemDO::getId, route.getId()).eq(MarketRouteItemDO::getUserId, userId)
+        // This must remain one SQL statement. Updating 4,967 rows one-by-one used to hold the market dispatch for
+        // 30–60 seconds before the BatchBet was even sent.
+        routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
+                .eq(MarketRouteItemDO::getUserId, userId).eq(MarketRouteItemDO::getOrderId, orderId)
                 .in(MarketRouteItemDO::getStatus, SUBMITTABLE)
                 .set(MarketRouteItemDO::getStatus, "SUBMITTING")
-                .set(MarketRouteItemDO::getAttempts, value(route.getAttempts(), 0) + 1)
-                .set(MarketRouteItemDO::getSubmittedAt, now).set(MarketRouteItemDO::getLastError, "")));
+                .set(MarketRouteItemDO::getAttempts, attempts)
+                .set(MarketRouteItemDO::getSubmittedAt, now).set(MarketRouteItemDO::getLastError, ""));
         LotteryConfigDO config = config(userId);
         if (config == null) throw exception(BET_STATE_CHANGED);
-        List<Wa55MarketOrderClient.BetRequest> requests = routes.stream().map(route ->
-                new Wa55MarketOrderClient.BetRequest(route.getId(), order.getPeriod(), route.getPlay(),
-                        route.getSelection(), route.getMarketAmount(), route.getMarketGuid(),
-                        route.getPlay() != null && route.getPlay().endsWith("字现"))).toList();
+        List<Wa55MarketOrderClient.BetRequest> requests = marketRoutingService.expandMarketRequests(routes);
         return new DispatchContext(order.getId(), order.getPeriod(), attempts,
                 new Wa55MarketOrderClient.Credentials(config.getUpstreamUrl(), config.getUpstreamAccount(),
                         credentialService.decrypt(config.getMarketPasswordEncrypted())), requests);
@@ -98,6 +98,11 @@ public class LotteryMarketOrderStateService {
     public boolean applyConfirmations(Long userId, String orderId,
                                       List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
         if (confirmations == null || confirmations.isEmpty()) return false;
+        List<MarketRouteItemDO> marketRoutes = routes(userId, orderId).stream()
+                .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+        if (marketRoutes.size() == 1 && marketRoutingService.isCompactRoute(marketRoutes.get(0))) {
+            return applyCompactConfirmations(userId, orderId, marketRoutes.get(0), confirmations);
+        }
         LocalDateTime now = LocalDateTime.now();
         for (Wa55MarketOrderClient.BetConfirmation confirmation : confirmations) {
             routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
@@ -114,10 +119,10 @@ public class LotteryMarketOrderStateService {
                     .set(MarketRouteItemDO::getConfirmedAt, now)
                     .set(MarketRouteItemDO::getLastError, ""));
         }
-        List<MarketRouteItemDO> routes = routes(userId, orderId).stream()
+        marketRoutes = routes(userId, orderId).stream()
                 .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
-        if (!routes.isEmpty() && routes.stream().allMatch(item -> "CONFIRMED".equals(item.getStatus()))) {
-            String serials = routes.stream().map(MarketRouteItemDO::getMarketSerialNo).filter(value -> !value.isBlank())
+        if (!marketRoutes.isEmpty() && marketRoutes.stream().allMatch(item -> "CONFIRMED".equals(item.getStatus()))) {
+            String serials = marketRoutes.stream().map(MarketRouteItemDO::getMarketSerialNo).filter(value -> !value.isBlank())
                     .distinct().collect(Collectors.joining(","));
             int confirmed = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                     .eq(OrderDO::getUserId, userId).in(OrderDO::getMarketStatus, CONFIRMABLE)
@@ -131,6 +136,42 @@ public class LotteryMarketOrderStateService {
     }
 
     /**
+     * A compact route expands to synthetic request ids such as {@code routeId:42}.  Those ids are intentionally not
+     * database rows, so collapse a complete detailed response back onto the one persisted route row.  A partial
+     * detailed response stays in normal verification rather than being mistaken for a confirmed order.
+     */
+    private boolean applyCompactConfirmations(Long userId, String orderId, MarketRouteItemDO route,
+                                              List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
+        int expected = marketRoutingService.expandMarketRequests(List.of(route)).size();
+        BigDecimal acceptedAmount = money(confirmations.stream()
+                .map(Wa55MarketOrderClient.BetConfirmation::acceptedAmount).filter(java.util.Objects::nonNull)
+                .reduce(ZERO, BigDecimal::add));
+        if (confirmations.size() != expected || acceptedAmount.compareTo(money(route.getMarketAmount())) != 0) {
+            return false;
+        }
+        Wa55MarketOrderClient.BetConfirmation first = confirmations.get(0);
+        LocalDateTime now = LocalDateTime.now();
+        int changed = routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
+                .eq(MarketRouteItemDO::getId, route.getId()).eq(MarketRouteItemDO::getUserId, userId)
+                .in(MarketRouteItemDO::getStatus, "SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING")
+                .set(MarketRouteItemDO::getStatus, "CONFIRMED")
+                .set(MarketRouteItemDO::getMarketGuid, first.guid())
+                .set(MarketRouteItemDO::getMarketBetId, first.marketBetId())
+                .set(MarketRouteItemDO::getMarketSerialNo, first.serialNo())
+                .set(MarketRouteItemDO::getMarketBetCount, expected)
+                .set(MarketRouteItemDO::getMarketOdds, first.odds() == null ? ZERO : first.odds())
+                .set(MarketRouteItemDO::getConfirmedAt, now).set(MarketRouteItemDO::getLastError, ""));
+        if (changed != 1) return false;
+        int orderChanged = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
+                .eq(OrderDO::getUserId, userId).in(OrderDO::getMarketStatus, CONFIRMABLE)
+                .set(OrderDO::getMarketStatus, "CONFIRMED").set(OrderDO::getMarketOrderId, first.serialNo())
+                .set(OrderDO::getMarketError, ""));
+        if (orderChanged == 1) updateConfirmedMessage(userId, orderId);
+        OrderDO current = orderChanged == 1 ? null : order(userId, orderId);
+        return orderChanged == 1 || current != null && "CONFIRMED".equals(current.getMarketStatus());
+    }
+
+    /**
      * The market explicitly accepted these batches, but its detail list has not exposed the external identifiers yet.
      * Keep the order non-submittable and let the recovery worker perform read-only verification.
      */
@@ -139,15 +180,15 @@ public class LotteryMarketOrderStateService {
                                              List<Wa55MarketOrderClient.AcceptedBatch> batches,
                                              LocalDateTime nextVerifyAt) {
         if (batches == null || batches.isEmpty()) return;
-        for (Wa55MarketOrderClient.AcceptedBatch batch : batches) {
-            routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
-                    .eq(MarketRouteItemDO::getUserId, userId).in(MarketRouteItemDO::getId, batch.routeItemIds())
-                    .in(MarketRouteItemDO::getStatus, "SUBMITTING", "VERIFYING")
-                    .set(MarketRouteItemDO::getStatus, "VERIFYING")
-                    .set(MarketRouteItemDO::getMarketGuid, batch.guid())
-                    .set(MarketRouteItemDO::getNextRetryAt, nextVerifyAt)
-                    .set(MarketRouteItemDO::getLastError, "盘口已明确受理，等待下注明细标识"));
-        }
+        // A compact route represents the whole accepted batch, while historical orders still have one row per
+        // selection. At this point every batch in the result was accepted, so one order-level update is correct for
+        // both layouts and avoids looking up thousands of synthetic compact-route ids.
+        routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
+                .eq(MarketRouteItemDO::getUserId, userId).eq(MarketRouteItemDO::getOrderId, orderId)
+                .in(MarketRouteItemDO::getStatus, "SUBMITTING", "VERIFYING")
+                .set(MarketRouteItemDO::getStatus, "VERIFYING")
+                .set(MarketRouteItemDO::getNextRetryAt, nextVerifyAt)
+                .set(MarketRouteItemDO::getLastError, "盘口已明确受理，等待下注明细标识"));
         orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                 .eq(OrderDO::getUserId, userId).in(OrderDO::getMarketStatus, "SUBMITTING", "VERIFYING")
                 .set(OrderDO::getMarketStatus, "VERIFYING")
@@ -164,10 +205,7 @@ public class LotteryMarketOrderStateService {
         if (verifying.isEmpty()) return null;
         LotteryConfigDO config = config(userId);
         if (config == null) throw exception(BET_STATE_CHANGED);
-        List<Wa55MarketOrderClient.BetRequest> requests = verifying.stream().map(route ->
-                new Wa55MarketOrderClient.BetRequest(route.getId(), order.getPeriod(), route.getPlay(),
-                        route.getSelection(), route.getMarketAmount(), route.getMarketGuid(),
-                        route.getPlay() != null && route.getPlay().endsWith("字现"))).toList();
+        List<Wa55MarketOrderClient.BetRequest> requests = marketRoutingService.expandMarketRequests(verifying);
         LocalDateTime submittedAt = verifying.stream().map(MarketRouteItemDO::getSubmittedAt)
                 .filter(java.util.Objects::nonNull).min(LocalDateTime::compareTo).orElse(order.getCreateTime());
         return new VerificationContext(orderId, order.getPeriod(), submittedAt,
@@ -320,9 +358,7 @@ public class LotteryMarketOrderStateService {
         boolean acceptedWithoutIdentifiers = !marketRoutes.isEmpty()
                 && marketRoutes.stream().allMatch(item -> Set.of("VERIFYING", "MANUAL_REVIEW").contains(item.getStatus())
                         && item.getMarketGuid() != null && !item.getMarketGuid().isBlank()
-                        && (item.getMarketBetId() == null || item.getMarketBetId().isBlank()))
-                && money(marketRoutes.stream().map(MarketRouteItemDO::getMarketAmount)
-                        .reduce(ZERO, BigDecimal::add)).compareTo(money(order.getAmount())) == 0;
+                        && (item.getMarketBetId() == null || item.getMarketBetId().isBlank()));
         if (!acceptedWithoutIdentifiers) return false;
         int version = value(order.getVersion(), 0);
         String note = "盘口已明确受理，逐注明细编号未返回；已确认受理，不能退码";

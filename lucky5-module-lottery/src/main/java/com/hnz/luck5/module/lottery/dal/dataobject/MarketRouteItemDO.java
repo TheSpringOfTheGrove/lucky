@@ -21,6 +21,7 @@ public class MarketRouteItemDO extends LotteryUserBaseDO {
     private String period;
     private String play;
     private String selection;
+    private String snapshotJson;
     private String routeType;
     private BigDecimal localAmount;
     private BigDecimal marketAmount;

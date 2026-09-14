@@ -36,12 +36,12 @@ public class LotteryBatchInsertService {
     private static final String BET_ITEM_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String MARKET_ROUTE_INSERT_PREFIX = """
             INSERT INTO lucky5_market_route_item
-                (id, user_id, order_id, bet_item_id, period, play, selection, route_type,
+                (id, user_id, order_id, bet_item_id, period, play, selection, snapshot_json, route_type,
                  local_amount, market_amount, odds, local_payout, market_guid, market_bet_id,
                  market_serial_no, market_bet_count, market_odds, status, attempts, last_error, tenant_id)
             VALUES
             """;
-    private static final String MARKET_ROUTE_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String MARKET_ROUTE_VALUES = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String SETTLED_BET_ITEM_UPDATE = """
             UPDATE lucky5_bet_item
             SET won = ?, payout = ?, snapshot_json = ?, update_time = CURRENT_TIMESTAMP
@@ -93,6 +93,7 @@ public class LotteryBatchInsertService {
                 statement.setString(parameterIndex++, item.getPeriod());
                 statement.setString(parameterIndex++, item.getPlay());
                 statement.setString(parameterIndex++, item.getSelection());
+                statement.setString(parameterIndex++, item.getSnapshotJson());
                 statement.setString(parameterIndex++, item.getRouteType());
                 statement.setBigDecimal(parameterIndex++, item.getLocalAmount());
                 statement.setBigDecimal(parameterIndex++, item.getMarketAmount());

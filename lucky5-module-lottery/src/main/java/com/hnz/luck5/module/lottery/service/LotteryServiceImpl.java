@@ -402,6 +402,10 @@ public class LotteryServiceImpl implements LotteryService {
             BigDecimal amount = money(route.getMarketAmount());
             if (amount.signum() <= 0 || !isSuccessfulMarketRoute(route)) continue;
             marketBet = marketBet.add(amount);
+            if (marketRoutingService.isCompactRoute(route)) {
+                marketWin = marketWin.add(marketRoutingService.compactMarketPayout(route));
+                continue;
+            }
             BetItemDO bet = itemsById.get(route.getBetItemId());
             if (bet == null || !Boolean.TRUE.equals(bet.getWon())) continue;
             BigDecimal odds = route.getMarketOdds() != null && route.getMarketOdds().signum() > 0
@@ -1587,19 +1591,19 @@ public class LotteryServiceImpl implements LotteryService {
                 LotteryBalanceLedgerService.BET_DEBIT, order.getId(), actor,
                 "期号 " + order.getPeriod() + " 下注 " + order.getContent());
         long itemBuildStartedAt = System.nanoTime();
-        // Boss/local orders never require an external bet id. Persist one compact row for every original
-        // sub-command so the accepted expansion and odds cannot change if parsing rules/configuration change later.
-        List<BetItemDO> orderItems = realMarketOrder
-                ? materializedBetItems(order, parsed)
-                : compactSnapshotItems(order, parsedCommands);
+        // Every order type persists one compact row per original sub-command. Real-market dispatch receives a
+        // separate in-memory expansion only; persisting it first used to create thousands of rows and delay the
+        // BatchBet by seconds (and its state update by up to a minute).
+        List<BetItemDO> expandedMarketItems = realMarketOrder ? materializedBetItems(order, parsed) : List.of();
+        List<BetItemDO> orderItems = compactSnapshotItems(order, parsedCommands);
         long itemBuildElapsedMs = elapsedMillis(itemBuildStartedAt);
         long itemInsertStartedAt = System.nanoTime();
         insertBetItems(orderItems);
         long itemInsertElapsedMs = elapsedMillis(itemInsertStartedAt);
         long postInsertStartedAt = System.nanoTime();
         if (realMarketOrder) {
-            LotteryMarketRoutingService.RoutingResult routing = marketRoutingService.prepare(member.getUserId(),
-                    order.getId(), order.getPeriod(), member, orderItems);
+            LotteryMarketRoutingService.RoutingResult routing = marketRoutingService.prepareCompact(member.getUserId(),
+                    order.getId(), order.getPeriod(), member, expandedMarketItems);
             order.setDeliveryMode(routing.deliveryMode());
             order.setMarketStatus(routing.marketStatus());
             orderMapper.updateById(order);

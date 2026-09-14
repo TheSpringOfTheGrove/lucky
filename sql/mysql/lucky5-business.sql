@@ -281,7 +281,7 @@ PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lu
 CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `order_id` varchar(64) NOT NULL,
   `bet_item_id` varchar(64) NOT NULL, `period` varchar(40) NOT NULL, `play` varchar(100) NOT NULL,
-  `selection` varchar(100) NOT NULL, `route_type` varchar(30) NOT NULL,
+  `selection` varchar(100) NOT NULL, `snapshot_json` mediumtext NULL, `route_type` varchar(30) NOT NULL,
   `local_amount` decimal(18,2) NOT NULL DEFAULT 0, `market_amount` decimal(18,2) NOT NULL DEFAULT 0,
   `odds` decimal(12,4) NOT NULL DEFAULT 0, `local_payout` decimal(18,2) NOT NULL DEFAULT 0,
   `market_guid` varchar(64) NOT NULL, `market_bet_id` varchar(100) NOT NULL DEFAULT '',
@@ -298,6 +298,14 @@ CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   KEY `idx_lucky5_market_route_dispatch` (`tenant_id`,`user_id`,`status`,`next_retry_at`),
   KEY `idx_lucky5_market_route_period` (`tenant_id`,`user_id`,`period`,`play`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 真实盘口资金路由及派发状态';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_market_route_item' AND column_name='snapshot_json')=0,
+  'ALTER TABLE `lucky5_market_route_item` ADD COLUMN `snapshot_json` mediumtext NULL AFTER `selection`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.statistics

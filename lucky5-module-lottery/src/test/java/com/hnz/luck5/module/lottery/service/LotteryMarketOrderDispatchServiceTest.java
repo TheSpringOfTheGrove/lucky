@@ -17,6 +17,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,7 +37,7 @@ class LotteryMarketOrderDispatchServiceTest {
         TenantContextHolder.setTenantId(1L);
         service = new LotteryMarketOrderDispatchService(marketClient, stateService, marketSyncService,
                 balanceRefreshService, accountLockService);
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             invocation.getArgument(2, Runnable.class).run();
             return null;
         }).when(accountLockService).execute(anyLong(), anyLong(), any(Runnable.class));
@@ -68,7 +69,7 @@ class LotteryMarketOrderDispatchServiceTest {
 
         verify(marketSyncService).recordSuccessfulSubmission(9L, new BigDecimal("100.00"),
                 new BigDecimal("12.50"));
-        verify(balanceRefreshService).refresh(1L, 9L);
+        verify(balanceRefreshService).refreshAfterAcceptedSubmission(1L, 9L);
     }
 
     @Test
@@ -92,7 +93,7 @@ class LotteryMarketOrderDispatchServiceTest {
         verify(stateService).markManualReview(9L, "order-1",
                 "外部订单已成功，但本地确认连续三次写入失败，请仅修复本地状态，禁止重新提交：本地确认状态未完整更新");
         verify(marketSyncService, never()).recordSuccessfulSubmission(9L, new BigDecimal("100.00"), BigDecimal.ONE);
-        verify(balanceRefreshService, never()).refresh(1L, 9L);
+        verify(balanceRefreshService, never()).refreshAfterAcceptedSubmission(1L, 9L);
     }
 
     @Test
@@ -117,7 +118,7 @@ class LotteryMarketOrderDispatchServiceTest {
         verify(stateService).confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1");
         verify(stateService, never()).markManualReview(anyLong(), any(), any());
         verify(marketSyncService).recordSuccessfulSubmission(9L, new BigDecimal("100.00"), BigDecimal.ONE);
-        verify(balanceRefreshService).refresh(1L, 9L);
+        verify(balanceRefreshService).refreshAfterAcceptedSubmission(1L, 9L);
     }
 
     @Test
