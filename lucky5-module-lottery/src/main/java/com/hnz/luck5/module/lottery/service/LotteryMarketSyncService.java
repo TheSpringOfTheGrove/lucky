@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -51,6 +52,10 @@ public class LotteryMarketSyncService {
     private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
     private final AtomicBoolean repairingPeriodSummaries = new AtomicBoolean();
+    // Scheduler threads have no tenant context before a mapper call. Keep the polling cadence in memory and let
+    // refreshOwnerBalance enter the tenant scope itself, instead of querying a tenant table merely to decide if a
+    // refresh is due. The persisted lastSyncAt remains the audit/status timestamp.
+    private final Map<String, LocalDateTime> ownerBalanceRefreshAt = new ConcurrentHashMap<>();
     private volatile long nextDrawSyncAtMillis;
     private volatile long activeDrawTimeMillis;
     private volatile long queuedDrawTimeMillis;
@@ -132,8 +137,8 @@ public class LotteryMarketSyncService {
                 try {
                     if (!configured(config)) {
                         TenantUtils.execute(config.getTenantId(), () -> syncOwnerConnection(config));
-                } else if (TenantUtils.execute(config.getTenantId(),
-                        () -> ownerConnectionRefreshDue(config.getUserId(), LocalDateTime.now()))) {
+                    } else if (ownerConnectionRefreshDue(ownerBalanceRefreshAt.get(ownerRefreshKey(config)),
+                            LocalDateTime.now())) {
                         // Reads use their own executor and never take the BatchBet write lock.  A completed read
                         // writes lastSyncAt, so the next scheduled read is exactly 30 seconds later.
                         balanceRefreshService.refresh(config.getTenantId(), config.getUserId());
@@ -146,12 +151,6 @@ public class LotteryMarketSyncService {
         } finally {
             syncingConnections.set(false);
         }
-    }
-
-    private boolean ownerConnectionRefreshDue(Long userId, LocalDateTime now) {
-        MarketConnectionDO connection = findConnection(userId);
-        LocalDateTime lastSyncAt = connection == null ? null : connection.getLastSyncAt();
-        return ownerConnectionRefreshDue(lastSyncAt, now);
     }
 
     static boolean ownerConnectionRefreshDue(LocalDateTime lastSyncAt, LocalDateTime now) {
@@ -287,21 +286,35 @@ public class LotteryMarketSyncService {
 
     /** Reads only the owner's account snapshot after a successful external order. */
     public void refreshOwnerBalance(Long tenantId, Long userId) {
-        TenantUtils.execute(tenantId, () -> {
-            LotteryConfigDO config = DataPermissionUtils.executeIgnore(() -> lotteryConfigMapper.selectOne(
-                    new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
-            if (!configured(config)) return;
-            try {
-                Wa55MarketOrderClient.AccountSnapshot snapshot = readOwnerBalance(config);
-                updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.displayAccount(),
-                        snapshot.balance(), "", true);
-            } catch (RuntimeException ex) {
-                // Record the attempt time as well: a bad account retries on the normal 30 second cadence instead
-                // of launching a new full login every five seconds.
-                updateConnection(userId, "连接失败", null, null, null, rootMessage(ex), true);
-                throw ex;
-            }
-        });
+        try {
+            TenantUtils.execute(tenantId, () -> {
+                LotteryConfigDO config = DataPermissionUtils.executeIgnore(() -> lotteryConfigMapper.selectOne(
+                        new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
+                if (!configured(config)) return;
+                try {
+                    Wa55MarketOrderClient.AccountSnapshot snapshot = readOwnerBalance(config);
+                    updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.displayAccount(),
+                            snapshot.balance(), "", true);
+                } catch (RuntimeException ex) {
+                    // Record the attempt time as well: a bad account retries on the normal 30 second cadence instead
+                    // of launching a new full login every five seconds.
+                    updateConnection(userId, "连接失败", null, null, null, rootMessage(ex), true);
+                    throw ex;
+                }
+            });
+        } finally {
+            // Both a successful read and a failed attempt wait for the normal cadence before retrying. This avoids
+            // repeatedly logging in every five seconds when an external account is unavailable.
+            ownerBalanceRefreshAt.put(ownerRefreshKey(tenantId, userId), LocalDateTime.now());
+        }
+    }
+
+    private String ownerRefreshKey(LotteryConfigDO config) {
+        return ownerRefreshKey(config.getTenantId(), config.getUserId());
+    }
+
+    private String ownerRefreshKey(Long tenantId, Long userId) {
+        return tenantId + ":" + userId;
     }
 
     /** Returns the persisted connection snapshot and never contacts the external market. */
