@@ -41,6 +41,9 @@ public class LotteryMarketOrderDispatchService {
     private void submitLocked(Long userId, String orderId) {
         LotteryMarketOrderStateService.DispatchContext context = stateService.claimSubmit(userId, orderId);
         if (context == null || context.requests().isEmpty()) return;
+        long startedAt = System.nanoTime();
+        LOGGER.info("盘口提交开始 user={} order={} period={} routes={}", userId, orderId, context.period(),
+                context.requests().size());
         try {
             Wa55MarketOrderClient.SubmissionBatch result = marketClient.submit(context.credentials(), context.period(),
                     context.requests());
@@ -97,6 +100,9 @@ public class LotteryMarketOrderDispatchService {
         } catch (RuntimeException ex) {
             stateService.markManualReview(userId, orderId,
                     "盘口派发后本地处理异常，禁止自动重投或退款，请人工核对：" + ex.getMessage());
+        } finally {
+            LOGGER.info("盘口提交结束 user={} order={} period={} routes={} elapsedMs={}", userId, orderId,
+                    context.period(), context.requests().size(), (System.nanoTime() - startedAt) / 1_000_000);
         }
     }
 

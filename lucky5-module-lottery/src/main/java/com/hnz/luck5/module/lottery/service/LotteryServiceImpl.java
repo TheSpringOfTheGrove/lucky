@@ -152,7 +152,6 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryMarketSyncService marketSyncService;
     @Resource private LotteryMarketRoutingService marketRoutingService;
     @Resource private LotteryBatchInsertService batchInsertService;
-    @Resource private LotteryMarketBalanceService marketBalanceService;
     @Resource private LotteryMarketOrderStateService marketOrderStateService;
     @Resource private Wa55MarketOrderClient marketOrderClient;
     @Resource private SecurityFrameworkService securityFrameworkService;
@@ -1542,19 +1541,10 @@ public class LotteryServiceImpl implements LotteryService {
         if (playType == 0 && hasDragonTiger || playType == 1 && hasNormal) throw exception(PLAY_TYPE_DISABLED);
         BigDecimal total = money(parsed.stream().map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
         if (value(member.getBalance(), ZERO).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
-        if (realMarketOrder) {
-            List<BetItemDO> previewItems = parsed.stream().map(value -> {
-                BetItemDO item = new BetItemDO();
-                item.setPlay(value.play());
-                item.setSelection(value.selection());
-                item.setAmount(value.amount());
-                item.setOdds(value.odds());
-                return item;
-            }).toList();
-            BigDecimal marketAmount = marketRoutingService.previewMarketAmount(member.getUserId(),
-                    reqVO.getPeriod().trim(), member, previewItems);
-            marketBalanceService.requireSufficient(config, marketAmount);
-        }
+        // Do not log in to the external market here just to re-check its balance.  That old preflight used a
+        // second client session, evicted the write session and made a player wait through a full login handshake
+        // immediately before dispatch.  The local account is debited atomically below; the authoritative market
+        // batch response either accepts the exact count/amount or the dispatch state machine refunds it safely.
 
         int periodSequence = allocatePeriodSequence(member.getUserId(), reqVO.getPeriod().trim());
 

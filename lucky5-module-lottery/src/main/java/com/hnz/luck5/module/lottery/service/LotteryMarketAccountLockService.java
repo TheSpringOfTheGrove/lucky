@@ -1,6 +1,8 @@
 package com.hnz.luck5.module.lottery.service;
 
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
@@ -13,12 +15,18 @@ import java.util.function.Supplier;
 public class LotteryMarketAccountLockService {
 
     private static final String KEY_PREFIX = "lucky5:market-account:";
+    private static final Logger LOGGER = LoggerFactory.getLogger(LotteryMarketAccountLockService.class);
 
     private final RedissonClient redissonClient;
 
     public <T> T execute(Long tenantId, Long userId, Supplier<T> operation) {
         RLock lock = lock(tenantId, userId);
+        long waitingStartedAt = System.nanoTime();
         lock.lock();
+        long waitingMs = (System.nanoTime() - waitingStartedAt) / 1_000_000;
+        if (waitingMs >= 100) {
+            LOGGER.info("盘口账户锁已获取 tenant={} user={} waitMs={}", tenantId, userId, waitingMs);
+        }
         try {
             return operation.get();
         } finally {

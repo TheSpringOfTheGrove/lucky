@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LotteryMarketSyncService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryMarketSyncService.class);
-    private static final Duration OWNER_CONNECTION_REFRESH_INTERVAL = Duration.ofSeconds(30);
+    private static final Duration OWNER_CONNECTION_REFRESH_INTERVAL = Duration.ofMinutes(5);
     private final AtomicBoolean syncingAll = new AtomicBoolean();
     private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
@@ -128,6 +128,11 @@ public class LotteryMarketSyncService {
                     () -> lotteryConfigMapper.selectList(new LambdaQueryWrapper<LotteryConfigDO>()
                             .isNotNull(LotteryConfigDO::getUserId))));
             for (LotteryConfigDO config : configs) {
+                // A configured owner is explicitly verified when credentials are saved.  Periodic full read-only
+                // logins create a second market session and can invalidate the session used by actual BatchBet
+                // requests.  The global draw source is synchronized by syncAllConfigured(); leave owner account
+                // verification on the explicit admin action instead of interrupting live player submissions.
+                if (configured(config)) continue;
                 try {
                     TenantUtils.execute(config.getTenantId(), () ->
                             accountLockService.tryExecute(config.getTenantId(), config.getUserId(),
@@ -288,16 +293,9 @@ public class LotteryMarketSyncService {
 
     /** Reads only the owner's account snapshot after a successful external order. */
     public void refreshOwnerBalance(Long tenantId, Long userId) {
-        TenantUtils.execute(tenantId, () -> {
-            LotteryConfigDO config = DataPermissionUtils.executeIgnore(() -> lotteryConfigMapper.selectOne(
-                    new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
-            if (!configured(config)) return;
-            accountLockService.tryExecute(tenantId, userId, () -> {
-                Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
-                updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
-                        snapshot.account().balance(), "", true);
-            });
-        });
+        // The write response is authoritative for a player's order.  A balance refresh used to perform another
+        // full login immediately after it, which invalidated the write session before the next player could bet.
+        // Keep the verified connection snapshot; the administrator's explicit connection check refreshes balance.
     }
 
     /** Returns the persisted connection snapshot and never contacts the external market. */
