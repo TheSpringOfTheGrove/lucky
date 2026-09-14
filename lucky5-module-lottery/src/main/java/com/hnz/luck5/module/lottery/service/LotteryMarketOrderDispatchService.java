@@ -70,7 +70,7 @@ public class LotteryMarketOrderDispatchService {
                                 .map(Wa55MarketOrderClient.AcceptedBatch::acceptedAmount)
                                 .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add));
                 marketSyncService.recordSuccessfulSubmission(userId, result.balance(), acceptedAmount);
-                balanceRefreshService.refresh(TenantContextHolder.getRequiredTenantId(), userId);
+                balanceRefreshService.refreshAfterAcceptedSubmission(TenantContextHolder.getRequiredTenantId(), userId);
                 return;
             }
             if (applySuccessfulConfirmations(userId, orderId, result.confirmations())) {
@@ -78,7 +78,7 @@ public class LotteryMarketOrderDispatchService {
                         .map(Wa55MarketOrderClient.BetConfirmation::acceptedAmount)
                         .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
                 marketSyncService.recordSuccessfulSubmission(userId, result.balance(), acceptedAmount);
-                balanceRefreshService.refresh(TenantContextHolder.getRequiredTenantId(), userId);
+                balanceRefreshService.refreshAfterAcceptedSubmission(TenantContextHolder.getRequiredTenantId(), userId);
             }
         } catch (Wa55MarketOrderClient.MarketProtocolException ex) {
             if (ex.submissionUncertain()) {

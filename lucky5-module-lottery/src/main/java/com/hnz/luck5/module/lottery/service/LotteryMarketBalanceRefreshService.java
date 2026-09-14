@@ -18,11 +18,28 @@ public class LotteryMarketBalanceRefreshService {
 
     private final LotteryMarketSyncService marketSyncService;
     private final Set<String> refreshingAccounts = ConcurrentHashMap.newKeySet();
+    private final Set<String> refreshAgainAfterAcceptance = ConcurrentHashMap.newKeySet();
 
     @Async("lotteryMarketReadExecutor")
     public void refresh(Long tenantId, Long userId) {
+        refresh(tenantId, userId, false);
+    }
+
+    /**
+     * A confirmed market write must refresh balance immediately.  When the 30-second reader is already in flight,
+     * queue one more read after it rather than accepting a pre-bet balance as the new refresh baseline.
+     */
+    @Async("lotteryMarketReadExecutor")
+    public void refreshAfterAcceptedSubmission(Long tenantId, Long userId) {
+        refresh(tenantId, userId, true);
+    }
+
+    private void refresh(Long tenantId, Long userId, boolean afterAcceptedSubmission) {
         String accountKey = tenantId + ":" + userId;
-        if (!refreshingAccounts.add(accountKey)) return;
+        if (!refreshingAccounts.add(accountKey)) {
+            if (afterAcceptedSubmission) refreshAgainAfterAcceptance.add(accountKey);
+            return;
+        }
         try {
             marketSyncService.refreshOwnerBalance(tenantId, userId);
         } catch (RuntimeException ex) {
@@ -30,6 +47,11 @@ public class LotteryMarketBalanceRefreshService {
                     ex.getMessage());
         } finally {
             refreshingAccounts.remove(accountKey);
+            if (refreshAgainAfterAcceptance.remove(accountKey)) {
+                // This call stays on the existing background reader thread.  It deliberately runs once, after the
+                // in-flight pre-bet snapshot, and therefore establishes the correct new 30-second baseline.
+                refresh(tenantId, userId, false);
+            }
         }
     }
 }
