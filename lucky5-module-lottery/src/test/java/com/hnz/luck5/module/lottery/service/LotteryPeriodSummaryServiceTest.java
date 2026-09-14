@@ -43,7 +43,7 @@ class LotteryPeriodSummaryServiceTest {
         when(orderMapper.selectList(any())).thenReturn(List.of(
                 order("O1", "M1", "露露", "0759三定各1,0759三定各1"),
                 order("O2", "M2", "旺旺", "5874各2")));
-        when(messageMapper.selectCount(any())).thenReturn(0L);
+        when(messageMapper.selectList(any())).thenReturn(List.of());
         when(messageMapper.insert(any(MessageDO.class))).thenReturn(1);
 
         service.publish(7L, "20260809194");
@@ -64,12 +64,17 @@ class LotteryPeriodSummaryServiceTest {
     }
 
     @Test
-    void shouldSkipOrderExpansionWhenTheGroupSummaryAlreadyExists() {
-        when(messageMapper.selectCount(any())).thenReturn(1L);
+    void shouldClearExistingSummaryWhenNoOrderWasActuallyAccepted() {
+        MessageDO stale = new MessageDO();
+        stale.setExternalId("period-summary:g:20260809194");
+        stale.setReply("本期成功订单\n[露露]0759三定各1\n------------");
+        when(messageMapper.selectList(any())).thenReturn(List.of(stale));
+        when(orderMapper.selectList(any())).thenReturn(List.of());
 
         service.publish(7L, "20260809194");
 
-        verifyNoInteractions(orderMapper);
+        verify(messageMapper).updateById(stale);
+        assertThat(stale.getReply()).isEqualTo("本期成功订单\n------------");
     }
 
     private OrderDO order(String id, String memberId, String memberName, String content) {

@@ -40,16 +40,14 @@ public class LotteryPeriodSummaryService {
         if (userId == null || period == null || period.isBlank()) {
             return;
         }
-        if (exists(userId, "period-summary:g:" + period)) {
-            return;
-        }
+        List<MessageDO> existingSummaries = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                        .eq(MessageDO::getPeriod, period).eq(MessageDO::getCommandType, COMMAND_PERIOD_SUMMARY)));
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
                 new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, userId)
-                        .eq(OrderDO::getPeriod, period).ne(OrderDO::getStatus, "已退码")
-                        .orderByAsc(OrderDO::getCreateTime).orderByAsc(OrderDO::getId)));
-        if (orders.isEmpty()) {
-            return;
-        }
+                        .eq(OrderDO::getPeriod, period).eq(OrderDO::getStatus, "未开奖")
+                        .orderByAsc(OrderDO::getCreateTime).orderByAsc(OrderDO::getId))).stream()
+                .filter(this::isAcceptedForSummary).toList();
 
         List<String> groupLines = new ArrayList<>();
         Map<String, MemberSummary> memberSummaries = new LinkedHashMap<>();
@@ -65,22 +63,47 @@ public class LotteryPeriodSummaryService {
             }
         }
 
-        insertIfAbsent(userId, period, "网页群", null, "", "period-summary:g:" + period,
-                robotReplyTemplate.periodSummary(groupLines));
-        memberSummaries.forEach((memberId, summary) -> insertIfAbsent(userId, period, "网页私聊", memberId,
-                summary.memberName(), privateExternalId(period, memberId),
-                robotReplyTemplate.periodSummary(summary.lines())));
+        Map<String, SummaryMessage> expected = new LinkedHashMap<>();
+        if (!orders.isEmpty()) {
+            expected.put("period-summary:g:" + period, new SummaryMessage("网页群", null, "",
+                    robotReplyTemplate.periodSummary(groupLines)));
+            memberSummaries.forEach((memberId, summary) -> expected.put(privateExternalId(period, memberId),
+                    new SummaryMessage("网页私聊", memberId, summary.memberName(),
+                            robotReplyTemplate.periodSummary(summary.lines()))));
+        }
+        Map<String, MessageDO> existingByExternalId = new LinkedHashMap<>();
+        existingSummaries.forEach(message -> existingByExternalId.put(message.getExternalId(), message));
+        expected.forEach((externalId, summary) -> upsert(userId, period, externalId, summary,
+                existingByExternalId.remove(externalId)));
+
+        // A summary can be created while an external order is still pending. If that order is later rejected and
+        // refunded, preserve the chat row but clear its stale command list on the next reconciliation.
+        existingByExternalId.values().forEach(this::clearObsoleteSummary);
     }
 
-    private void insertIfAbsent(Long userId, String period, String channel, String memberId, String memberName,
-                                String externalId, String reply) {
-        if (exists(userId, externalId)) {
+    private boolean isAcceptedForSummary(OrderDO order) {
+        String deliveryMode = order.getDeliveryMode();
+        if (!"MARKET_ADAPTER".equals(deliveryMode) && !"MIXED_MARKET".equals(deliveryMode)) {
+            return true; // 本地单、历史本地单和本地吃码单在创建时即已受理
+        }
+        return "CONFIRMED".equals(order.getMarketStatus());
+    }
+
+    private void upsert(Long userId, String period, String externalId, SummaryMessage summary, MessageDO existing) {
+        if (existing != null) {
+            existing.setChannel(summary.channel());
+            existing.setMemberId(summary.memberId());
+            existing.setMember(summary.memberName());
+            existing.setReply(summary.reply());
+            existing.setStatus("已封盘");
+            existing.setProcessedAt(LocalDateTime.now());
+            messageMapper.updateById(existing);
             return;
         }
         MessageDO message = new MessageDO();
-        message.setChannel(channel);
-        message.setMemberId(memberId);
-        message.setMember(memberName);
+        message.setChannel(summary.channel());
+        message.setMemberId(summary.memberId());
+        message.setMember(summary.memberName());
         message.setPeriod(period);
         message.setContent("");
         message.setStatus("已封盘");
@@ -88,7 +111,7 @@ public class LotteryPeriodSummaryService {
         message.setError("");
         message.setCommandType(COMMAND_PERIOD_SUMMARY);
         message.setMessageType("PLAYER");
-        message.setReply(reply);
+        message.setReply(summary.reply());
         message.setProcessedAt(LocalDateTime.now());
         message.setUserId(userId);
         try {
@@ -98,11 +121,10 @@ public class LotteryPeriodSummaryService {
         }
     }
 
-    private boolean exists(Long userId, String externalId) {
-        Long existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectCount(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
-                        .eq(MessageDO::getExternalId, externalId)));
-        return existing != null && existing > 0;
+    private void clearObsoleteSummary(MessageDO message) {
+        message.setReply(robotReplyTemplate.periodSummary(List.of()));
+        message.setProcessedAt(LocalDateTime.now());
+        messageMapper.updateById(message);
     }
 
     private String privateExternalId(String period, String memberId) {
@@ -111,5 +133,8 @@ public class LotteryPeriodSummaryService {
     }
 
     private record MemberSummary(String memberName, List<String> lines) {
+    }
+
+    private record SummaryMessage(String channel, String memberId, String memberName, String reply) {
     }
 }

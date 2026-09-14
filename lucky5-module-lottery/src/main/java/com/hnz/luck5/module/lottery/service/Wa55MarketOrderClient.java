@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,6 +48,13 @@ public class Wa55MarketOrderClient {
     private static final Pattern XIAN_SELECTION = Pattern.compile("[0-9]{2,4}");
     private static final int MAX_BATCH_DETAIL_PAGES = 20;
 
+    /**
+     * A market login requires several round trips before a batch can be submitted.  Owner operations are already
+     * serialized by {@link LotteryMarketAccountLockService}, so a short-lived in-process cookie session is safe to
+     * reuse and avoids making every player wait for a fresh login handshake.
+     */
+    private final Map<String, Session> sessionCache = new ConcurrentHashMap<>();
+
     @Resource
     private ObjectMapper objectMapper;
 
@@ -63,7 +71,6 @@ public class Wa55MarketOrderClient {
         requests.forEach(request -> validateRequest(expectedPeriod, request));
         Preflight preflight = preflight(credentials, expectedPeriod);
         Session session = preflight.session();
-        MemberPrint member = preflight.member();
         List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
         List<AcceptedBatch> acceptedBatches = new ArrayList<>();
         List<BetGroup> groups = groupRequests(expectedPeriod, requests);
@@ -120,7 +127,9 @@ public class Wa55MarketOrderClient {
                 acceptedBatches.add(acceptedBatch(group));
             }
         }
-        return new SubmissionBatch(List.copyOf(confirmations), List.copyOf(acceptedBatches), member.balance());
+        // The room receipt uses the local ledger balance. Avoid a separate external balance HTTP round-trip here;
+        // a successful write already schedules the normal read-only balance refresh.
+        return new SubmissionBatch(List.copyOf(confirmations), List.copyOf(acceptedBatches), null);
     }
 
     /**
@@ -146,10 +155,10 @@ public class Wa55MarketOrderClient {
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
                 Session session = connect(credentials);
-                MemberPrint member = memberPrint(session);
-                assertExpectedOpenPeriod(session, expectedPeriod, member.period());
-                return new Preflight(session, member);
+                assertExpectedOpenPeriod(session, expectedPeriod);
+                return new Preflight(session);
             } catch (MarketSessionExpiredException ex) {
+                invalidateSession(credentials);
                 if (attempt > 0) throw ex;
                 firstFailure = ex;
             }
@@ -387,26 +396,31 @@ public class Wa55MarketOrderClient {
         }
     }
 
-    private void assertExpectedOpenPeriod(Session session, String expectedPeriod, String memberPeriod) {
+    private void assertExpectedOpenPeriod(Session session, String expectedPeriod) {
         JsonNode issue = getJson(session, "/drawno/GetCurrentPeriodStatus?_=" + System.currentTimeMillis());
         assertAuthenticated(issue);
         String issuePeriod = text(first(issue, "PERIOD_NO", "PeriodNo", "period_no", "period"));
         int openStatus = number(first(issue, "OPEN_STATUS", "OpenStatus", "open_status", "status"), 99);
-        if (!Objects.equals(expectedPeriod, memberPeriod) || !Objects.equals(expectedPeriod, issuePeriod)) {
+        if (!Objects.equals(expectedPeriod, issuePeriod)) {
             throw new MarketProtocolException("老板盘口当前期号与系统期号不一致，已停止提交", false, List.of());
         }
         if (openStatus != 0) throw new MarketProtocolException("老板盘口当前已经封盘，已停止提交", false, List.of());
     }
 
-    private MemberPrint memberPrint(Session session) {
-        JsonNode payload = getJson(session, "/Member/GetMemberPrint?_=" + System.currentTimeMillis());
-        assertAuthenticated(payload);
-        String period = text(first(payload, "period_no", "PeriodNo", "PERIOD_NO", "period"));
-        BigDecimal balance = decimal(first(payload, "credit_balance", "CreditBalance", "balance", "Balance"));
-        return new MemberPrint(period, balance);
+    private Session connect(Credentials credentials) {
+        String cacheKey = sessionCacheKey(credentials);
+        Session cached = sessionCache.get(cacheKey);
+        if (cached != null) return cached;
+        synchronized (sessionCache) {
+            cached = sessionCache.get(cacheKey);
+            if (cached != null) return cached;
+            Session created = connectFresh(credentials);
+            sessionCache.put(cacheKey, created);
+            return created;
+        }
     }
 
-    private Session connect(Credentials credentials) {
+    private Session connectFresh(Credentials credentials) {
         URI configured = normalizeBase(credentials.url());
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         HttpClient client = HttpClient.newBuilder().cookieHandler(cookies).followRedirects(HttpClient.Redirect.ALWAYS)
@@ -422,6 +436,14 @@ public class Wa55MarketOrderClient {
         text(client, request(base.resolve("/Member/SysNotice?_=" + System.currentTimeMillis())).GET().build());
         text(client, request(base.resolve("/App/Index?_=" + System.currentTimeMillis() + "#!kuaida")).GET().build());
         return new Session(client, base.toString());
+    }
+
+    private void invalidateSession(Credentials credentials) {
+        sessionCache.remove(sessionCacheKey(credentials));
+    }
+
+    private String sessionCacheKey(Credentials credentials) {
+        return String.valueOf(credentials.url()).trim() + '\u0000' + String.valueOf(credentials.account()).trim();
     }
 
     private JsonNode getJson(Session session, String path) {
@@ -631,9 +653,7 @@ public class Wa55MarketOrderClient {
     private record ExternalBetRow(String betId, String serialNo, int dictNoTypeId, String selection, BigDecimal amount,
                                   int betCount, BigDecimal odds) {}
 
-    private record MemberPrint(String period, BigDecimal balance) {}
-
-    private record Preflight(Session session, MemberPrint member) {}
+    private record Preflight(Session session) {}
 
     private record Session(HttpClient client, String baseUrl) {}
 
