@@ -142,7 +142,7 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
-    void reconnectsOnceWhenSessionExpiresBeforeAnyMarketWrite() {
+    void submitsDirectlyWithoutPreflightAccountRoundTrip() {
         memberPrintSessionExpiredOnce = true;
         batchResponseWithIds = true;
         Wa55MarketOrderClient client = client(true);
@@ -151,11 +151,27 @@ class Wa55MarketOrderClientTest {
                 request("route-1", "四定位", "5874", "1", "guid-1", false),
                 request("route-2", "四定位", "8888", "1", "guid-2", false)));
 
-        assertThat(loginCalls).hasValue(2);
-        assertThat(memberPrintCalls).hasValue(2);
+        assertThat(loginCalls).hasValue(1);
+        assertThat(memberPrintCalls).hasValue(0);
         assertThat(betCalls).hasValue(1);
         assertThat(detailCalls).hasValue(0);
         assertThat(result.confirmations()).hasSize(2);
+    }
+
+    @Test
+    void reusesBalanceRefreshSessionForTheNextBatchBet() {
+        batchResponseWithIds = true;
+        Wa55MarketOrderClient client = client(true);
+
+        Wa55MarketOrderClient.AccountSnapshot balance = client.readBalance(credentials());
+        client.submit(credentials(), issuePeriod, List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false)));
+
+        assertThat(balance.balance()).isEqualByComparingTo("9999.50");
+        assertThat(loginCalls).hasValue(1);
+        assertThat(memberPrintCalls).hasValue(1);
+        assertThat(betCalls).hasValue(1);
     }
 
     @Test
@@ -267,15 +283,13 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
-    void stopsBeforeBetWhenOwnerMarketPeriodDiffersFromSharedIssue() {
+    void submitsDirectlyWhenSharedIssueWasAlreadyValidatedLocally() {
         memberPeriod = "20260811002";
         Wa55MarketOrderClient client = client(true);
 
-        assertThatThrownBy(() -> client.submit(credentials(), issuePeriod,
-                List.of(request("route-1", "X65X", "10", "guid-1", false))))
-                .isInstanceOf(Wa55MarketOrderClient.MarketProtocolException.class)
-                .hasMessageContaining("期号与系统期号不一致");
-        assertThat(betCalls).hasValue(0);
+        client.submit(credentials(), issuePeriod,
+                List.of(request("route-1", "X65X", "10", "guid-1", false)));
+        assertThat(betCalls).hasValue(1);
     }
 
     @Test

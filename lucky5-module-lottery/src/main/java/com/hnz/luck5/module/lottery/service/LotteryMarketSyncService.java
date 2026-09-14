@@ -63,6 +63,7 @@ public class LotteryMarketSyncService {
     @Resource private ObjectMapper objectMapper;
     @Resource private MarketCredentialService credentialService;
     @Resource private Wa55MarketClient marketClient;
+    @Resource private Wa55MarketOrderClient marketOrderClient;
     @Lazy @Resource private LotteryMarketBalanceRefreshService balanceRefreshService;
     @Resource private LotteryDrawVerificationService drawVerificationService;
     @Resource private LotteryIssueFreshnessPolicy issueFreshnessPolicy;
@@ -290,9 +291,9 @@ public class LotteryMarketSyncService {
                     new LambdaQueryWrapper<LotteryConfigDO>().eq(LotteryConfigDO::getUserId, userId).last("LIMIT 1")));
             if (!configured(config)) return;
             try {
-                Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
-                updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
-                        snapshot.account().balance(), "", true);
+                Wa55MarketOrderClient.AccountSnapshot snapshot = readOwnerBalance(config);
+                updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.displayAccount(),
+                        snapshot.balance(), "", true);
             } catch (RuntimeException ex) {
                 // Record the attempt time as well: a bad account retries on the normal 30 second cadence instead
                 // of launching a new full login every five seconds.
@@ -398,9 +399,9 @@ public class LotteryMarketSyncService {
         }
         updateConnection(userId, "连接中", null, null, null, "", false);
         try {
-            Wa55MarketClient.Snapshot snapshot = readSnapshot(config, false);
-            updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.account().displayAccount(),
-                    snapshot.account().balance(), "", true);
+            Wa55MarketOrderClient.AccountSnapshot snapshot = readOwnerBalance(config);
+            updateConnection(userId, "已连接", snapshot.lineUrl(), snapshot.displayAccount(),
+                    snapshot.balance(), "", true);
         } catch (RuntimeException ex) {
             updateConnection(userId, "连接失败", null, null, BigDecimal.ZERO, rootMessage(ex), false);
             throw ex;
@@ -689,6 +690,12 @@ public class LotteryMarketSyncService {
                 LOGGER.error("期号 {} 用户 {} 结算完成，但下一期答题开放失败", issue.getPeriod(), userId, ex);
             }
         }
+    }
+
+    private Wa55MarketOrderClient.AccountSnapshot readOwnerBalance(LotteryConfigDO config) {
+        String password = credentialService.decrypt(config.getMarketPasswordEncrypted());
+        return marketOrderClient.readBalance(new Wa55MarketOrderClient.Credentials(
+                config.getUpstreamUrl(), config.getUpstreamAccount(), password));
     }
 
     /**

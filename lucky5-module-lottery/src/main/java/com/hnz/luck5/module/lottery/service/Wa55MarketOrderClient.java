@@ -69,8 +69,9 @@ public class Wa55MarketOrderClient {
         requireEnabled();
         if (requests == null || requests.isEmpty()) return new SubmissionBatch(List.of(), List.of(), null);
         requests.forEach(request -> validateRequest(expectedPeriod, request));
-        Preflight preflight = preflight(credentials, expectedPeriod);
-        Session session = preflight.session();
+        // The local synchronized issue and absolute close time guard a normal write. Reuse the owner session and
+        // submit directly instead of adding a login/current-period round-trip to every player order.
+        Session session = connect(credentials);
         List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
         List<AcceptedBatch> acceptedBatches = new ArrayList<>();
         List<BetGroup> groups = groupRequests(expectedPeriod, requests);
@@ -130,6 +131,16 @@ public class Wa55MarketOrderClient {
         // The room receipt uses the local ledger balance. Avoid a separate external balance HTTP round-trip here;
         // a successful write already schedules the normal read-only balance refresh.
         return new SubmissionBatch(List.copyOf(confirmations), List.copyOf(acceptedBatches), null);
+    }
+
+    /** Reads balance with the same owner cookie session used by BatchBet. */
+    public AccountSnapshot readBalance(Credentials credentials) {
+        try {
+            return account(connect(credentials));
+        } catch (MarketSessionExpiredException ex) {
+            invalidateSession(credentials);
+            return account(connect(credentials));
+        }
     }
 
     /**
@@ -442,6 +453,18 @@ public class Wa55MarketOrderClient {
         sessionCache.remove(sessionCacheKey(credentials));
     }
 
+    private AccountSnapshot account(Session session) {
+        JsonNode raw = getJson(session, "/Member/GetMemberPrint?_=" + System.currentTimeMillis());
+        assertAuthenticated(raw);
+        JsonNode data = first(raw, "Data", "data");
+        BigDecimal balance = decimal(first(data, "credit_balance", "CreditBalance", "balance", "Balance",
+                "member_credit"));
+        if (balance == null) throw new MarketProtocolException("盘口余额读取失败", true, List.of());
+        String account = text(first(data, "Account", "account", "MemberAccount", "member_account", "UserName",
+                "username"));
+        return new AccountSnapshot(session.baseUrl(), account, money(balance));
+    }
+
     private String sessionCacheKey(Credentials credentials) {
         return String.valueOf(credentials.url()).trim() + '\u0000' + String.valueOf(credentials.account()).trim();
     }
@@ -634,6 +657,8 @@ public class Wa55MarketOrderClient {
     }
 
     public record VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches) {}
+
+    public record AccountSnapshot(String lineUrl, String displayAccount, BigDecimal balance) {}
 
     public record CancelRequest(String marketBetId, int betCount) {}
 
