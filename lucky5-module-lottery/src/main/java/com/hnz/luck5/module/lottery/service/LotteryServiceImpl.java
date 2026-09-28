@@ -2859,10 +2859,11 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
                         .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20")));
         List<MessageDO> messages = roomMessages(member, roomMode);
-        ensureRoomDrawImages(member.getUserId(), messages);
         List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                 .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
                 .stream().filter(item -> drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
+        messages = withRecentRoomDrawMessages(member.getUserId(), messages, draws);
+        ensureRoomDrawImages(member.getUserId(), messages);
         Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(member.getUserId(), draws);
         String latestDrawPeriod = draws.isEmpty() ? "" : value(draws.get(0).getPeriod(), "");
         LambdaQueryWrapper<IssueDO> pendingIssueQuery = new LambdaQueryWrapper<IssueDO>()
@@ -3050,6 +3051,31 @@ public class LotteryServiceImpl implements LotteryService {
                         .lt(beforeId != null, MessageDO::getId, beforeId)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
         return mergeMessages(ownMessages, sharedMessages, 100);
+    }
+
+    private List<MessageDO> withRecentRoomDrawMessages(Long userId, List<MessageDO> messages, List<DrawDO> draws) {
+        Set<String> presentPeriods = messages.stream()
+                .filter(item -> COMMAND_DRAW_RESULT.equals(item.getCommandType()))
+                .map(MessageDO::getPeriod).collect(Collectors.toSet());
+        List<String> missingPeriods = draws.stream().filter(item -> item.getSettledAt() != null)
+                .limit(20).map(DrawDO::getPeriod).distinct()
+                .filter(period -> !presentPeriods.contains(period)).toList();
+        if (missingPeriods.isEmpty()) return messages;
+        // The normal chat window can be full of bets. Keep every recent completed draw's saved message,
+        // without fabricating a second image or adding images to the high-frequency draw-state response.
+        List<MessageDO> drawMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                recentRoomDrawMessageQuery(userId, missingPeriods)));
+        return mergeMessages(messages, drawMessages, messages.size() + drawMessages.size());
+    }
+
+    private LambdaQueryWrapper<MessageDO> recentRoomDrawMessageQuery(Long userId, List<String> periods) {
+        if (userId == null || periods == null || periods.isEmpty() || periods.size() > 20) {
+            throw new IllegalArgumentException("Expected an owner and between one and twenty draw periods");
+        }
+        return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                .eq(MessageDO::getCommandType, COMMAND_DRAW_RESULT)
+                .in(MessageDO::getExternalId, periods.stream().map(period -> "draw-result:" + period).toList())
+                .orderByDesc(MessageDO::getCreateTime).last("LIMIT 20");
     }
 
     private String roomIssueStatus(IssueDO issue, LocalDateTime now) {

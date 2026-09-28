@@ -30,12 +30,6 @@ type ChatType = 'text' | 'order' | 'amount' | 'draw'
 
 const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
 const SCRATCH_PERIOD_SECONDS = 300
-const DRAW_NUMBER_COLOR_CLASSES: Record<string, string> = {
-  '1': 'is-purple',
-  '6': 'is-pink',
-  '8': 'is-blue',
-  '9': 'is-green'
-}
 
 interface ChatItem {
   id: string
@@ -107,7 +101,6 @@ const scratchLauncherStyle = computed(() =>
 )
 const uniqueId = () =>
   globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
-const drawNumberClass = (number: string) => DRAW_NUMBER_COLOR_CLASSES[number] || 'is-gray'
 
 const credential = computed<RoomCredential>(() => {
   const queryOpenId = typeof route.query.openId === 'string' ? route.query.openId : ''
@@ -375,42 +368,13 @@ const chatMessages = computed<ChatItem[]>(() => {
     })
   }
 
-  const drawSequenceAnchors = new Map<string, string>()
-  const persistedDrawPeriods = new Set<string>()
-  for (const message of visibleRoomMessages.value) {
-    if (message.commandType === 'DRAW_RESULT') persistedDrawPeriods.add(message.period)
-    if (!message.reply || !['SETTLEMENT', 'PAYOUT_SUMMARY'].includes(message.commandType)) continue
-    const replyDelay = message.commandType === 'PAYOUT_SUMMARY' ? 3 : 2
-    const displayedAt = dayjs(message.createdAt).add(replyDelay, 'millisecond')
-    const currentAnchor = dayjs(drawSequenceAnchors.get(message.period))
-    if (!currentAnchor.isValid() || displayedAt.isAfter(currentAnchor)) {
-      drawSequenceAnchors.set(message.period, displayedAt.toISOString())
-    }
-  }
-
-  for (const draw of session.value.draws.filter(
-    (item) => Boolean(item.settledAt) && !persistedDrawPeriods.has(item.period)
-  )) {
-    const sequenceAnchor = drawSequenceAnchors.get(draw.period)
-    messages.push({
-      id: `draw-${draw.period}`,
-      kind: 'robot',
-      type: 'draw',
-      content: roomReplyTemplates.draw(draw.period, draw.numbers, draw.dragonTiger),
-      createdAt: sequenceAnchor
-        ? dayjs(sequenceAnchor).add(1, 'millisecond').toISOString()
-        : draw.settledAt,
-      displayTimeAt: sequenceAnchor
-        ? dayjs(sequenceAnchor).add(1, 'millisecond').toISOString()
-        : draw.settledAt,
-      draw,
-      sequenceRank: 50
-    })
-  }
-
+  const displayedDrawPeriods = new Set<string>()
   for (const message of visibleRoomMessages.value) {
     const persistedDraw = persistedDrawFromMessage(message)
     if (persistedDraw) {
+      // Only the saved image is a draw bubble. A newer lightweight number snapshot cannot invent one.
+      if (!message.drawImage || displayedDrawPeriods.has(message.period)) continue
+      displayedDrawPeriods.add(message.period)
       messages.push({
         id: `draw-message-${message.id}`,
         kind: 'robot',
@@ -430,6 +394,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       })
       continue
     }
+    if (message.commandType === 'DRAW_RESULT') continue
     const order = message.orderId ? orderById.value[message.orderId] : undefined
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
@@ -580,16 +545,13 @@ let betReplyRequestSequence = 0
 let drawRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 let sessionRequestSequence = 0
+let requestedDrawMessagePeriod = ''
 let drawStateRequestSequence = 0
 let lastDrawStateAppliedAt = 0
 let chatMessageBaselineReady = false
 const knownChatMessageVersions = new Set<string>()
 
 const money = (value: number) => Number(value || 0).toFixed(2)
-const drawDisplayTime = (draw: RoomDraw) => {
-  const parsed = dayjs(draw.drawTime || draw.settledAt)
-  return parsed.isValid() ? parsed.format('HH:mm') : '--:--'
-}
 const applyAuthoritativeIssueClock = (issue: RoomSession['issue'], responseReceivedAt: number) => {
   const serverTime = dayjs(issue.serverTime)
   if (serverTime.isValid()) {
@@ -840,6 +802,7 @@ const loadDrawState = async () => {
     collectUnreadMessages(wasFollowing)
     lastDrawStateAppliedAt = responseReceivedAt
     applyAuthoritativeIssueClock(nextState.issue, responseReceivedAt)
+    refreshCompletedDrawMessage(nextState.draws)
     if (
       previousDrawPeriod &&
       nextDrawPeriod &&
@@ -854,6 +817,21 @@ const loadDrawState = async () => {
     if (requestSequence !== drawStateRequestSequence) return
     error.value = reason?.message || '开奖状态刷新失败'
   }
+}
+
+const refreshCompletedDrawMessage = (draws: RoomDraw[]) => {
+  const latestCompleted = draws.find((draw) => Boolean(draw.settledAt))
+  if (!latestCompleted || latestCompleted.period === requestedDrawMessagePeriod) return
+  const alreadyVisible = visibleRoomMessages.value.some(
+    (message) =>
+      message.commandType === 'DRAW_RESULT' &&
+      message.period === latestCompleted.period &&
+      Boolean(message.drawImage)
+  )
+  if (alreadyVisible) return
+  requestedDrawMessagePeriod = latestCompleted.period
+  // One refresh per completed period, not one heavy request per 250ms draw-state tick.
+  void loadSession(true)
 }
 
 const scheduleSessionRefresh = () => {
@@ -1222,6 +1200,7 @@ watch(
     restorePlayerSentAtOverrides()
     resetChatMessageTracking()
     trackedBetMessageIds.value = []
+    requestedDrawMessagePeriod = ''
     betReplyRequestSequence++
     if (betReplyTimer) window.clearTimeout(betReplyTimer)
     betReplyFastPollUntilMs.value = 0
@@ -1334,34 +1313,10 @@ onBeforeUnmount(() => {
               <div class="chat-bubble">
                 <template v-if="message.type === 'draw' && message.draw">
                   <img
-                    v-if="message.drawImage"
                     class="draw-history-image"
                     :src="message.drawImage"
                     :alt="`第 ${message.draw.period} 期开奖图`"
                   />
-                  <div v-else :class="['lottery-table', { 'is-bold': session.room.features.imageBold }]">
-                    <div class="lottery-table__head">
-                      <strong>期数</strong><strong>时间</strong><strong>成功</strong>
-                    </div>
-                    <div
-                      v-for="draw in session.draws.filter((item) => item.period <= message.draw.period).slice(0, 15)"
-                      :key="`${message.id}-history-${draw.period}`"
-                      class="lottery-table__history-row"
-                    >
-                      <span>{{ draw.period.slice(-3) }}</span>
-                      <span>{{ drawDisplayTime(draw) }}</span>
-                      <span
-                        class="lottery-table__history-numbers"
-                        :aria-label="draw.numbers.join(' ')"
-                      >
-                        <i
-                          v-for="(number, index) in draw.numbers"
-                          :key="`${draw.period}-history-${index}`"
-                          :class="drawNumberClass(number)"
-                        >{{ number }}</i>
-                      </span>
-                    </div>
-                  </div>
                 </template>
 
                 <template v-else-if="message.type === 'order' && message.order">
@@ -2511,68 +2466,6 @@ onBeforeUnmount(() => {
   margin: 5px auto;
 }
 
-.lottery-table {
-  width: min(245px, calc(100vw - 118px));
-  overflow: hidden;
-  color: #777;
-  background: #fff;
-  border: 1px solid #d5d5d5;
-  border-radius: 3px;
-}
-
-.lottery-table__head {
-  display: grid;
-  grid-template-columns: 42px 48px minmax(108px, 1fr);
-  padding: 3px 6px;
-  color: #fff;
-  background: #2564d8;
-  font-size: 12px;
-  line-height: 14px;
-}
-
-.lottery-table__history-row {
-  display: grid;
-  grid-template-columns: 42px 48px minmax(108px, 1fr);
-  padding: 2px 6px;
-  font-size: 12px;
-  line-height: 15px;
-}
-
-.lottery-table__history-row:nth-child(even) {
-  background: #ededed;
-}
-
-.lottery-table__history-numbers {
-  display: grid;
-  align-items: center;
-  justify-content: start;
-  grid-template-columns: repeat(5, 14px);
-  gap: 2px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.lottery-table__history-numbers i {
-  color: #aaa;
-  font-style: normal;
-  text-align: center;
-}
-
-.lottery-table__history-numbers i.is-purple {
-  color: #8d3299;
-}
-
-.lottery-table__history-numbers i.is-pink {
-  color: #ff4f82;
-}
-
-.lottery-table__history-numbers i.is-blue {
-  color: #409eff;
-}
-
-.lottery-table__history-numbers i.is-green {
-  color: #10c957;
-}
 
 
 @media (width <= 700px) {
