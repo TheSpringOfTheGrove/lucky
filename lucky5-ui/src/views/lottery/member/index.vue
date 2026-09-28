@@ -47,7 +47,8 @@ const memberForm = reactive({
   webOnly: false,
   blueWhalePassword: ''
 })
-const transferForm = reactive({ id: '', type: '上分' as '上分' | '下分', amount: 0 })
+const transferForm = reactive({ id: '', type: '上分' as '上分' | '下分', amount: '' })
+const transferSubmitting = ref(false)
 
 const pullers = computed(() => [
   ...new Set(store.members.map((item) => item.partner).filter((item) => item && item !== '无'))
@@ -142,8 +143,24 @@ const openMember = (row?: any) => {
 }
 
 const openTransfer = (row: any, type: '上分' | '下分') => {
-  Object.assign(transferForm, { id: row.id, type, amount: 0 })
+  if (transferSubmitting.value) return
+  Object.assign(transferForm, { id: row.id, type, amount: '' })
   transferVisible.value = true
+}
+
+const captureTransferAmount = (event: Event) => {
+  // Capture the visible text even while a mobile IME defers ElInput's v-model update.
+  const input = event.target
+  if (input instanceof HTMLInputElement) transferForm.amount = input.value
+}
+
+const parseTransferAmount = (value: string): number | undefined => {
+  const text = value.trim()
+  if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return
+  const [integer, fraction = ''] = text.split('.')
+  const cents = Number(`${integer || '0'}${fraction.padEnd(2, '0')}`)
+  if (!Number.isSafeInteger(cents) || cents <= 0) return
+  return cents / 100
 }
 
 const toggleEat = (row: any) =>
@@ -159,8 +176,19 @@ const submitMember = async () => {
 }
 
 const submitTransfer = async () => {
-  const saved = await store.transferMember(transferForm.id, transferForm.amount, transferForm.type)
-  if (saved) transferVisible.value = false
+  if (transferSubmitting.value || store.saving) return
+  const amount = parseTransferAmount(transferForm.amount)
+  if (amount === undefined) {
+    ElMessage.warning('请输入大于 0、最多两位小数的分数')
+    return
+  }
+  transferSubmitting.value = true
+  try {
+    const saved = await store.transferMember(transferForm.id, amount, transferForm.type)
+    if (saved) transferVisible.value = false
+  } finally {
+    transferSubmitting.value = false
+  }
 }
 
 const clearAllFlows = async () => {
@@ -512,14 +540,27 @@ onBeforeUnmount(stopMemberRefresh)
       width="420px"
       class="lucky-dialog"
     >
-      <el-form :model="transferForm" label-width="80px">
-        <el-form-item label="分数"
-          ><el-input-number v-model="transferForm.amount" :min="0.01"
-        /></el-form-item>
+      <el-form :model="transferForm" label-width="80px" @submit.prevent="submitTransfer">
+        <el-form-item label="分数">
+          <div class="w-full" @input.capture="captureTransferAmount">
+            <el-input
+              v-model="transferForm.amount"
+              inputmode="decimal"
+              autocomplete="off"
+              placeholder="分数"
+              :disabled="transferSubmitting || store.saving"
+            />
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="transferVisible = false">取消</el-button>
-        <el-button type="primary" :loading="store.saving" @click="submitTransfer">确认</el-button>
+        <el-button
+          type="primary"
+          :loading="transferSubmitting || store.saving"
+          @click="submitTransfer"
+          >确认</el-button
+        >
       </template>
     </el-dialog>
 
