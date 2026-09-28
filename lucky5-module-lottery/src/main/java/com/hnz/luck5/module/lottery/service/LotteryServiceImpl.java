@@ -1551,7 +1551,7 @@ public class LotteryServiceImpl implements LotteryService {
             transfer.setRemark("自动托虚拟积分不足，系统自动审核");
             String memberKey = UUID.nameUUIDFromBytes(memberId.getBytes(StandardCharsets.UTF_8))
                     .toString().replace("-", "");
-            return approveAutoProxyTransfer(member, transfer, period, "网页群",
+            return approveAutoProxyTransfer(member, transfer, period, "系统",
                     "auto-proxy-topup:" + memberKey + ":" + period, "自动托:" + member.getName());
         });
     }
@@ -2856,8 +2856,7 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, Integer> itemCounts = betItemCountsByOrder(member.getUserId(), orders);
         Map<String, IssueDO> orderIssuesByPeriod = issuesForOrders(member.getUserId(), orders);
         List<AmountRecordDO> amounts = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
-                new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
-                        .eq(AmountRecordDO::getMemberId, member.getId()).orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20")));
+                roomAmountRecordQuery(member)));
         List<MessageDO> messages = roomMessages(member, roomMode);
         List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                 .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
@@ -3015,19 +3014,39 @@ public class LotteryServiceImpl implements LotteryService {
         return roomMessages(member, roomMode, null);
     }
 
+    private LambdaQueryWrapper<AmountRecordDO> roomAmountRecordQuery(MemberDO member) {
+        // Classify from the immutable record source, not the member's current type. Keep the audit and ledger.
+        return new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
+                .eq(AmountRecordDO::getMemberId, member.getId())
+                .and(query -> query.isNull(AmountRecordDO::getRecordSource)
+                        .or().ne(AmountRecordDO::getRecordSource, TYPE_AUTO_PROXY))
+                .and(query -> query.isNull(AmountRecordDO::getRemark)
+                        .or(nested -> nested.notLike(AmountRecordDO::getRemark, "自动托虚拟积分不足")
+                                .notLike(AmountRecordDO::getRemark, "自动托上下分自动审核")))
+                .orderByDesc(AmountRecordDO::getCreateTime).last("LIMIT 20");
+    }
+
+    private LambdaQueryWrapper<MessageDO> roomMemberMessageQuery(MemberDO member, String channel) {
+        return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                .eq(MessageDO::getChannel, channel)
+                .and(query -> query.isNull(MessageDO::getMessageType)
+                        .or().ne(MessageDO::getMessageType, TYPE_AUTO_PROXY)
+                        .or().notIn(MessageDO::getCommandType, "DEPOSIT_REQUEST", "WITHDRAW_REQUEST"))
+                .and(query -> query.isNull(MessageDO::getExternalId)
+                        .or().notLikeRight(MessageDO::getExternalId, "auto-proxy-topup:"));
+    }
+
     private List<MessageDO> roomMessages(MemberDO member, String roomMode, Long beforeId) {
         String channel = ROOM_MODE_PRIVATE.equals(roomMode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
         // Keep the legacy member-name fallback, but run it separately. Combining it with the stable member_id in
         // one OR predicate prevents MySQL from using the room-member time index and made polling wait seconds.
         List<MessageDO> memberMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                        .eq(MessageDO::getMemberId, member.getId()).eq(MessageDO::getChannel, channel)
+                roomMemberMessageQuery(member, channel).eq(MessageDO::getMemberId, member.getId())
                         .lt(beforeId != null, MessageDO::getId, beforeId)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 80")));
         List<MessageDO> legacyMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                        .isNull(MessageDO::getMemberId).eq(MessageDO::getMember, member.getName())
-                        .eq(MessageDO::getChannel, channel)
+                roomMemberMessageQuery(member, channel).isNull(MessageDO::getMemberId)
+                        .eq(MessageDO::getMember, member.getName())
                         .lt(beforeId != null, MessageDO::getId, beforeId)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 80")));
         List<MessageDO> ownMessages = mergeMessages(memberMessages, legacyMessages, 80);

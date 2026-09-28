@@ -24,7 +24,7 @@ function fixture() {
     visibleRoomMessages: { value: [] }, localMessages: { value: [] }, sessionStartedAt: { value: '2026-09-28T19:50:00' },
     playerSentAtOverrides: { value: {} }, orderById: { value: {} }, requestedDrawMessagePeriod: '',
     roomReplyTemplates: { welcome: () => 'welcome', draw: () => 'formal draw', issueTransition: status => status },
-    formatRobotReply: reply => reply,
+    formatRobotReply: reply => reply, money: value => Number(value || 0).toFixed(2),
     resolveDragonTiger: () => '虎', loadSession: async () => { refreshes++ }
   }
   const script = Object.entries(functions).map(([name, value]) => `globalThis.${name} = ${value}`).join('\n')
@@ -78,4 +78,26 @@ test('already saved messages need no extra session refresh and no HTML fallback 
   assert.doesNotMatch(source, /lottery-table|drawSequenceAnchors|drawNumberClass/)
   assert.match(source, /:src="message\.drawImage"/)
   assert.match(source, /refreshCompletedDrawMessage\(nextState\.draws\)/)
+})
+
+test('cached automatic funding never renders a fake player request or robot approval', () => {
+  const { context } = fixture()
+  const createdAt = '2026-09-27T22:15:00'
+  context.visibleRoomMessages.value = [{ id: 91, messageType: 'AUTO_PROXY', commandType: 'DEPOSIT_REQUEST',
+    own: true, content: '上1000', reply: '自动托虚拟积分不足，系统自动审核', createdAt }]
+  context.session.value.amountRecords = [
+    { id: 'AUTO-1', recordSource: 'AUTO_PROXY', type: '上分', amount: 1000, remark: '', createdAt },
+    { id: 'LEGACY-1', type: '上分', amount: 1000, remark: '自动托虚拟积分不足，系统自动审核', createdAt }
+  ]
+  assert.equal(context.chatMessages.value.some(message => /91|AUTO-1|LEGACY-1/.test(message.id)), false)
+  assert.equal(context.chatMessages.value.some(message => /自动托|上1000/.test(message.content)), false)
+})
+
+test('real player funding is still visible with the standard approval', () => {
+  const { context } = fixture()
+  const createdAt = '2026-09-27T22:15:00'
+  context.visibleRoomMessages.value = [{ id: 92, messageType: 'PLAYER', commandType: 'DEPOSIT_REQUEST',
+    own: true, content: '上1000', reply: '@玩家\n上分已通过', status: '已通过', createdAt }]
+  assert.ok(context.chatMessages.value.some(message => message.content === '上1000'))
+  assert.ok(context.chatMessages.value.some(message => message.content === '@玩家\n上分已通过'))
 })

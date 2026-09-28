@@ -370,6 +370,10 @@ const chatMessages = computed<ChatItem[]>(() => {
 
   const displayedDrawPeriods = new Set<string>()
   for (const message of visibleRoomMessages.value) {
+    if (
+      message.messageType === 'AUTO_PROXY' &&
+      ['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType)
+    ) continue
     const persistedDraw = persistedDrawFromMessage(message)
     if (persistedDraw) {
       // Only the saved image is a draw bubble. A newer lightweight number snapshot cannot invent one.
@@ -465,6 +469,11 @@ const chatMessages = computed<ChatItem[]>(() => {
   }
 
   for (const amountRecord of session.value.amountRecords) {
+    // Also suppress cached legacy automatic funding records while the new server session arrives.
+    if (
+      amountRecord.recordSource === 'AUTO_PROXY' ||
+      /自动托虚拟积分不足|自动托上下分自动审核/.test(amountRecord.remark || '')
+    ) continue
     const isMemberRequest = amountRecord.remark !== '后台手动操作'
     const commandType = amountRecord.type === '上分' ? 'DEPOSIT_REQUEST' : 'WITHDRAW_REQUEST'
     const relatedMessage = session.value.messages.find(
