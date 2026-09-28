@@ -60,3 +60,8 @@ application-my.yaml
 # Local deployment bundles (keep reusable scripts and Dockerfiles tracked)
 /.codex-deploy/*.tar
 /.codex-deploy/*.tar.gz
+/lucky5-*.tar
+/lucky5-*.tar.gz
+
+# Captured reference pages are local analysis artifacts, not application source.
+/.reference-iminfo.html

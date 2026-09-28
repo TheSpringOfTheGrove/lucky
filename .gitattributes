@@ -1,1 +1,2 @@
 deploy/production/*.sh text eol=lf
+.codex-deploy/*.sh text eol=lf
