@@ -3,6 +3,8 @@
 set -eu
 release=${1:?release commit is required}
 payload=${2:?absolute payload directory is required}
+maintenance=${3:-}
+case "$maintenance" in ''|--clear-runtime-history) ;; *) echo 'Invalid maintenance option' >&2; exit 2;; esac
 case "$release" in ''|*[!0-9a-f]*) echo 'Invalid release commit' >&2; exit 2;; esac
 case "$payload" in /tmp/lucky5-release-*) ;; *) echo 'Invalid payload directory' >&2; exit 2;; esac
 cd /opt/lucky5
@@ -61,6 +63,19 @@ on_exit() {
 trap 'on_exit $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' HUP TERM
+
+if [ "$maintenance" = --clear-runtime-history ]; then
+  test ! -e "$payload/runtime-history-cleared"
+  changed=1
+  docker compose stop -t 60 server
+  # Snapshot again with all application writers stopped, immediately before maintenance.
+  docker compose exec -T mysql sh -lc 'exec mysqldump --single-transaction --quick --hex-blob --no-tablespaces --set-gtid-purged=OFF -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' > "$backup_dir/quiesced-database.sql"
+  test -s "$backup_dir/quiesced-database.sql"
+  gzip "$backup_dir/quiesced-database.sql"
+  gzip -t "$backup_dir/quiesced-database.sql.gz"
+  sh "$payload/clear-runtime-history.sh" ALL_TENANTS_KEEP_MEMBERS_BALANCES_CONFIG_AND_LEDGER
+  touch "$payload/runtime-history-cleared"
+fi
 
 # No full baseline replay: preserve all existing owner and market configuration.
 for patch in 20260928-room-admin-upgrade.sql 20260928-admin-user-expiration.sql 20260928-admin-menu-visibility.sql; do
