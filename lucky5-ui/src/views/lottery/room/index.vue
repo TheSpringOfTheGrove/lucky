@@ -1913,11 +1913,6 @@ onBeforeUnmount(() => {
   font-size: 0;
 }
 
-.reference-receipt {
-  white-space: pre-wrap;
-  line-height: 18px;
-}
-
 .command-panel {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2074,6 +2069,12 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 
+.chat-bubble pre.reference-receipt {
+  margin-bottom: 0;
+  font-family: 'Times New Roman', SimSun, '宋体', serif;
+  font-weight: 400;
+}
+
 .chat-bubble pre.is-copyable {
   cursor: pointer;
 }
@@ -2088,11 +2089,15 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.cancel-link {
+.cancel-link,
+.cancel-status {
   display: block;
-  margin: 3px 6px 6px;
+  margin: 18px 6px 6px;
+  font: 400 16px/18px 'Times New Roman', SimSun, '宋体', serif;
+}
+
+.cancel-link {
   padding: 0;
-  font: inherit;
   color: #ffa500;
   cursor: pointer;
   background: transparent;
@@ -2172,8 +2177,6 @@ onBeforeUnmount(() => {
 }
 
 .cancel-status {
-  display: block;
-  margin: 3px 6px 6px;
   color: #888;
 }
 

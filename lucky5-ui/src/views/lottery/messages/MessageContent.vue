@@ -17,7 +17,7 @@ const image = computed(() =>
 </script>
 
 <template>
-  <div class="message-content">
+  <div class="message-content" :class="{ 'message-content--receipt': action }">
     <div class="message-content__text">{{ text }}</div>
     <span v-if="action === 'cancelable'" class="message-content__cancel">点击退码</span>
     <span v-else-if="action === 'canceled'" class="message-content__canceled">已退码</span>
@@ -41,6 +41,11 @@ const image = computed(() =>
 
 .message-content__text {
   white-space: pre-wrap;
+}
+
+.message-content--receipt {
+  font-family: 'Times New Roman', SimSun, '宋体', serif;
+  font-weight: 400;
 }
 
 .message-content__cancel,
