@@ -28,6 +28,18 @@ class LotteryRobotReplyTemplateTest {
     }
 
     @Test
+    void acceptedBatchUsesTheSameReceiptWithoutAnExtraStateLabel() {
+        String expected = template.betReceipt("玩家", "20260928236", "1234各1", 1, 1,
+                BigDecimal.ONE, new BigDecimal("99"));
+        assertThat(template.betReceiptAcceptedWithoutDetails("玩家", "20260928236", "1234各1", 1, 1,
+                BigDecimal.ONE, new BigDecimal("99"))).isEqualTo(expected).doesNotContain("已受理");
+        assertThat(template.normalizeAcceptedReceipt(expected + "\n已受理")).isEqualTo(expected);
+        assertThat(template.normalizeAcceptedReceipt(expected + "\n已受理\n已退码"))
+                .isEqualTo(expected + "\n已退码");
+        assertThat(template.normalizeAcceptedReceipt("玩家说已受理")).isEqualTo("玩家说已受理");
+    }
+
+    @Test
     void shouldShowAreaAndCancelActionInPublicGroupReceipt() {
         String privateReceipt = template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360"), new BigDecimal("26764.45"));

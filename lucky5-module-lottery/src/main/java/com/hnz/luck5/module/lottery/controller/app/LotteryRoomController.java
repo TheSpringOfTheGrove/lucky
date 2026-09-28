@@ -12,6 +12,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.List;
 
 import static com.hnz.luck5.framework.common.pojo.CommonResult.success;
 
@@ -39,6 +40,11 @@ public class LotteryRoomController {
     @GetMapping("/draw-state")
     public CommonResult<Map<String, Object>> getDrawState(@Valid LotteryRoomReqVO.Credential reqVO) {
         return success(lotteryService.getRoomDrawState(reqVO));
+    }
+
+    @GetMapping("/messages/bet-replies")
+    public CommonResult<List<Map<String, Object>>> getBetReplies(@Valid LotteryRoomReqVO.BetReplies reqVO) {
+        return success(lotteryService.getRoomBetReplies(reqVO));
     }
 
     @GetMapping("/messages/history")

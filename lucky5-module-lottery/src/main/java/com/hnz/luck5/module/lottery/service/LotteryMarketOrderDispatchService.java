@@ -39,14 +39,23 @@ public class LotteryMarketOrderDispatchService {
     }
 
     private void submitLocked(Long userId, String orderId) {
+        long claimStartedAt = System.nanoTime();
         LotteryMarketOrderStateService.DispatchContext context = stateService.claimSubmit(userId, orderId);
         if (context == null || context.requests().isEmpty()) return;
+        long claimMs = (System.nanoTime() - claimStartedAt) / 1_000_000;
         long startedAt = System.nanoTime();
+        long clientMs = 0;
+        long confirmationStartedAt = 0;
         LOGGER.info("盘口提交开始 user={} order={} period={} routes={}", userId, orderId, context.period(),
                 context.requests().size());
         try {
-            Wa55MarketOrderClient.SubmissionBatch result = marketClient.submit(context.credentials(), context.period(),
-                    context.requests());
+            Wa55MarketOrderClient.SubmissionBatch result;
+            try {
+                result = marketClient.submit(context.credentials(), context.period(), context.requests());
+            } finally {
+                clientMs = (System.nanoTime() - startedAt) / 1_000_000;
+            }
+            confirmationStartedAt = System.nanoTime();
             if (!result.acceptedBatches().isEmpty()) {
                 if (!result.confirmations().isEmpty()) {
                     stateService.applyConfirmations(userId, orderId, result.confirmations());
@@ -103,6 +112,9 @@ public class LotteryMarketOrderDispatchService {
         } finally {
             LOGGER.info("盘口提交结束 user={} order={} period={} routes={} elapsedMs={}", userId, orderId,
                     context.period(), context.requests().size(), (System.nanoTime() - startedAt) / 1_000_000);
+            LOGGER.info("Lucky5 market dispatch timing: itemCount={}, claimMs={}, clientMs={}, confirmationMs={}",
+                    context.requests().size(), claimMs, clientMs,
+                    confirmationStartedAt == 0 ? 0 : (System.nanoTime() - confirmationStartedAt) / 1_000_000);
         }
     }
 

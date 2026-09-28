@@ -134,7 +134,14 @@ public class LotteryRobotReplyTemplate {
     /** The external market returned an exact accepted count and amount, but not every row identifier yet. */
     public String betReceiptAcceptedWithoutDetails(String memberName, String period, String content, int sequence,
                                                    int itemCount, BigDecimal amount, BigDecimal balance) {
-        return betReceipt(memberName, period, content, sequence, itemCount, amount, balance, "已受理");
+        // The internal confirmation state must not add a second, non-reference label to the saved receipt.
+        return betReceipt(memberName, period, content, sequence, itemCount, amount, balance);
+    }
+
+    public String normalizeAcceptedReceipt(String receipt) {
+        if (receipt == null || !receipt.contains("【户型审核成功】")) return receipt;
+        return String.join("\n", receipt.replace("\r\n", "\n").lines()
+                .filter(line -> !"已受理".equals(line.trim())).toList()).stripTrailing();
     }
 
     private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,

@@ -78,7 +78,7 @@ if [ "$maintenance" = --clear-runtime-history ]; then
 fi
 
 # No full baseline replay: preserve all existing owner and market configuration.
-for patch in 20260928-room-admin-upgrade.sql 20260928-admin-user-expiration.sql 20260928-admin-menu-visibility.sql; do
+for patch in 20260928-room-admin-upgrade.sql 20260928-admin-user-expiration.sql 20260928-admin-menu-visibility.sql 20260928-bet-receipt-cleanup.sql; do
   docker compose exec -T mysql sh -lc 'exec mysql --default-character-set=utf8mb4 -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' < "$payload/$patch"
 done
 docker tag "$server_image" lucky5-server:production

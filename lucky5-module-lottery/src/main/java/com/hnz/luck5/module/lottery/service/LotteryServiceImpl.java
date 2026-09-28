@@ -592,6 +592,7 @@ public class LotteryServiceImpl implements LotteryService {
             return robotReplyTemplate.drawResult(item.getPeriod(), item.getContent());
         }
         if (!"BET".equals(item.getCommandType())) return reply;
+        reply = robotReplyTemplate.normalizeAcceptedReceipt(reply);
         if ("已退码".equals(item.getStatus())) return robotReplyTemplate.cancelSucceeded(reply);
         if (StrUtil.isNotBlank(item.getOrderId()) && StrUtil.isNotBlank(reply)
                 && !reply.contains("下注失败") && !reply.contains("正在确认明细") && !reply.contains("提交中")
@@ -2786,6 +2787,33 @@ public class LotteryServiceImpl implements LotteryService {
             touchMemberPresence(access.member());
             return getRoomSessionInternal(access.member(), access.mode());
         });
+    }
+
+    @Override
+    public List<Map<String, Object>> getRoomBetReplies(LotteryRoomReqVO.BetReplies reqVO) {
+        return TenantUtils.execute(reqVO.getTenantId(), () -> {
+            MemberDO member = requireRoomAccess(reqVO).member();
+            List<MessageDO> messages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                    roomBetReplyQuery(member, reqVO.getMessageIds())));
+            return messages.stream().map(item -> map("id", item.getId(), "orderId", item.getOrderId(),
+                    "status", item.getStatus(), "reply", roomRobotReply(item),
+                    "replyUpdatedAt", date(item.getUpdateTime()),
+                    "processing", Set.of("处理中", "明细确认中").contains(value(item.getStatus(), ""))))
+                    .toList();
+        });
+    }
+
+    private LambdaQueryWrapper<MessageDO> roomBetReplyQuery(MemberDO member, List<Long> messageIds) {
+        if (messageIds == null || messageIds.isEmpty() || messageIds.size() > 5) {
+            throw new IllegalArgumentException("Expected between one and five message IDs");
+        }
+        // Poll only the requesting member's bounded BET receipts, never owner-wide messages or bet details.
+        return new LambdaQueryWrapper<MessageDO>()
+                .select(MessageDO::getId, MessageDO::getOrderId, MessageDO::getStatus,
+                        MessageDO::getCommandType, MessageDO::getReply, MessageDO::getUpdateTime)
+                .eq(MessageDO::getUserId, member.getUserId()).eq(MessageDO::getMemberId, member.getId())
+                .eq(MessageDO::getCommandType, "BET").in(MessageDO::getId, messageIds)
+                .orderByAsc(MessageDO::getId).last("LIMIT 5");
     }
 
     @Override

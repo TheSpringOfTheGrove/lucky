@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLHandshakeException;
 import java.math.BigDecimal;
@@ -40,6 +42,8 @@ import java.util.regex.Pattern;
 @Service
 public class Wa55MarketOrderClient {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(Wa55MarketOrderClient.class);
+
     private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
     private static final Pattern LOGIN_LINK = Pattern.compile("href=[\"']([^\"']*/Member/Login\\?[^\"']*)[\"']",
@@ -71,7 +75,15 @@ public class Wa55MarketOrderClient {
         requests.forEach(request -> validateRequest(expectedPeriod, request));
         // The local synchronized issue and absolute close time guard a normal write. Reuse the owner session and
         // submit directly instead of adding a login/current-period round-trip to every player order.
-        Session session = connect(credentials);
+        long sessionStartedAt = System.nanoTime();
+        boolean cachedSession = sessionCache.containsKey(sessionCacheKey(credentials));
+        Session session;
+        try {
+            session = connect(credentials);
+        } finally {
+            LOGGER.info("Lucky5 market session timing: cached={}, sessionMs={}", cachedSession,
+                    (System.nanoTime() - sessionStartedAt) / 1_000_000);
+        }
         List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
         List<AcceptedBatch> acceptedBatches = new ArrayList<>();
         List<BetGroup> groups = groupRequests(expectedPeriod, requests);
@@ -255,6 +267,17 @@ public class Wa55MarketOrderClient {
     }
 
     private JsonNode submitGroup(Session session, String expectedPeriod, BetGroup group) {
+        long startedAt = System.nanoTime();
+        try {
+            return submitGroupRequest(session, expectedPeriod, group);
+        } finally {
+            // Only counts and elapsed time: never log request bodies, credentials or external identifiers.
+            LOGGER.info("Lucky5 market batch timing: itemCount={}, requestMs={}", group.requests().size(),
+                    (System.nanoTime() - startedAt) / 1_000_000);
+        }
+    }
+
+    private JsonNode submitGroupRequest(Session session, String expectedPeriod, BetGroup group) {
         if (group.requests().size() == 1) {
             return postForm(session, "/Member/Bet", Map.of(
                     "betno", group.selections(),

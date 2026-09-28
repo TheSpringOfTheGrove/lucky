@@ -21,8 +21,8 @@ public class LotteryMarketOrderDispatchListener {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void handle(LotteryMarketOrderDispatchEvent event) {
         long startedAt = System.nanoTime();
-        LOGGER.info("盘口异步派发开始 tenant={} user={} order={} action={}", event.tenantId(), event.userId(),
-                event.orderId(), event.action());
+        LOGGER.info("盘口异步派发开始 tenant={} user={} order={} action={} queueMs={}", event.tenantId(), event.userId(),
+                event.orderId(), event.action(), (startedAt - event.queuedAtNanos()) / 1_000_000);
         try {
             TenantUtils.execute(event.tenantId(), () -> {
                 if (event.action() == LotteryMarketOrderDispatchEvent.Action.CANCEL) {

@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import {
   cancelRoomOrderApi,
+  getRoomBetRepliesApi,
   getRoomDrawStateApi,
   getRoomMessageHistoryApi,
   getRoomSessionApi,
@@ -574,6 +575,8 @@ const keyboardRows = [
 ]
 
 let refreshTimer: number | undefined
+let betReplyTimer: number | undefined
+let betReplyRequestSequence = 0
 let drawRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 let sessionRequestSequence = 0
@@ -855,14 +858,52 @@ const loadDrawState = async () => {
 
 const scheduleSessionRefresh = () => {
   if (refreshTimer) window.clearTimeout(refreshTimer)
-  const waitingForBetReply = trackedBetMessageIds.value.length > 0
-  const fastBetReplyPoll = waitingForBetReply && Date.now() < betReplyFastPollUntilMs.value
-  const delay = fastBetReplyPoll ? 1000 : 5000
   refreshTimer = window.setTimeout(async () => {
     await loadSession(true)
     scheduleSessionRefresh()
     scheduleDrawStateRefresh()
-  }, delay)
+  }, 5000)
+}
+
+const scheduleBetReplyRefresh = () => {
+  if (betReplyTimer) window.clearTimeout(betReplyTimer)
+  if (!trackedBetMessageIds.value.length || Date.now() >= betReplyFastPollUntilMs.value) return
+  betReplyTimer = window.setTimeout(async () => {
+    const sequence = ++betReplyRequestSequence
+    const wasFollowing = autoFollowMessages.value
+    try {
+      const replies = await getRoomBetRepliesApi(credential.value, trackedBetMessageIds.value)
+      if (sequence !== betReplyRequestSequence || !session.value) return
+      // Only invalidate a full snapshot when a reply changed; ordinary pending polls must not starve group chat.
+      if (
+        replies.some((reply) =>
+          session.value?.messages.some(
+            (message) => message.id === reply.id && message.reply !== reply.reply
+          )
+        )
+      )
+        sessionRequestSequence++
+      for (const reply of replies) {
+        const message = session.value.messages.find((item) => item.id === reply.id)
+        if (message)
+          Object.assign(message, {
+            reply: reply.reply,
+            status: reply.status,
+            replyUpdatedAt: reply.replyUpdatedAt
+          })
+        const order = session.value.orders.find((item) => item.id === reply.orderId)
+        if (order) order.processing = reply.processing
+        if (!reply.processing) {
+          trackedBetMessageIds.value = trackedBetMessageIds.value.filter((id) => id !== reply.id)
+        }
+      }
+      await nextTick()
+      collectUnreadMessages(wasFollowing)
+    } catch {
+      // Normal five-second session refresh remains the fallback. Never turn an accepted bet into a UI failure.
+    }
+    if (sequence === betReplyRequestSequence) scheduleBetReplyRefresh()
+  }, 500)
 }
 
 const scheduleDrawStateRefresh = () => {
@@ -1035,6 +1076,7 @@ const submitChat = async () => {
     }
     await loadSession(true)
     scheduleSessionRefresh()
+    scheduleBetReplyRefresh()
     if (session.value.messages.some((message) => message.id === result.messageId)) {
       localMessages.value = localMessages.value.filter(
         (message) => message.id !== optimisticMessageId && message.id !== optimisticRobotMessageId
@@ -1180,6 +1222,8 @@ watch(
     restorePlayerSentAtOverrides()
     resetChatMessageTracking()
     trackedBetMessageIds.value = []
+    betReplyRequestSequence++
+    if (betReplyTimer) window.clearTimeout(betReplyTimer)
     betReplyFastPollUntilMs.value = 0
     bettingCutoffAtMs.value = null
     await loadSession()
@@ -1209,6 +1253,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  betReplyRequestSequence++
+  sessionRequestSequence++
+  if (betReplyTimer) window.clearTimeout(betReplyTimer)
   window.removeEventListener('resize', handleRoomResize)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('mousemove', moveScratchLauncherByMouse)

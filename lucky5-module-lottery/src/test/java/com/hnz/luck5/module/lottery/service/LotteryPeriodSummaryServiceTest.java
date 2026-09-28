@@ -13,6 +13,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -31,6 +35,9 @@ class LotteryPeriodSummaryServiceTest {
 
     @BeforeEach
     void setUp() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), OrderDO.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), MessageDO.class);
         service = new LotteryPeriodSummaryService();
         ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
         ReflectionTestUtils.setField(service, "messageMapper", messageMapper);
@@ -74,7 +81,42 @@ class LotteryPeriodSummaryServiceTest {
         service.publish(7L, "20260809194");
 
         verify(messageMapper).updateById(stale);
-        assertThat(stale.getReply()).isEqualTo("本期成功订单\n------------");
+        assertThat(stale.getReply()).isEmpty();
+    }
+
+    @Test
+    void reconciliationKeepsSettledOrdersAndUpdatesTheSameSummary() {
+        OrderDO settled = order("O1", "M1", "玩家", "1234各1");
+        settled.setStatus("已中奖");
+        settled.setDeliveryMode("MARKET_ADAPTER");
+        settled.setMarketStatus("CONFIRMED");
+        MessageDO stale = new MessageDO();
+        stale.setExternalId("period-summary:g:20260809194");
+        stale.setChannel("网页群");
+        stale.setReply("");
+        when(messageMapper.selectList(any())).thenReturn(List.of(stale));
+        when(orderMapper.selectList(any())).thenReturn(List.of(settled));
+
+        service.publish(7L, "20260809194");
+
+        assertThat(stale.getReply()).isEqualTo("本期成功订单\n[玩家]1234各1\n------------");
+        verify(messageMapper).updateById(stale);
+        ArgumentCaptor<LambdaQueryWrapper<OrderDO>> query = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(orderMapper).selectList(query.capture());
+        assertThat(query.getValue().getSqlSegment()).contains("status IN");
+        assertThat(query.getValue().getParamNameValuePairs().values())
+                .contains("未开奖", "已中奖", "未中奖").doesNotContain("已退码");
+    }
+
+    @Test
+    void excludesUnconfirmedMarketOrdersFromSuccessfulSummary() {
+        OrderDO pending = order("O1", "M1", "玩家", "1234各1");
+        pending.setDeliveryMode("MARKET_ADAPTER");
+        pending.setMarketStatus("SUBMITTING");
+        when(messageMapper.selectList(any())).thenReturn(List.of());
+        when(orderMapper.selectList(any())).thenReturn(List.of(pending));
+        service.publish(7L, "20260809194");
+        verify(messageMapper, times(0)).insert(any(MessageDO.class));
     }
 
     private OrderDO order(String id, String memberId, String memberName, String content) {

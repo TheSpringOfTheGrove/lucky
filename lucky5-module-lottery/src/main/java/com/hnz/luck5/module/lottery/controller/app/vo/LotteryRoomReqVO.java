@@ -9,6 +9,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 public final class LotteryRoomReqVO {
 
@@ -66,6 +67,13 @@ public final class LotteryRoomReqVO {
         @NotNull
         @Positive
         private Long beforeId;
+    }
+
+    @Data
+    public static class BetReplies extends Credential {
+        @NotNull
+        @Size(min = 1, max = 5)
+        private List<@NotNull @Positive Long> messageIds;
     }
 
     @Data

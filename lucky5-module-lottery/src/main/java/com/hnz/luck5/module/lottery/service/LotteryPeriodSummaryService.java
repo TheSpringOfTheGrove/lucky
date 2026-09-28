@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Objects;
 
 /**
  * Publishes one owner-wide period order summary for group rooms and one member-only summary for private rooms.
@@ -45,7 +46,7 @@ public class LotteryPeriodSummaryService {
                         .eq(MessageDO::getPeriod, period).eq(MessageDO::getCommandType, COMMAND_PERIOD_SUMMARY)));
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
                 new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, userId)
-                        .eq(OrderDO::getPeriod, period).eq(OrderDO::getStatus, "未开奖")
+                        .eq(OrderDO::getPeriod, period).in(OrderDO::getStatus, "未开奖", "已中奖", "未中奖")
                         .orderByAsc(OrderDO::getCreateTime).orderByAsc(OrderDO::getId))).stream()
                 .filter(this::isAcceptedForSummary).toList();
 
@@ -86,11 +87,14 @@ public class LotteryPeriodSummaryService {
         if (!"MARKET_ADAPTER".equals(deliveryMode) && !"MIXED_MARKET".equals(deliveryMode)) {
             return true; // 本地单、历史本地单和本地吃码单在创建时即已受理
         }
-        return "CONFIRMED".equals(order.getMarketStatus());
+        return "CONFIRMED".equals(order.getMarketStatus()) || "SETTLED".equals(order.getMarketStatus());
     }
 
     private void upsert(Long userId, String period, String externalId, SummaryMessage summary, MessageDO existing) {
         if (existing != null) {
+            if (Objects.equals(existing.getReply(), summary.reply())
+                    && Objects.equals(existing.getChannel(), summary.channel())
+                    && Objects.equals(existing.getMemberId(), summary.memberId())) return;
             existing.setChannel(summary.channel());
             existing.setMemberId(summary.memberId());
             existing.setMember(summary.memberName());
@@ -122,6 +126,7 @@ public class LotteryPeriodSummaryService {
     }
 
     private void clearObsoleteSummary(MessageDO message) {
+        if (message.getReply() == null || message.getReply().isEmpty()) return;
         message.setReply(robotReplyTemplate.periodSummary(List.of()));
         message.setProcessedAt(LocalDateTime.now());
         messageMapper.updateById(message);
