@@ -6,6 +6,7 @@ import dayjs from 'dayjs'
 import {
   cancelRoomOrderApi,
   getRoomDrawStateApi,
+  getRoomMessageHistoryApi,
   getRoomSessionApi,
   sendRoomMessageApi,
   type RoomAmountRecord,
@@ -17,8 +18,10 @@ import {
 import ScratchCard from './components/ScratchCard.vue'
 import QuickPickDialog from './components/QuickPickDialog.vue'
 import { resolveDragonTiger, roomReplyTemplates } from './replyTemplates'
+import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
 import logo from '@/assets/imgs/logo.png'
-import memberAvatar from '@/assets/imgs/avatar.jpg'
+import robotAvatar from '@/assets/lottery/robot-avatar.png'
+import scratchButton from '@/assets/lottery/scratch-button.jpg'
 
 type ChatKind = 'member' | 'other' | 'robot'
 type ChatType = 'text' | 'order' | 'amount' | 'draw'
@@ -41,7 +44,12 @@ interface ChatItem {
   displayTimeAt: string
   serverMessageId?: number
   senderName?: string
+  avatar?: number
   order?: RoomOrder
+  drawImage?: string
+  cancelOrderId?: string
+  cancelPeriod?: string
+  receiptAction?: 'cancelable' | 'canceled'
   amountRecord?: RoomAmountRecord
   draw?: RoomDraw
   showTime?: boolean
@@ -60,6 +68,18 @@ const composerPanelRef = ref<HTMLElement>()
 const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
+const historicalMessages = ref<RoomSession['messages']>([])
+const loadingOlderMessages = ref(false)
+const hasOlderMessages = ref(true)
+const recentCommands = computed(() => {
+  const seen = new Set<string>()
+  return [...(session.value?.messages || [])]
+    .reverse()
+    .filter((message) => message.own !== false && message.commandType !== 'SETTLEMENT')
+    .map((message) => message.content.trim())
+    .filter((content) => content && !seen.has(content) && (seen.add(content), true))
+    .slice(0, 10)
+})
 // 乐观消息被服务端记录替换后，仍保留用户第一次点击发送时看到的时间。
 // 服务端创建时间可能与浏览器时间相差一秒，不能因此让玩家气泡的时间跳变。
 const playerSentAtOverrides = ref<Record<number, string>>({})
@@ -297,11 +317,19 @@ const scratchDrawRemaining = computed(() => {
   if (!scratchNextDrawAtMs.value) return 0
   return Math.max(0, Math.ceil((scratchNextDrawAtMs.value - clockNowMs.value) / 1000))
 })
+const visibleRoomMessages = computed(() => {
+  const byId = new Map<number, RoomSession['messages'][number]>()
+  for (const message of historicalMessages.value) byId.set(message.id, message)
+  for (const message of session.value?.messages || []) byId.set(message.id, message)
+  return [...byId.values()]
+    .filter((message) => !(message.commandType === 'CANCEL' && message.content === '点击退码'))
+    .sort((left, right) => left.id - right.id)
+})
 const chatMessages = computed<ChatItem[]>(() => {
   if (!session.value) return localMessages.value
 
   const sourceDates = [
-    ...session.value.messages.map((item) => item.createdAt),
+    ...visibleRoomMessages.value.map((item) => item.createdAt),
     ...session.value.amountRecords.map((item) => item.createdAt)
   ].filter(Boolean)
   const firstDate = sourceDates.sort()[0] || sessionStartedAt.value
@@ -346,7 +374,9 @@ const chatMessages = computed<ChatItem[]>(() => {
   }
 
   const drawSequenceAnchors = new Map<string, string>()
-  for (const message of session.value.messages) {
+  const persistedDrawPeriods = new Set<string>()
+  for (const message of visibleRoomMessages.value) {
+    if (message.commandType === 'DRAW_RESULT') persistedDrawPeriods.add(message.period)
     if (!message.reply || !['SETTLEMENT', 'PAYOUT_SUMMARY'].includes(message.commandType)) continue
     const replyDelay = message.commandType === 'PAYOUT_SUMMARY' ? 3 : 2
     const displayedAt = dayjs(message.createdAt).add(replyDelay, 'millisecond')
@@ -356,7 +386,9 @@ const chatMessages = computed<ChatItem[]>(() => {
     }
   }
 
-  for (const draw of session.value.draws.filter((item) => Boolean(item.settledAt))) {
+  for (const draw of session.value.draws.filter(
+    (item) => Boolean(item.settledAt) && !persistedDrawPeriods.has(item.period)
+  )) {
     const sequenceAnchor = drawSequenceAnchors.get(draw.period)
     messages.push({
       id: `draw-${draw.period}`,
@@ -374,12 +406,33 @@ const chatMessages = computed<ChatItem[]>(() => {
     })
   }
 
-  for (const message of session.value.messages) {
+  for (const message of visibleRoomMessages.value) {
+    const persistedDraw = persistedDrawFromMessage(message)
+    if (persistedDraw) {
+      messages.push({
+        id: `draw-message-${message.id}`,
+        kind: 'robot',
+        type: 'draw',
+        content:
+          message.reply ||
+          roomReplyTemplates.draw(
+            persistedDraw.period,
+            persistedDraw.numbers,
+            persistedDraw.dragonTiger
+          ),
+        createdAt: message.createdAt,
+        displayTimeAt: message.createdAt,
+        draw: persistedDraw,
+        drawImage: message.drawImage,
+        sequenceRank: 50
+      })
+      continue
+    }
     const order = message.orderId ? orderById.value[message.orderId] : undefined
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
       message.own === false &&
-      ['BET', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType) &&
+      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType) &&
       Boolean(message.reply)
     if (!['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType)) {
       messages.push({
@@ -390,11 +443,20 @@ const chatMessages = computed<ChatItem[]>(() => {
         createdAt: message.createdAt,
         displayTimeAt:
           playerSentAtOverrides.value[message.id] || message.sentAt || message.createdAt,
-        senderName: message.member
+        senderName: message.member,
+        avatar: message.memberAvatar ?? session.value.member.avatar
       })
     }
     const waitingForFinalResult = Boolean(order?.processing) && !message.reply
     const silentCancelCommand = message.commandType === 'CANCEL' && !message.reply
+    const receiptAction =
+      message.commandType !== 'BET'
+        ? undefined
+        : message.reply?.includes('已退码')
+          ? 'canceled'
+          : message.reply?.includes('点击退码')
+            ? 'cancelable'
+            : undefined
     if (
       (message.own !== false || showSharedRobotReply) &&
       message.commandType !== 'CHAT' &&
@@ -419,6 +481,10 @@ const chatMessages = computed<ChatItem[]>(() => {
         // 但排序仍保持原始消息时间，避免更新后的旧回复打乱聊天时序。
         displayTimeAt: message.replyUpdatedAt || message.createdAt,
         order,
+        cancelOrderId:
+          receiptAction === 'cancelable' && message.orderId ? message.orderId : undefined,
+        cancelPeriod: message.period,
+        receiptAction,
         sequenceRank:
           message.commandType === 'PERIOD_SUMMARY'
             ? 20
@@ -467,7 +533,7 @@ const chatMessages = computed<ChatItem[]>(() => {
     }
   }
 
-  const serverMessageIds = new Set(session.value.messages.map((message) => message.id))
+  const serverMessageIds = new Set(visibleRoomMessages.value.map((message) => message.id))
   messages.push(
     ...localMessages.value.filter(
       (message) => !message.serverMessageId || !serverMessageIds.has(message.serverMessageId)
@@ -540,7 +606,41 @@ const applyAuthoritativeIssueClock = (issue: RoomSession['issue'], responseRecei
   scratchRemaining.value =
     issue.status === 'OPEN' ? Math.max(0, Number(issue.remainingSeconds || 0)) : 0
 }
-const receiptText = (value: string) => value.replace(/\n点击退码\s*$/, '')
+const receiptText = (value: string) =>
+  value
+    .replace(/【(编号|套内|套外|面积)】：/g, '【$1】:')
+    .replace('【户型审核成功】✓✓', '【户型审核成功】√√')
+    .replace(/【编号】:\s*(\d+)/g, '【编号】$1')
+    .replace(/【(套外|面积)】:\s*(\d+(?:\.\d+)?)/g, (_, label, amount) =>
+      `【${label}】:${Number(amount).toFixed(2)}`
+    )
+    .split('\n')
+    .filter(
+      (line) =>
+        !['点击退码', '已退码'].includes(line.trim()) &&
+        !/^共\s*\d+\s*注\s*合计\s*[\d,.]+$/.test(line.trim())
+    )
+    .join('\n')
+    .trimEnd()
+const persistedDrawFromMessage = (message: RoomSession['messages'][number]): RoomDraw | undefined => {
+  if (message.commandType !== 'DRAW_RESULT') return undefined
+  const result = message.content.replace(/\D/g, '')
+  if (!/^\d{5}$/.test(result)) return undefined
+  const matchingDraw = session.value?.draws.find((draw) => draw.period === message.period)
+  const numbers = [...result]
+  return {
+    period: message.period,
+    result,
+    numbers,
+    valid: true,
+    bigSmall: matchingDraw?.bigSmall || '',
+    oddEven: matchingDraw?.oddEven || '',
+    dragonTiger: matchingDraw?.dragonTiger || resolveDragonTiger(numbers),
+    status: '已开奖',
+    drawTime: matchingDraw?.drawTime || message.createdAt,
+    settledAt: matchingDraw?.settledAt || message.createdAt
+  }
+}
 const chatMessageVersion = (message: ChatItem) =>
   [message.id, message.content, message.order?.status || '', message.order?.win || ''].join(
     '\u0000'
@@ -582,28 +682,13 @@ const resetChatMessageTracking = () => {
   knownChatMessageVersions.clear()
   clearUnreadMessages()
 }
-const formatRobotReply = (value: string) =>
-  value
-    .split(/\r?\n/)
-    .flatMap((line) => {
-      const parts = line
-        .split(/[，,、；;]/)
-        .map((part) => part.trim())
-        .filter(Boolean)
-      if (
-        parts.length < 2 ||
-        !parts.every((part) =>
-          /(?:各\d+(?:\.\d+)?|(?:倒[一二三四]定|[二三四]定倒)\/\d+(?:\.\d+)?)$/.test(part)
-        )
-      ) {
-        return [line]
-      }
-      return parts
-    })
-    .join('\n')
+// The room protocol is text-sensitive: punctuation, order and line breaks come from the server and must not be
+// reflowed by the client before players see them.
+const formatRobotReply = (value: string) => value
 
 const copyInstruction = async (message: ChatItem) => {
   if (message.kind === 'robot' || !message.content.trim()) return
+  if (Date.now() < suppressMessageClickUntil) return
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(message.content)
@@ -636,12 +721,6 @@ const messageTime = (value: string) =>
     ? dayjs(value).format('HH:mm')
     : dayjs(value).format('MM-DD HH:mm')
 const bubbleTime = (value: string) => dayjs(value).format('HH:mm:ss')
-const orderStatusClass = (status: string) => {
-  if (status === '已中奖') return 'is-win'
-  if (status === '未中奖' || status === '已退码') return 'is-failed'
-  return 'is-pending'
-}
-
 const scrollToBottom = async (behavior: ScrollBehavior = 'auto') => {
   await nextTick()
   chatRef.value?.scrollTo({ top: chatRef.value.scrollHeight, behavior })
@@ -653,7 +732,34 @@ const handleChatScroll = () => {
   const stream = chatRef.value
   if (!stream) return
   autoFollowMessages.value = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 80
+  if (stream.scrollTop <= 48) void loadOlderRoomMessages()
   if (autoFollowMessages.value) clearUnreadMessages()
+}
+
+const loadOlderRoomMessages = async () => {
+  if (!session.value || loadingOlderMessages.value || !hasOlderMessages.value) return
+  const oldestMessage = visibleRoomMessages.value[0]
+  if (!oldestMessage) return
+
+  const stream = chatRef.value
+  const previousHeight = stream?.scrollHeight || 0
+  const previousTop = stream?.scrollTop || 0
+  loadingOlderMessages.value = true
+  try {
+    const result = await getRoomMessageHistoryApi(credential.value, oldestMessage.id)
+    const existingIds = new Set(
+      [...historicalMessages.value, ...(session.value?.messages || [])].map((message) => message.id)
+    )
+    const olderMessages = result.messages.filter((message) => !existingIds.has(message.id))
+    historicalMessages.value = [...olderMessages, ...historicalMessages.value]
+    hasOlderMessages.value = Boolean(result.hasMore) && olderMessages.length > 0
+    await nextTick()
+    if (stream) stream.scrollTop = previousTop + stream.scrollHeight - previousHeight
+  } catch (reason: any) {
+    ElMessage.error(reason?.message || '历史消息加载失败')
+  } finally {
+    loadingOlderMessages.value = false
+  }
 }
 
 const loadSession = async (quiet = false) => {
@@ -814,14 +920,14 @@ const clampScratchLauncherTop = (value: number) => {
 const restoreScratchLauncherTop = () => {
   const storedValue = localStorage.getItem('lucky5-scratch-launcher-top')
   const stored = storedValue === null ? Number.NaN : Number(storedValue)
-  const fallback = window.innerHeight - 66 - 118
+  const fallback = window.innerHeight * 0.4 - 20
   scratchLauncherTop.value = clampScratchLauncherTop(Number.isFinite(stored) ? stored : fallback)
 }
 
 const beginScratchLauncherDrag = (clientY: number) => {
   scratchLauncherDragActive = true
   scratchLauncherStartY = clientY
-  scratchLauncherStartTop = scratchLauncherTop.value ?? window.innerHeight - 66 - 118
+  scratchLauncherStartTop = scratchLauncherTop.value ?? window.innerHeight * 0.4 - 20
   scratchLauncherDragging.value = false
 }
 
@@ -904,7 +1010,8 @@ const submitChat = async () => {
     content,
     createdAt: submittedAt,
     displayTimeAt: submittedAt,
-    senderName: session.value.member.name
+    senderName: session.value.member.name,
+    avatar: session.value.member.avatar
   }
   const optimisticRobotMessageId = `pending-robot-message-${externalId}`
   const optimisticRobotMessage: ChatItem | null = shouldShowBetSubmitting(content)
@@ -966,7 +1073,19 @@ const appendKey = (key: string) => {
   if (key === '←') composer.value = composer.value.slice(0, -1)
   else if (key === '清除') composer.value = ''
   else if (key === '换行') composer.value += '\n'
-  else composer.value += key
+  else if (key === '查') {
+    composer.value = key
+    void submitChat()
+  } else {
+    const expansions: Record<string, string> = {
+      大: '56789',
+      小: '01234',
+      单: '13579',
+      双: '02468',
+      全: '0123456789'
+    }
+    composer.value += expansions[key] || key
+  }
 }
 
 const togglePanel = async (panel: 'keyboard' | 'commands') => {
@@ -992,6 +1111,30 @@ const useHistory = (content: string) => {
   composerRef.value?.focus()
 }
 
+let longPressTimer: number | undefined
+let suppressMessageClickUntil = 0
+const clearMessageLongPress = () => {
+  if (longPressTimer) window.clearTimeout(longPressTimer)
+  longPressTimer = undefined
+}
+const beginMessageLongPress = (callback: () => void) => {
+  clearMessageLongPress()
+  longPressTimer = window.setTimeout(() => {
+    suppressMessageClickUntil = Date.now() + 400
+    callback()
+    composerRef.value?.focus()
+  }, 500)
+}
+const appendMention = (message: ChatItem) => {
+  if (message.kind !== 'other') return
+  const name = message.senderName?.trim()
+  if (name) composer.value += `@${name} `
+}
+const appendMessageContent = (message: ChatItem) => {
+  if (message.kind === 'robot' || !message.content.trim()) return
+  composer.value += message.content
+}
+
 const openQuickPicker = () => {
   bottomPanel.value = ''
   quickPickerVisible.value = true
@@ -1003,7 +1146,7 @@ const submitQuickGenerated = async (content: string) => {
   await submitChat()
 }
 
-const cancelOrder = async (order: RoomOrder) => {
+const cancelOrder = async (order: Pick<RoomOrder, 'id' | 'period'>) => {
   try {
     await ElMessageBox.confirm(`确认退回第 ${order.period} 期订单？`, '退码', {
       type: 'warning',
@@ -1013,10 +1156,15 @@ const cancelOrder = async (order: RoomOrder) => {
     saving.value = true
     await cancelRoomOrderApi(credential.value, order.id)
     await loadSession(true)
-    await scrollToBottom('smooth')
   } catch (reason: any) {
     if (reason !== 'cancel' && reason !== 'close') {
-      ElMessage.error(reason?.message ? `退码失败：${reason.message}` : '退码失败')
+      ElMessage.error(
+        reason?.message === '没有记录'
+          ? '没有记录'
+          : reason?.message
+            ? `退码失败：${reason.message}`
+            : '退码失败'
+      )
     }
   } finally {
     saving.value = false
@@ -1041,6 +1189,9 @@ watch(
     if (!credential.value.openId || credentialKey === previousCredentialKey) return
     sessionStartedAt.value = new Date().toISOString()
     localMessages.value = []
+    historicalMessages.value = []
+    hasOlderMessages.value = true
+    loadingOlderMessages.value = false
     restorePlayerSentAtOverrides()
     resetChatMessageTracking()
     trackedBetMessageIds.value = []
@@ -1096,7 +1247,6 @@ onBeforeUnmount(() => {
 
     <template v-else-if="session">
       <button
-        v-if="session.room.features.prizeCard && scratchResultPeriod"
         class="scratch-launcher"
         :class="{ 'is-dragging': scratchLauncherDragging }"
         :style="scratchLauncherStyle"
@@ -1109,7 +1259,7 @@ onBeforeUnmount(() => {
         @touchend="finishScratchLauncherDrag"
         @touchcancel="finishScratchLauncherDrag"
       >
-        刮牌
+        <img :src="scratchButton" alt="开始刮奖" />
       </button>
 
       <ScratchCard
@@ -1136,8 +1286,12 @@ onBeforeUnmount(() => {
           <div class="chat-row">
             <img
               class="chat-avatar"
-              :src="message.kind === 'robot' ? logo : memberAvatar"
+              :src="message.kind === 'robot' ? robotAvatar : lotteryPlayerAvatarSrc(message.avatar ?? session.member.avatar)"
               :alt="message.kind === 'robot' ? '机器人' : message.senderName || session.member.name"
+              @pointerdown="beginMessageLongPress(() => appendMention(message))"
+              @pointerup="clearMessageLongPress"
+              @pointercancel="clearMessageLongPress"
+              @pointerleave="clearMessageLongPress"
             />
             <div class="chat-body">
               <h5>
@@ -1147,23 +1301,19 @@ onBeforeUnmount(() => {
               </h5>
               <div class="chat-bubble">
                 <template v-if="message.type === 'draw' && message.draw">
-                  <pre class="draw-brief">{{ message.content }}</pre>
-                  <div
-                    v-if="
-                      (session.room.mode === 'GROUP'
-                        ? session.room.features.groupImage
-                        : session.room.features.privateImage) &&
-                      message.draw.period === latestDraw?.period
-                    "
-                    :class="['lottery-table', { 'is-bold': session.room.features.imageBold }]"
-                  >
+                  <img
+                    v-if="message.drawImage"
+                    class="draw-history-image"
+                    :src="message.drawImage"
+                    :alt="`第 ${message.draw.period} 期开奖图`"
+                  />
+                  <div v-else :class="['lottery-table', { 'is-bold': session.room.features.imageBold }]">
                     <div class="lottery-table__head">
-                      <strong>期数</strong><strong>时间</strong><strong>成功</strong
-                      ><strong aria-hidden="true"></strong>
+                      <strong>期数</strong><strong>时间</strong><strong>成功</strong>
                     </div>
                     <div
-                      v-for="draw in session.draws.slice(0, 15)"
-                      :key="draw.period"
+                      v-for="draw in session.draws.filter((item) => item.period <= message.draw.period).slice(0, 15)"
+                      :key="`${message.id}-history-${draw.period}`"
                       class="lottery-table__history-row"
                     >
                       <span>{{ draw.period.slice(-3) }}</span>
@@ -1176,61 +1326,39 @@ onBeforeUnmount(() => {
                           v-for="(number, index) in draw.numbers"
                           :key="`${draw.period}-history-${index}`"
                           :class="drawNumberClass(number)"
-                        >
-                          {{ number }}
-                        </i>
+                        >{{ number }}</i>
                       </span>
-                      <strong
-                        :class="[
-                          'lottery-table__dragon-tiger',
-                          `is-${resolveDragonTiger(draw.numbers, draw.dragonTiger)}`
-                        ]"
-                      >
-                        {{ resolveDragonTiger(draw.numbers, draw.dragonTiger) }}
-                      </strong>
                     </div>
                   </div>
                 </template>
 
                 <template v-else-if="message.type === 'order' && message.order">
                   <pre class="reference-receipt">{{ receiptText(message.content) }}</pre>
-                  <div class="receipt-title">
-                    <strong>第 {{ message.order.period }} 期</strong>
-                    <span :class="orderStatusClass(message.order.status)">{{
-                      message.order.status
-                    }}</span>
-                  </div>
-                  <div class="receipt-content">{{ message.order.content }}</div>
-                  <div v-if="message.order.items.length" class="receipt-items">
-                    <div v-for="item in message.order.items" :key="item.id">
-                      <span>{{ item.play }} · {{ item.selection }}</span>
-                      <span>{{ money(item.amount) }} @ {{ item.odds }}</span>
-                    </div>
-                    <div v-if="message.order.itemCount > message.order.items.length">
-                      <span>其余号码已收起</span>
-                      <span>+{{ message.order.itemCount - message.order.items.length }} 注</span>
-                    </div>
-                  </div>
-                  <div class="receipt-total">
-                    <span>共 {{ message.order.itemCount }} 注</span
-                    ><strong>合计 {{ money(message.order.amount) }}</strong>
-                  </div>
-                  <div v-if="message.order.status === '已中奖'" class="receipt-result is-win">
-                    派彩 {{ money(message.order.win) }}
-                  </div>
                   <button
-                    v-if="
-                      message.order.status === '未开奖' &&
-                      session.room.cancelEnabled &&
-                      !saving &&
-                      message.order.cancelable !== false
-                    "
+                    v-if="message.order.status !== '已退码' && message.receiptAction === 'cancelable'"
                     class="cancel-link"
                     type="button"
                     @click="cancelOrder(message.order)"
                   >
                     点击退码
                   </button>
+                  <span
+                    v-else-if="message.order.status === '已退码' || message.receiptAction === 'canceled'"
+                    class="cancel-status"
+                  >已退码</span>
+                </template>
+
+                <template v-else-if="message.kind === 'robot' && message.receiptAction">
+                  <pre class="reference-receipt">{{ receiptText(message.content) }}</pre>
+                  <button
+                    v-if="message.receiptAction === 'cancelable' && message.cancelOrderId"
+                    class="cancel-link"
+                    type="button"
+                    @click="cancelOrder({ id: message.cancelOrderId, period: message.cancelPeriod || '' })"
+                  >
+                    点击退码
+                  </button>
+                  <span v-else-if="message.receiptAction === 'canceled'" class="cancel-status">已退码</span>
                 </template>
 
                 <template v-else-if="message.type === 'amount' && message.amountRecord">
@@ -1247,10 +1375,13 @@ onBeforeUnmount(() => {
                   v-else
                   :class="{ 'is-copyable': message.kind !== 'robot' }"
                   @click.stop="copyInstruction(message)"
+                  @pointerdown="beginMessageLongPress(() => appendMessageContent(message))"
+                  @pointerup="clearMessageLongPress"
+                  @pointercancel="clearMessageLongPress"
+                  @pointerleave="clearMessageLongPress"
                   >{{ message.content }}</pre
                 >
               </div>
-              <div class="chat-bubble-time">{{ bubbleTime(message.displayTimeAt) }}</div>
             </div>
           </div>
         </article>
@@ -1267,6 +1398,39 @@ onBeforeUnmount(() => {
       </button>
 
       <form class="chat-composer" @submit.prevent="submitChat">
+        <div class="composer-row">
+          <button
+            class="keyboard-toggle"
+            :class="{ 'is-active': bottomPanel === 'keyboard' }"
+            type="button"
+            aria-label="虚拟键盘"
+            @click="togglePanel('keyboard')"
+          >
+            <span v-for="index in 4" :key="index"></span>
+          </button>
+          <textarea
+            ref="composerRef"
+            v-model="composer"
+            rows="1"
+            autocomplete="off"
+            aria-label="聊天输入"
+            placeholder="输入聊天或下注指令"
+            @focus="bottomPanel = ''"
+            @keydown.enter.exact.prevent="submitChat"
+          ></textarea>
+          <button class="fast-select" type="button" @click="openQuickPicker">快选</button>
+          <button class="send-button" type="submit" :disabled="saving || !composer.trim()">
+            {{ saving ? '处理中' : '发送' }}
+          </button>
+          <button
+            class="history-toggle"
+            :class="{ 'is-active': bottomPanel === 'commands' }"
+            type="button"
+            aria-label="快捷指令"
+            @click="togglePanel('commands')"
+          ></button>
+        </div>
+
         <div
           v-if="bottomPanel === 'keyboard'"
           ref="composerPanelRef"
@@ -1293,49 +1457,17 @@ onBeforeUnmount(() => {
           @pointerdown.stop
         >
           <button
-            v-for="command in session.quickCommands"
-            :key="command.id"
+            v-for="command in recentCommands"
+            :key="command"
             type="button"
-            :title="command.content"
-            @click="useHistory(command.content)"
+            :title="command"
+            @click="useHistory(command)"
           >
-            <span>{{ command.label }}</span>
+            <span>{{ command }}</span>
           </button>
-          <div v-if="!session.quickCommands.length" class="history-empty">暂无快捷指令</div>
+          <div v-if="!recentCommands.length" class="history-empty">暂无历史指令</div>
         </div>
 
-        <div class="composer-row">
-          <button
-            class="keyboard-toggle"
-            :class="{ 'is-active': bottomPanel === 'keyboard' }"
-            type="button"
-            aria-label="虚拟键盘"
-            @click="togglePanel('keyboard')"
-          >
-            <span v-for="index in 8" :key="index"></span>
-          </button>
-          <textarea
-            ref="composerRef"
-            v-model="composer"
-            rows="1"
-            autocomplete="off"
-            aria-label="聊天输入"
-            placeholder="输入聊天或下注指令"
-            @focus="bottomPanel = ''"
-            @keydown.enter.exact.prevent="submitChat"
-          ></textarea>
-          <button class="fast-select" type="button" @click="openQuickPicker">快选</button>
-          <button class="send-button" type="submit" :disabled="saving || !composer.trim()">
-            {{ saving ? '处理中' : '发送' }}
-          </button>
-          <button
-            class="history-toggle"
-            :class="{ 'is-active': bottomPanel === 'commands' }"
-            type="button"
-            aria-label="快捷指令"
-            @click="togglePanel('commands')"
-          ></button>
-        </div>
       </form>
       <QuickPickDialog
         :visible="quickPickerVisible"
@@ -1355,7 +1487,7 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 1;
   overflow: hidden;
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font: 14px/21px 'Lucida Grande', 'Lucida Sans Unicode', Helvetica, Arial, Verdana, sans-serif;
   color: #333;
   color-scheme: light;
   background: #f5f5f7;
@@ -1757,37 +1889,37 @@ onBeforeUnmount(() => {
 
 .new-message-tip {
   position: fixed;
-  right: 18px;
-  bottom: calc(58px + env(safe-area-inset-bottom));
+  right: 30px;
+  bottom: calc(55px + env(safe-area-inset-bottom));
   z-index: 7;
-  min-height: 32px;
-  padding: 5px 12px;
+  min-height: 24px;
+  padding: 0 8px 0 24px;
   font: inherit;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
-  line-height: 20px;
-  color: #08a737;
+  line-height: 22px;
+  color: #09bb07;
   background: #fff;
-  border: 1px solid #e1e5e1;
-  border-radius: 18px;
-  box-shadow: 0 2px 8px rgb(35 72 40 / 18%);
+  border: 1px solid #e7e7e7;
+  border-radius: 13px;
 }
 
 .new-message-tip span {
-  margin-right: 5px;
-  font-size: 15px;
+  position: absolute;
+  top: 9px;
+  left: 6px;
+  width: 0;
+  height: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 7px solid transparent;
+  border-top-color: #09bb07;
+  font-size: 0;
 }
 
 .reference-receipt {
   white-space: pre-wrap;
-  line-height: 1.45;
-}
-
-.reference-receipt + .receipt-title,
-.receipt-content,
-.receipt-items,
-.receipt-total {
-  display: none;
+  line-height: 18px;
 }
 
 .command-panel {
@@ -1854,9 +1986,8 @@ onBeforeUnmount(() => {
 }
 
 .chat-message-robot .chat-avatar {
-  padding: 6px;
-  background: #13233a;
-  box-sizing: border-box;
+  padding: 0;
+  background: transparent;
 }
 
 .chat-body {
@@ -1866,12 +1997,12 @@ onBeforeUnmount(() => {
 }
 
 .chat-body h5 {
-  height: 18px;
-  margin: -2px 0 2px;
+  height: 21px;
+  margin: -1px 0 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
-  line-height: 18px;
+  line-height: 21px;
   color: #6f6f6f;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1881,22 +2012,12 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
-.chat-body h5 em {
-  margin-left: 4px;
-  padding: 0 4px;
-  color: #b26b00;
-  background: #fff2d6;
-  border-radius: 3px;
-  font-size: 11px;
-  font-style: normal;
-}
-
 .chat-bubble {
   position: relative;
-  min-height: 32px;
-  padding: 7px 9px;
+  min-height: 30px;
+  padding: 0;
   font-size: 16px;
-  line-height: 20px;
+  line-height: 18px;
   background: #fff;
   border: 1px solid #d1d1d1;
   border-radius: 7px;
@@ -1915,16 +2036,18 @@ onBeforeUnmount(() => {
 
 .chat-message-robot .chat-bubble::before,
 .chat-message-other .chat-bubble::before {
-  left: -9px;
+  top: 7px;
+  left: -16px;
   border-color: transparent #d1d1d1 transparent transparent;
-  border-width: 7px 9px 7px 0;
+  border-width: 8px;
 }
 
 .chat-message-robot .chat-bubble::after,
 .chat-message-other .chat-bubble::after {
-  left: -7px;
+  top: 5px;
+  left: -16px;
   border-color: transparent #fff transparent transparent;
-  border-width: 7px 9px 7px 0;
+  border-width: 10px;
 }
 
 .chat-message-member .chat-bubble {
@@ -1934,20 +2057,22 @@ onBeforeUnmount(() => {
 }
 
 .chat-message-member .chat-bubble::before {
-  right: -9px;
+  top: 7px;
+  right: -16px;
   border-color: transparent transparent transparent #84b559;
-  border-width: 7px 0 7px 9px;
+  border-width: 8px;
 }
 
 .chat-message-member .chat-bubble::after {
-  right: -7px;
+  top: 5px;
+  right: -16px;
   border-color: transparent transparent transparent #a1e85a;
-  border-width: 7px 0 7px 9px;
+  border-width: 10px;
 }
 
 .chat-bubble pre {
-  margin: 0;
-  font: inherit;
+  margin: 6px;
+  font: 16px/18px monospace;
   word-break: break-word;
   white-space: pre-wrap;
   user-select: text;
@@ -1955,17 +2080,6 @@ onBeforeUnmount(() => {
 
 .chat-bubble pre.is-copyable {
   cursor: pointer;
-}
-
-.chat-bubble-time {
-  margin-top: 3px;
-  color: #9a9a9a;
-  font-size: 11px;
-  line-height: 15px;
-}
-
-.chat-message-member .chat-bubble-time {
-  text-align: right;
 }
 
 :global(.room-copy-success .el-message-box__message) {
@@ -1978,66 +2092,12 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.receipt-title,
-.receipt-total,
-.receipt-items > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.receipt-title {
-  padding-bottom: 6px;
-  border-bottom: 1px solid #e5e5e5;
-}
-
-.receipt-title span {
-  font-size: 13px;
-  color: #a26a00;
-}
-
-.receipt-title .is-win,
-.receipt-result.is-win {
-  color: #169447;
-}
-
-.receipt-title .is-failed {
-  color: #d33b32;
-}
-
-.receipt-content {
-  padding: 7px 0 5px;
-  word-break: break-word;
-  white-space: pre-wrap;
-}
-
-.receipt-items {
-  min-width: 240px;
-  padding: 5px 0;
-  font-size: 13px;
-  color: #666;
-  border-top: 1px dashed #ddd;
-}
-
-.receipt-items > div + div {
-  margin-top: 3px;
-}
-
-.receipt-total {
-  padding-top: 6px;
-  border-top: 1px solid #e5e5e5;
-}
-
-.receipt-result {
-  margin-top: 5px;
-  font-weight: 700;
-}
-
 .cancel-link {
-  padding: 8px 0 0;
+  display: block;
+  margin: 3px 6px 6px;
+  padding: 0;
   font: inherit;
-  color: #e68a00;
+  color: #ff9800;
   cursor: pointer;
   background: transparent;
   border: 0;
@@ -2068,8 +2128,8 @@ onBeforeUnmount(() => {
 
 .composer-row {
   display: grid;
-  min-height: 48px;
-  grid-template-columns: 28px minmax(80px, 1fr) 50px 50px 28px;
+  min-height: 46px;
+  grid-template-columns: 26px minmax(80px, 1fr) 50px 50px 26px;
   align-items: end;
   gap: 10px;
   padding: 7px 10px;
@@ -2111,12 +2171,19 @@ onBeforeUnmount(() => {
   bottom: 239px;
 }
 
-.has-panel-quick .chat-stream {
-  bottom: 147px;
+.has-panel-commands .chat-stream {
+  bottom: 239px;
 }
 
-.has-panel-history .chat-stream {
-  bottom: min(399px, 60vh);
+.cancel-status {
+  display: block;
+  margin: 3px 6px 6px;
+  color: #888;
+}
+
+.has-panel-keyboard .new-message-tip,
+.has-panel-commands .new-message-tip {
+  bottom: calc(245px + env(safe-area-inset-bottom));
 }
 
 .composer-row textarea:focus {
@@ -2126,8 +2193,8 @@ onBeforeUnmount(() => {
 .keyboard-toggle,
 .history-toggle {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   margin-bottom: 2px;
   cursor: pointer;
@@ -2137,24 +2204,53 @@ onBeforeUnmount(() => {
 }
 
 .keyboard-toggle {
-  display: grid;
-  grid-template-columns: repeat(4, 4px);
-  grid-auto-rows: 4px;
-  place-content: center;
-  gap: 2px;
+  display: block;
+}
+
+.keyboard-toggle span,
+.keyboard-toggle span::after {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: #7f8085;
+  border-radius: 2px;
 }
 
 .keyboard-toggle span {
+  top: 6px;
+}
+
+.keyboard-toggle span:nth-child(1) { left: 4px; }
+.keyboard-toggle span:nth-child(2) { left: 9px; }
+.keyboard-toggle span:nth-child(3) { left: 14px; }
+.keyboard-toggle span:nth-child(4) { left: 19px; }
+
+.keyboard-toggle span::after {
+  top: 5px;
+  left: 0;
+  content: '';
+}
+
+.keyboard-toggle::before {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  width: 12px;
+  height: 3px;
   background: #7f8085;
-  border-radius: 50%;
+  border-radius: 2px;
+  content: '';
+  transform: translateX(-50%);
 }
 
 .keyboard-toggle.is-active,
 .history-toggle.is-active {
-  border-color: #d2691e;
+  border-color: darkorange;
 }
 
+.keyboard-toggle.is-active::before,
 .keyboard-toggle.is-active span,
+.keyboard-toggle.is-active span::after,
 .history-toggle.is-active::before,
 .history-toggle.is-active::after {
   background: #d2691e;
@@ -2183,7 +2279,7 @@ onBeforeUnmount(() => {
 .fast-select,
 .send-button {
   width: 50px;
-  height: 28px;
+  height: 26px;
   padding: 0;
   margin-bottom: 2px;
   font-weight: 700;
@@ -2195,14 +2291,15 @@ onBeforeUnmount(() => {
 }
 
 .send-button:disabled {
-  cursor: default;
-  background: #aaa;
-  border-color: #aaa;
+  opacity: 1;
+  color: #fff;
+  background: #1aac19;
+  border-color: #1f8b1b;
 }
 
 .composer-panel {
   background: #d0d3dc;
-  border-bottom: 1px solid #b9bcc4;
+  border-top: 1px solid #b9bcc4;
   box-sizing: border-box;
 }
 
@@ -2211,23 +2308,23 @@ onBeforeUnmount(() => {
   gap: 5px;
   width: 100%;
   height: 190px;
-  padding: 5px clamp(3px, 1.5vw, 8px);
+  padding: 5px 2%;
   overflow: hidden;
   color-scheme: light;
-  background: #dfe3ea;
+  background: #d0d3dc;
   grid-template-rows: repeat(5, minmax(0, 1fr));
 }
 
 .keyboard-row {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
-  gap: clamp(2px, 0.8vw, 5px);
+  gap: 2%;
   min-width: 0;
 }
 
 .keyboard-row button {
   min-width: 0;
-  min-height: 32px;
+  min-height: 30px;
   padding: 0;
   overflow: hidden;
   font-size: 15px;
@@ -2236,15 +2333,15 @@ onBeforeUnmount(() => {
   -webkit-text-fill-color: #202124 !important;
   cursor: pointer;
   background: #fff !important;
-  border: 1px solid #b8bec8;
-  border-radius: 5px;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 14%);
+  border: 0;
+  border-radius: 20%;
+  box-shadow: none;
   text-overflow: clip;
   white-space: nowrap;
 }
 
 .keyboard-row button:active {
-  background: #ffb24a !important;
+  background: darkorange !important;
 }
 
 .keyboard-row button.is-danger {
@@ -2255,7 +2352,7 @@ onBeforeUnmount(() => {
 .keyboard-row button.is-accent {
   color: #3d2a00 !important;
   -webkit-text-fill-color: #3d2a00 !important;
-  background: #ffb533 !important;
+  background: orange !important;
 }
 
 .quick-panel {
@@ -2349,62 +2446,68 @@ onBeforeUnmount(() => {
 .scratch-launcher {
   position: fixed;
   z-index: 8;
-  right: -10px;
-  width: 66px;
-  height: 66px;
-  color: #fff;
+  right: 0;
+  width: 50px;
+  height: 50px;
+  padding: 0;
   cursor: pointer;
-  background: #b21a78;
-  border: 4px solid #f4c231;
+  background: transparent;
+  border: 0;
   border-radius: 50%;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
-  font-size: 16px;
-  font-weight: 700;
+  box-sizing: border-box;
+  box-shadow: none;
   touch-action: none;
   user-select: none;
+}
+
+.scratch-launcher img {
+  display: block;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
 }
 
 .scratch-launcher.is-dragging {
   cursor: grabbing;
 }
 
-.lottery-table {
-  width: min(310px, calc(100vw - 118px));
-  overflow: hidden;
-  color: #333;
-  background: #fff;
-  border: 1px solid #bfc2c7;
-  border-radius: 3px;
+.draw-history-image {
+  display: block;
+  width: 381px;
+  max-width: 95%;
+  height: auto;
+  margin: 5px auto;
 }
 
-.lottery-table__head,
-.lottery-table__result {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.lottery-table {
+  width: min(245px, calc(100vw - 118px));
+  overflow: hidden;
+  color: #777;
+  background: #fff;
+  border: 1px solid #d5d5d5;
+  border-radius: 3px;
 }
 
 .lottery-table__head {
   display: grid;
-  grid-template-columns: 46px 58px minmax(92px, 1fr) 28px;
-  padding: 8px 10px;
-  color: #555;
-  background: #f1f2f4;
-  border-bottom: 1px solid #d6d8dc;
-  font-size: 13px;
+  grid-template-columns: 42px 48px minmax(108px, 1fr);
+  padding: 3px 6px;
+  color: #fff;
+  background: #2564d8;
+  font-size: 12px;
+  line-height: 14px;
 }
 
 .lottery-table__history-row {
   display: grid;
-  grid-template-columns: 46px 58px minmax(92px, 1fr) 28px;
-  padding: 4px 10px;
-  border-bottom: 1px solid #eee;
-  font-size: 13px;
+  grid-template-columns: 42px 48px minmax(108px, 1fr);
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 15px;
 }
 
 .lottery-table__history-row:nth-child(even) {
-  background: #f2f2f2;
+  background: #ededed;
 }
 
 .lottery-table__history-numbers {
@@ -2412,13 +2515,13 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: start;
   grid-template-columns: repeat(5, 14px);
-  gap: 6px;
+  gap: 2px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
 .lottery-table__history-numbers i {
-  color: #707070;
+  color: #aaa;
   font-style: normal;
   text-align: center;
 }
@@ -2439,83 +2542,10 @@ onBeforeUnmount(() => {
   color: #10c957;
 }
 
-.lottery-table__dragon-tiger {
-  font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 20px;
-  text-align: center;
-}
-
-.lottery-table__dragon-tiger.is-龙 {
-  color: #ff1493;
-}
-
-.lottery-table__dragon-tiger.is-虎 {
-  color: #0000ff;
-}
-
-.lottery-table__dragon-tiger.is-和 {
-  color: #00cc44;
-}
-
-.draw-brief {
-  margin: 0 0 6px;
-}
-
-.lottery-table__head span {
-  color: #888;
-  font-size: 12px;
-}
-
-.lottery-table__numbers {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 13px 10px;
-}
-
-.lottery-table__numbers span {
-  display: grid;
-  width: 34px;
-  color: #fff;
-  background: #c94f50;
-  border-radius: 50%;
-  aspect-ratio: 1;
-  place-items: center;
-  font-size: 20px;
-}
-
-.lottery-table.is-bold .lottery-table__numbers span {
-  font-weight: 800;
-}
-
-.lottery-table__result {
-  padding: 7px 12px;
-  color: #6d6d6d;
-  background: #f8f8f8;
-  border-top: 1px solid #e1e1e1;
-  font-size: 13px;
-}
 
 @media (width <= 700px) {
   .chat-message {
     padding: 0 10px;
-  }
-
-  .chat-avatar {
-    width: 42px;
-    height: 42px;
-    flex-basis: 42px;
-  }
-
-  .chat-body {
-    max-width: calc(100vw - 92px);
-  }
-
-  .receipt-items {
-    min-width: 0;
   }
 
   .composer-row {

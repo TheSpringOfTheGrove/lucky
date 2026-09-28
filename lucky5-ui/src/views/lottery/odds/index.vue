@@ -8,6 +8,7 @@ type OddsRow = {
   fallbackId?: string
   rate: number
   secondaryRate?: number
+  hasBelowOneRate?: boolean
   minLimit?: number
   maxLimit?: number
 }
@@ -18,10 +19,24 @@ const rows = reactive<OddsRow[]>([
   { id: 'regex4x', label: '四字现', rate: 360, minLimit: 1, maxLimit: 100 },
   { id: 'regex3x', label: '三字现', rate: 45, minLimit: 1, maxLimit: 100 },
   { id: 'regex2x', label: '二字现', rate: 9, minLimit: 1, maxLimit: 500 },
-  { id: 'regex4d', label: '四定位', rate: 9600, secondaryRate: 9600, minLimit: 0.1, maxLimit: 50 },
+  {
+    id: 'regex4d',
+    label: '四定位',
+    rate: 9600,
+    hasBelowOneRate: true,
+    minLimit: 0.1,
+    maxLimit: 50
+  },
   { id: 'regex4d4', label: '四条', rate: 7000 },
-  { id: 'regex3d', label: '三定位', rate: 960, secondaryRate: 960, minLimit: 0.1, maxLimit: 100 },
-  { id: 'regex2d', label: '二定位', rate: 96, minLimit: 1, maxLimit: 2000 },
+  { id: 'regex3d', label: '三定位', rate: 960, minLimit: 0.1, maxLimit: 100 },
+  {
+    id: 'regex2d',
+    label: '二定位',
+    rate: 96,
+    hasBelowOneRate: true,
+    minLimit: 1,
+    maxLimit: 2000
+  },
   {
     id: 'regex5d2',
     fallbackId: 'regex2d',
@@ -42,13 +57,16 @@ const playTypeLabel = computed(() => {
   return '普通+龙虎和'
 })
 const visibleRows = computed(() => {
+  // 五位二定仍保留在 rows 中以免保存普通赔率时覆盖已有独立配置，
+  // 但按后台要求不在赔率设置页展示。
+  const normalRows = rows.filter((row) => row.id !== 'regex5d2')
   if (playType.value === 0) {
-    return rows.filter((row) => !dragonTigerOddsIds.has(row.id))
+    return normalRows.filter((row) => !dragonTigerOddsIds.has(row.id))
   }
   if (playType.value === 1) {
-    return rows.filter((row) => dragonTigerOddsIds.has(row.id))
+    return normalRows.filter((row) => dragonTigerOddsIds.has(row.id))
   }
-  return rows
+  return normalRows
 })
 
 watch(
@@ -60,7 +78,12 @@ watch(
         (row.fallbackId ? odds.find((item) => item.id === row.fallbackId) : undefined)
       if (!saved) return
       row.rate = Number(saved.rate || 0)
-      if (row.secondaryRate !== undefined) row.secondaryRate = Number(saved.secondaryRate || 0)
+      if (row.hasBelowOneRate) {
+        row.secondaryRate =
+          saved.secondaryRate === undefined || saved.secondaryRate === null
+            ? undefined
+            : Number(saved.secondaryRate)
+      }
       if (row.minLimit !== undefined) row.minLimit = Number(saved.minLimit || 0)
       if (row.maxLimit !== undefined) row.maxLimit = Number(saved.maxLimit || 0)
     })
@@ -69,12 +92,17 @@ watch(
 )
 
 const save = () => {
+  const existingOdds = store.odds
   store.odds = rows.map((row) => ({
+    // 四定位、二定位支持独立填写一元以下赔率；其它玩法不在此页编辑
+    // 次赔率，保存时继续保留原值。
+    secondaryRate: row.hasBelowOneRate
+      ? row.secondaryRate
+      : existingOdds.find((item) => item.id === row.id)?.secondaryRate,
     id: row.id,
     play: row.label,
     item: '',
     rate: row.rate,
-    secondaryRate: row.secondaryRate,
     minLimit: row.minLimit,
     maxLimit: row.maxLimit,
     status: '启用'
@@ -106,11 +134,13 @@ const save = () => {
               <div class="lucky-odds-form__rates">
                 <el-input-number v-model="row.rate" :min="0" :controls="false" placeholder="赔率" />
                 <el-input-number
-                  v-if="row.secondaryRate !== undefined"
+                  v-if="row.hasBelowOneRate"
+                  class="lucky-odds-form__below-one-hint"
                   v-model="row.secondaryRate"
                   :min="0"
                   :controls="false"
                   placeholder="一元以下"
+                  aria-label="一元以下说明"
                 />
               </div>
             </el-col>
@@ -157,6 +187,11 @@ const save = () => {
 .lucky-odds-form__rates {
   display: flex;
   gap: 8px;
+}
+
+/* Element Plus 的数字框默认居中；旧后台赔率表内所有输入均从左侧开始。 */
+.lucky-odds-form :deep(.el-input__inner) {
+  text-align: left;
 }
 
 @media (width <= 768px) {

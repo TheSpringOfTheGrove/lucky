@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
 const visible = ref(false)
@@ -32,7 +33,7 @@ const submit = async () => {
           <Icon icon="ep:plus" class="mr-5px" />新增快捷指令
         </el-button>
       </div>
-      <PaginatedTable :data="store.quickCommands" border>
+      <PaginatedTable :data="store.quickCommands" border show-summary :summary-method="legacyFooterHeaders">
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <span>{{ row.label }}</span>

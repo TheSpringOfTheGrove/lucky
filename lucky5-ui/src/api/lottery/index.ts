@@ -30,6 +30,13 @@ export interface LotteryOrderPageParams {
   orderType?: string
 }
 
+export interface LotteryAmountRecordPageParams {
+  pageNo: number
+  pageSize: number
+  nickname?: string
+  timeType: number
+}
+
 export interface LotteryOrderHistoryParams {
   pageNo: number
   pageSize: number
@@ -95,6 +102,12 @@ export const createAmountRequestApi = (
 
 export const getAmountRecordsApi = () =>
   request.get<Record<string, any>[]>({ url: `${base}/amount-records` })
+
+export const getAmountRecordPageApi = (params: LotteryAmountRecordPageParams) =>
+  request.get<{ items: Record<string, any>[]; total: number; summary: Record<string, number> }>({
+    url: `${base}/amount-records/page`,
+    params
+  })
 
 export const getOrdersApi = (
   params: LotteryOrderPageParams = { pageNo: 1, pageSize: 20 }

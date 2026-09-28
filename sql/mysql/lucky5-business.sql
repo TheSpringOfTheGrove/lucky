@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_link_config` (
   `dealer_url` varchar(500) NOT NULL DEFAULT '', `room_url` varchar(500) NOT NULL DEFAULT '',
   `short_url` varchar(500) NOT NULL DEFAULT '', `qr_mode` varchar(50) NOT NULL DEFAULT '',
   `short_url_mode` tinyint NOT NULL DEFAULT 2, `group_link_enabled` bit(1) NOT NULL DEFAULT b'1',
-  `private_link_enabled` bit(1) NOT NULL DEFAULT b'1', `default_room_mode` varchar(20) NOT NULL DEFAULT 'GROUP',
+  `private_link_enabled` bit(1) NOT NULL DEFAULT b'0', `default_room_mode` varchar(20) NOT NULL DEFAULT 'GROUP',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
@@ -122,12 +122,13 @@ SET @lucky5_ddl = IF(
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_link_config' AND column_name='private_link_enabled')=0,
-  'ALTER TABLE `lucky5_link_config` ADD COLUMN `private_link_enabled` bit(1) NOT NULL DEFAULT b''1'' AFTER `group_link_enabled`', 'SELECT 1');
+  'ALTER TABLE `lucky5_link_config` ADD COLUMN `private_link_enabled` bit(1) NOT NULL DEFAULT b''0'' AFTER `group_link_enabled`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_link_config' AND column_name='default_room_mode')=0,
   'ALTER TABLE `lucky5_link_config` ADD COLUMN `default_room_mode` varchar(20) NOT NULL DEFAULT ''GROUP'' AFTER `private_link_enabled`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+ALTER TABLE `lucky5_link_config` ALTER `private_link_enabled` SET DEFAULT b'0';
 
 CREATE TABLE IF NOT EXISTS `lucky5_chima_config` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `si_zi_xian` decimal(18,2) NOT NULL DEFAULT 0,
@@ -182,16 +183,36 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `member_type` varchar(20) NOT NULL DEFAULT 'REAL', `auto_proxy` bit(1) NOT NULL DEFAULT b'0',
   `auto_bet_enabled` bit(1) NOT NULL DEFAULT b'0', `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 1000,
   `eat_enabled` bit(1) NOT NULL DEFAULT b'0',
-  `searchable` bit(1) NOT NULL DEFAULT b'1', `open_id` varchar(100) NULL, `fingerprint` varchar(200) NOT NULL DEFAULT '',
+  `searchable` bit(1) NOT NULL DEFAULT b'1', `open_id` varchar(100) NULL, `short_link_code` varchar(20) NULL, `fingerprint` varchar(200) NOT NULL DEFAULT '',
   `private_chat` bit(1) NOT NULL DEFAULT b'0', `web_only` bit(1) NOT NULL DEFAULT b'0',
-  `blue_whale_password` varchar(200) NOT NULL DEFAULT '', `avatar` int NOT NULL DEFAULT 1,
+  `blue_whale_password` varchar(200) NOT NULL DEFAULT '', `avatar` int NOT NULL DEFAULT 1, `avatar_path` varchar(200) NOT NULL DEFAULT '',
   `last_seen_at` datetime(6) NULL, `flow_cleared_at` datetime NULL, `version` int NOT NULL DEFAULT 0,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_member_name` (`tenant_id`,`user_id`,`name`,`deleted`),
-  UNIQUE KEY `uk_lucky5_member_open_id` (`tenant_id`,`open_id`), KEY `idx_lucky5_member_tenant` (`tenant_id`,`user_id`)
+  UNIQUE KEY `uk_lucky5_member_open_id` (`tenant_id`,`open_id`), UNIQUE KEY `uk_lucky5_member_short_link` (`short_link_code`),
+  KEY `idx_lucky5_member_tenant` (`tenant_id`,`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 会员';
+
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='short_link_code')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `short_link_code` varchar(20) NULL AFTER `open_id`',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='avatar_path')=0,
+  'ALTER TABLE `lucky5_member` ADD COLUMN `avatar_path` varchar(200) NOT NULL DEFAULT '''' AFTER `avatar`', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.statistics
+   WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND index_name='uk_lucky5_member_short_link')=0,
+  'ALTER TABLE `lucky5_member` ADD UNIQUE KEY `uk_lucky5_member_short_link` (`short_link_code`)',
+  'SELECT 1'
+);
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 CREATE TABLE IF NOT EXISTS `lucky5_amount_record` (
   `id` varchar(64) NOT NULL, `user_id` bigint NOT NULL, `member_id` varchar(64) NOT NULL, `member_name` varchar(100) NOT NULL,
@@ -452,6 +473,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `status` varchar(30) NOT NULL, `order_id` varchar(64) NULL, `external_id` varchar(100) NULL,
   `error` varchar(1000) NOT NULL DEFAULT '', `command_type` varchar(50) NOT NULL DEFAULT '',
   `message_type` varchar(30) NOT NULL DEFAULT 'PLAYER', `reply` mediumtext NOT NULL,
+  `draw_image` mediumtext NULL,
   `processed_at` datetime NULL,
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -461,6 +483,37 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   KEY `idx_lucky5_message_member_time` (`tenant_id`,`user_id`,`member_id`,`channel`,`create_time`),
   KEY `idx_lucky5_message_legacy_member_time` (`tenant_id`,`user_id`,`member`,`channel`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 消息';
+
+-- A formal draw must remain part of the room timeline. Backfill one idempotent robot event for each settled draw
+-- so historical room loading can render the same draw card after a refresh.
+INSERT INTO `lucky5_message`
+  (`user_id`,`channel`,`member_id`,`member`,`period`,`content`,`status`,`external_id`,`error`,`command_type`,
+   `message_type`,`reply`,`processed_at`,`creator`,`create_time`,`updater`,`update_time`,`deleted`,`tenant_id`)
+SELECT d.`user_id`, '网页群', NULL, '', d.`period`, REPLACE(d.`result`, ',', ''), '已开奖', CONCAT('draw-result:', d.`period`), '', 'DRAW_RESULT',
+       'PLAYER', CONCAT('^^--| ', RIGHT(d.`period`, 3), '期开奖结果-',
+         SUBSTRING(REPLACE(d.`result`, ',', ''), 1, 1), '|', SUBSTRING(REPLACE(d.`result`, ',', ''), 2, 1), '|',
+         SUBSTRING(REPLACE(d.`result`, ',', ''), 3, 1), '|', SUBSTRING(REPLACE(d.`result`, ',', ''), 4, 1), '|',
+         SUBSTRING(REPLACE(d.`result`, ',', ''), 5, 1), '|',
+         CASE WHEN SUBSTRING(REPLACE(d.`result`, ',', ''), 1, 1) = SUBSTRING(REPLACE(d.`result`, ',', ''), 4, 1) THEN '和'
+              WHEN SUBSTRING(REPLACE(d.`result`, ',', ''), 1, 1) > SUBSTRING(REPLACE(d.`result`, ',', ''), 4, 1) THEN '龙' ELSE '虎' END),
+       d.`settled_at`, 'system', COALESCE(d.`settled_at`, d.`create_time`, NOW()), 'system',
+       COALESCE(d.`settled_at`, d.`create_time`, NOW()), b'0', d.`tenant_id`
+FROM `lucky5_draw` d
+LEFT JOIN `lucky5_message` m
+  ON m.`tenant_id` = d.`tenant_id` AND m.`user_id` = d.`user_id`
+  AND m.`external_id` = CONCAT('draw-result:', d.`period`) AND m.`deleted` = b'0'
+WHERE REPLACE(d.`result`, ',', '') REGEXP '^[0-9]{5}$' AND REPLACE(d.`result`, ',', '') <> '00000' AND m.`id` IS NULL;
+
+UPDATE `lucky5_message` m
+JOIN `lucky5_draw` d ON d.`tenant_id` = m.`tenant_id` AND d.`user_id` = m.`user_id` AND d.`period` = m.`period`
+SET m.`content` = REPLACE(d.`result`, ',', ''),
+    m.`reply` = CONCAT('^^--| ', RIGHT(d.`period`, 3), '期开奖结果-',
+      SUBSTRING(REPLACE(d.`result`, ',', ''), 1, 1), '|', SUBSTRING(REPLACE(d.`result`, ',', ''), 2, 1), '|',
+      SUBSTRING(REPLACE(d.`result`, ',', ''), 3, 1), '|', SUBSTRING(REPLACE(d.`result`, ',', ''), 4, 1), '|',
+      SUBSTRING(REPLACE(d.`result`, ',', ''), 5, 1), '|',
+      CASE WHEN SUBSTRING(REPLACE(d.`result`, ',', ''), 1, 1) = SUBSTRING(REPLACE(d.`result`, ',', ''), 4, 1) THEN '和'
+           WHEN SUBSTRING(REPLACE(d.`result`, ',', ''), 1, 1) > SUBSTRING(REPLACE(d.`result`, ',', ''), 4, 1) THEN '龙' ELSE '虎' END)
+WHERE m.`command_type` = 'DRAW_RESULT' AND REPLACE(d.`result`, ',', '') REGEXP '^[0-9]{5}$';
 
 -- Existing installations keep their data volume. Add the polling indexes idempotently as well.
 SET @lucky5_ddl = IF((SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE()
@@ -553,6 +606,10 @@ PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lu
 SET @lucky5_ddl = IF(
   (SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='reply')<>'mediumtext',
   'ALTER TABLE `lucky5_message` MODIFY COLUMN `reply` mediumtext NOT NULL', 'SELECT 1');
+PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
+SET @lucky5_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_message' AND column_name='draw_image')=0,
+  'ALTER TABLE `lucky5_message` ADD COLUMN `draw_image` mediumtext NULL AFTER `reply`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 
 -- 拉手返水比例与发放明细，兼容已经初始化的数据库。
@@ -743,23 +800,24 @@ INSERT IGNORE INTO `lucky5_quick_command` (`id`,`tenant_id`,`user_id`,`label`,`c
 ('QC10',1,1,'百02468十1245789尾13579各0.5','百02468十1245789尾13579各0.5',10,b'1');
 
 INSERT INTO `system_menu` (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`path`,`icon`,`component`,`component_name`,`status`,`visible`,`keep_alive`,`always_show`,`creator`,`updater`,`deleted`) VALUES
-(7000,'首页','lottery:dashboard:query',2,10,0,'/lucky5/dashboard','ep:data-board','lottery/dashboard/index','LotteryDashboard',0,b'0',b'1',b'1','1','1',b'0'),
-(7010,'配置管理','lottery:config:manage',2,20,0,'/lucky5/config','ep:setting','lottery/config/index','LotteryConfig',0,b'1',b'1',b'1','1','1',b'0'),
-(7020,'赔率设置','lottery:odds:manage',2,30,0,'/lucky5/odds','ep:setting','lottery/odds/index','LotteryOdds',0,b'1',b'1',b'1','1','1',b'0'),
-(7030,'链接配置','lottery:link:manage',2,40,0,'/lucky5/links','ep:link','lottery/linkConfig/index','LotteryLinkConfig',0,b'1',b'1',b'1','1','1',b'0'),
-(7040,'预设订单管理','lottery:preset:manage',2,50,0,'/lucky5/presets','ep:document-add','lottery/presetOrder/index','LotteryPresetOrder',0,b'1',b'1',b'1','1','1',b'0'),
-(7050,'跟单列表','lottery:follow:manage',2,60,0,'/lucky5/follows','ep:copy-document','lottery/followOrder/index','LotteryFollowOrder',0,b'1',b'1',b'1','1','1',b'0'),
-(7060,'会员管理','lottery:member:manage',2,70,0,'/lucky5/members','ep:user-filled','lottery/member/index','LotteryMember',0,b'1',b'1',b'1','1','1',b'0'),
-(7070,'会员操作管理','lottery:operator:query',2,80,0,'/lucky5/operators','ep:tickets','lottery/operator/index','LotteryOperator',0,b'1',b'1',b'1','1','1',b'0'),
-(7080,'上下分审核','lottery:amount:manage',2,90,0,'/lucky5/amount-records','ep:wallet','lottery/amountRecord/index','LotteryAmountRecord',0,b'1',b'1',b'1','1','1',b'0'),
-(7090,'订单查询','lottery:order:manage',2,100,0,'/lucky5/orders','ep:shopping-cart','lottery/orderInfo/index','LotteryOrderInfo',0,b'1',b'1',b'1','1','1',b'0'),
-(7100,'历史记录','lottery:history:query',2,110,0,'/lucky5/history','ep:clock','lottery/orderHistory/index','LotteryOrderHistory',0,b'1',b'1',b'1','1','1',b'0'),
-(7110,'开奖历史记录','lottery:draw:manage',2,120,0,'/lucky5/draws','ep:calendar','lottery/drawHistory/index','LotteryDrawHistory',0,b'1',b'1',b'1','1','1',b'0'),
-(7120,'返水管理','lottery:rebate:manage',2,130,0,'/lucky5/rebates','ep:refresh-left','lottery/memberDiscount/index','LotteryMemberDiscount',0,b'1',b'1',b'1','1','1',b'0'),
-(7130,'吃码额度设定','lottery:chima-config:manage',2,140,0,'/lucky5/chima-config','ep:setting','lottery/chimaConfig/index','LotteryChimaConfig',0,b'1',b'1',b'1','1','1',b'0'),
-(7140,'吃码盈亏','lottery:chima-record:manage',2,150,0,'/lucky5/chima-records','ep:money','lottery/chimaRecord/index','LotteryChimaRecord',0,b'1',b'1',b'1','1','1',b'0'),
-(7150,'消息记录','lottery:message:manage',2,160,0,'/lucky5/messages','ep:chat-dot-round','lottery/messages/index','LotteryMessages',0,b'1',b'1',b'1','1','1',b'0'),
-(7190,'快捷指令','lottery:quick-command:manage',2,890,0,'/lucky5/quick-command','ep:promotion','lottery/quickCommand/index','LotteryQuickCommand',0,b'1',b'1',b'1','1','1',b'0')
+(7000,'首页','lottery:dashboard:query',2,10,0,'/lucky5/dashboard','fa:dashboard','lottery/dashboard/index','LotteryDashboard',0,b'0',b'1',b'1','1','1',b'0'),
+(7010,'配置管理','lottery:config:manage',2,20,0,'/lucky5/config','fa:cog','lottery/config/index','LotteryConfig',0,b'1',b'1',b'1','1','1',b'0'),
+(7020,'赔率设置','lottery:odds:manage',2,30,0,'/lucky5/odds','fa:cog','lottery/odds/index','LotteryOdds',0,b'1',b'1',b'1','1','1',b'0'),
+(7025,'飞鱼蓝鲸信息','lottery:dashboard:query',2,35,0,'/lucky5/fish-info','fa:dashboard','lottery/fishInfo/index','LotteryFishInfo',0,b'1',b'1',b'1','1','1',b'0'),
+(7030,'链接配置','lottery:link:manage',2,40,0,'/lucky5/links','fa:link','lottery/linkConfig/index','LotteryLinkConfig',0,b'1',b'1',b'1','1','1',b'0'),
+(7040,'预设订单管理','lottery:preset:manage',2,50,0,'/lucky5/presets','fa:gear','lottery/presetOrder/index','LotteryPresetOrder',0,b'1',b'1',b'1','1','1',b'0'),
+(7050,'跟单列表','lottery:follow:manage',2,60,0,'/lucky5/follows','fa:clone','lottery/followOrder/index','LotteryFollowOrder',0,b'1',b'1',b'1','1','1',b'0'),
+(7060,'会员管理','lottery:member:manage',2,70,0,'/lucky5/members','fa:users','lottery/member/index','LotteryMember',0,b'1',b'1',b'1','1','1',b'0'),
+(7070,'会员操作管理','lottery:operator:query',2,80,0,'/lucky5/operators','fa:users','lottery/operator/index','LotteryOperator',0,b'1',b'1',b'1','1','1',b'0'),
+(7080,'上下分审核','lottery:amount:manage',2,90,0,'/lucky5/amount-records','fa:cny','lottery/amountRecord/index','LotteryAmountRecord',0,b'1',b'1',b'1','1','1',b'0'),
+(7090,'订单查询','lottery:order:manage',2,100,0,'/lucky5/orders','fa:shopping-cart','lottery/orderInfo/index','LotteryOrderInfo',0,b'1',b'1',b'1','1','1',b'0'),
+(7100,'历史记录','lottery:history:query',2,110,0,'/lucky5/history','fa:history','lottery/orderHistory/index','LotteryOrderHistory',0,b'1',b'1',b'1','1','1',b'0'),
+(7110,'开奖历史记录','lottery:draw:manage',2,120,0,'/lucky5/draws','fa:database','lottery/drawHistory/index','LotteryDrawHistory',0,b'1',b'1',b'1','1','1',b'0'),
+(7120,'返水管理','lottery:rebate:manage',2,130,0,'/lucky5/rebates','fa:backward','lottery/memberDiscount/index','LotteryMemberDiscount',0,b'1',b'1',b'1','1','1',b'0'),
+(7130,'吃码额度设定','lottery:chima-config:manage',2,140,0,'/lucky5/chima-config','fa:cog','lottery/chimaConfig/index','LotteryChimaConfig',0,b'1',b'1',b'1','1','1',b'0'),
+(7140,'吃码盈亏','lottery:chima-record:manage',2,150,0,'/lucky5/chima-records','fa:balance-scale','lottery/chimaRecord/index','LotteryChimaRecord',0,b'1',b'1',b'1','1','1',b'0'),
+(7150,'消息记录','lottery:message:manage',2,160,0,'/lucky5/messages','fa:wrench','lottery/messages/index','LotteryMessages',0,b'1',b'1',b'1','1','1',b'0'),
+(7190,'快捷指令','lottery:quick-command:manage',2,890,0,'/lucky5/quick-command','fa:bolt','lottery/quickCommand/index','LotteryQuickCommand',0,b'1',b'1',b'1','1','1',b'0')
 ON DUPLICATE KEY UPDATE `name`=VALUES(`name`),`permission`=VALUES(`permission`),`type`=VALUES(`type`),`sort`=VALUES(`sort`),
 `parent_id`=VALUES(`parent_id`),`path`=VALUES(`path`),`icon`=VALUES(`icon`),`component`=VALUES(`component`),
 `component_name`=VALUES(`component_name`),`status`=0,`visible`=VALUES(`visible`),`deleted`=b'0';
@@ -771,7 +829,7 @@ DROP TEMPORARY TABLE IF EXISTS `lucky5_retained_menu`;
 CREATE TEMPORARY TABLE `lucky5_retained_menu` (`id` bigint NOT NULL PRIMARY KEY);
 INSERT IGNORE INTO `lucky5_retained_menu`
 WITH RECURSIVE `retained` (`id`) AS (
-  SELECT `id` FROM `system_menu` WHERE `id` IN (1,2,7000,7010,7020,7030,7040,7050,7060,7070,7080,7090,7100,7110,7120,7130,7140,7150,7190)
+  SELECT `id` FROM `system_menu` WHERE `id` IN (1,2,7000,7010,7020,7025,7030,7040,7050,7060,7070,7080,7090,7100,7110,7120,7130,7140,7150,7190)
   UNION DISTINCT
   SELECT m.`id` FROM `system_menu` m JOIN `retained` p ON m.`parent_id`=p.`id`
 )

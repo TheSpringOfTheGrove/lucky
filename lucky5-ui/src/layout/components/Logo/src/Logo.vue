@@ -20,13 +20,19 @@ const layout = computed(() => appStore.getLayout)
 
 const collapse = computed(() => appStore.getCollapse)
 
+const mobile = computed(() => appStore.getMobile)
+
 onMounted(() => {
-  if (unref(collapse)) show.value = false
+  if (unref(collapse) && !unref(mobile)) show.value = false
 })
 
 watch(
   () => collapse.value,
   (collapse: boolean) => {
+    if (unref(mobile)) {
+      show.value = true
+      return
+    }
     if (
       getLayoutRenderMode(unref(layout)) === 'topLeft' ||
       getLayoutRenderMode(unref(layout)) === 'cutMenu'
@@ -42,6 +48,16 @@ watch(
       show.value = !collapse
     }
   }
+)
+
+watch(
+  () => mobile.value,
+  (isMobile) => {
+    if (isMobile) {
+      show.value = true
+    }
+  },
+  { immediate: true }
 )
 
 watch(
@@ -66,6 +82,7 @@ watch(
     <router-link
       :class="[
         prefixCls,
+        'luck-logo',
         getLayoutRenderMode(layout) !== 'classic' ? `${prefixCls}__Top` : '',
         'flex !h-[var(--logo-height)] items-center cursor-pointer pl-8px relative decoration-none overflow-hidden'
       ]"
@@ -88,7 +105,10 @@ watch(
           }
         ]"
       >
-        {{ title }}
+        <span class="luck-logo__title">{{ title }}</span>
+        <span class="luck-logo__subtitle">管理后台</span>
+        <span class="luck-logo__legacy-title">请仔细辨别 谨防假冒</span>
+        <span class="luck-logo__legacy-subtitle">防伪查询中心17t.xyz</span>
       </div>
     </router-link>
   </div>

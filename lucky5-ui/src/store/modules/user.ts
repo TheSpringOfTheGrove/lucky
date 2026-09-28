@@ -9,6 +9,7 @@ const { wsCache } = useCache()
 interface UserVO {
   id: number
   avatar: string
+  username?: string
   nickname: string
   deptId: number
 }
@@ -29,6 +30,7 @@ export const useUserStore = defineStore('admin-user', {
     user: {
       id: 0,
       avatar: '',
+      username: '',
       nickname: '',
       deptId: 0
     }
@@ -96,6 +98,7 @@ export const useUserStore = defineStore('admin-user', {
       this.user = {
         id: 0,
         avatar: '',
+        username: '',
         nickname: '',
         deptId: 0
       }

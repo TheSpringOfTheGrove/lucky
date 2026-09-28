@@ -9,15 +9,15 @@ import {
   type LotteryOrderPageParams
 } from '@/api/lottery'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
 const nickname = ref('')
 const period = ref('')
-const orderType = ref('')
 const refreshing = ref(false)
 const rows = ref<any[]>([])
 const pageNo = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const total = ref(0)
 const detailVisible = ref(false)
 const detailOrder = ref<any>(null)
@@ -34,6 +34,7 @@ const reviewDecision = ref<'ACCEPTED' | 'NOT_ACCEPTED'>('ACCEPTED')
 const reviewExternalOrderId = ref('')
 const reviewReason = ref('')
 const isMobile = useMediaQuery('(max-width: 600px)')
+const useMobileCards = false
 const detailDescriptionColumns = computed(() => (isMobile.value ? 1 : 3))
 const startRow = computed(() => (total.value ? (pageNo.value - 1) * pageSize.value + 1 : 0))
 const endRow = computed(() => Math.min(pageNo.value * pageSize.value, total.value))
@@ -48,8 +49,7 @@ const orderQuery = (): LotteryOrderPageParams => ({
   pageNo: pageNo.value,
   pageSize: pageSize.value,
   nickname: nickname.value.trim() || undefined,
-  period: period.value.trim() || undefined,
-  orderType: orderType.value || undefined
+  period: period.value.trim() || undefined
 })
 
 const loadOrders = async () => {
@@ -232,21 +232,27 @@ const cancelOrder = async (row: any) => {
 </script>
 
 <template>
-  <div class="lucky-page">
-    <h1 class="lucky-page__heading">订单查询 <small>历史订单查询</small></h1>
-    <div class="lucky-toolbar">
-      <div class="lucky-toolbar__filters">
+  <div class="lucky-page lucky-legacy-content">
+    <div class="order-info-heading">订单查询 <small>历史订单查询</small></div>
+    <div class="lucky-toolbar order-info-toolbar">
+      <div class="lucky-toolbar__filters order-info-toolbar__filters">
         <el-input v-model="nickname" clearable placeholder="昵称" />
         <el-input v-model="period" clearable placeholder="期数" />
-        <el-select v-model="orderType" clearable placeholder="订单类型" class="order-type-select">
-          <el-option label="真实玩家" value="PLAYER" />
-          <el-option label="自动托" value="AUTO_PROXY" />
-        </el-select>
-        <el-button type="primary" :loading="refreshing" @click="search">搜索</el-button>
+        <el-button class="order-search-button" :loading="refreshing" @click="search">搜索</el-button>
       </div>
     </div>
-    <el-card v-loading="refreshing" shadow="never">
-      <div v-if="isMobile" class="order-mobile-list">
+    <el-card v-loading="refreshing" class="legacy-list-box" shadow="never">
+      <div class="order-table-length">
+        <span>显示</span>
+        <el-select v-model="pageSize" @change="changePageSize">
+          <el-option :value="10" label="10" />
+          <el-option :value="20" label="20" />
+          <el-option :value="50" label="50" />
+          <el-option :value="100" label="100" />
+        </el-select>
+        <span>条目</span>
+      </div>
+      <div v-if="useMobileCards" class="order-mobile-list">
         <article v-for="row in rows" :key="row.id" class="lucky-mobile-card order-mobile-card">
           <div class="lucky-mobile-card__title">
             <span>{{ row.period }}</span>
@@ -287,9 +293,9 @@ const cancelOrder = async (row: any) => {
         </article>
         <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
       </div>
-      <el-table v-else :key="orderType || 'ALL'" :data="rows" row-key="id" border>
-        <el-table-column prop="period" label="期号" min-width="150" />
-        <el-table-column label="文本" min-width="240">
+      <el-table v-else :data="rows" row-key="id" border class="order-info-table" show-summary :summary-method="legacyFooterHeaders">
+        <el-table-column prop="period" label="期号" min-width="105" />
+        <el-table-column label="文本" min-width="380">
           <template #default="{ row }">
             <el-link
               class="order-content-link"
@@ -301,23 +307,17 @@ const cancelOrder = async (row: any) => {
             </el-link>
           </template>
         </el-table-column>
-        <el-table-column prop="member" label="会员" min-width="120" />
-        <el-table-column prop="amount" label="总金额" min-width="110" />
-        <el-table-column label="状态" min-width="110" align="center">
+        <el-table-column prop="member" label="会员" min-width="68" />
+        <el-table-column prop="amount" label="总金额" min-width="85" />
+        <el-table-column label="状态" min-width="76" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTagType(displayStatus(row))">{{ displayStatus(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="类型" min-width="110">
-          <template #default="{ row }">
-            <el-tag v-if="normalizedOrderType(row) === 'AUTO_PROXY'" type="warning">自动托</el-tag>
-            <el-tag v-else type="success">真实玩家</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="来源" min-width="100">
+        <el-table-column label="来源" min-width="64">
           <template #default>网页</template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" min-width="200" />
+        <el-table-column prop="createdAt" label="创建时间" min-width="150" />
         <el-table-column label="操作" width="110" fixed="right" align="center">
           <template #default="{ row }">
             <el-button
@@ -341,9 +341,8 @@ const cancelOrder = async (row: any) => {
         <el-pagination
           :current-page="pageNo"
           :page-size="pageSize"
-          :page-sizes="[10, 20, 50, 100]"
           :total="total"
-          :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next, jumper'"
+          :layout="isMobile ? 'prev, pager, next' : 'prev, pager, next'"
           :pager-count="isMobile ? 3 : 7"
           :small="isMobile"
           background
@@ -387,6 +386,8 @@ const cancelOrder = async (row: any) => {
         border
         max-height="420"
         :row-class-name="detailRowClassName"
+        show-summary
+        :summary-method="legacyFooterHeaders"
       >
         <el-table-column prop="play" label="玩法" :min-width="isMobile ? 72 : 100" />
         <el-table-column prop="selection" label="选项" :min-width="isMobile ? 74 : 90" />
@@ -484,12 +485,76 @@ const cancelOrder = async (row: any) => {
 </template>
 
 <style scoped>
+.order-info-heading {
+  display: block !important;
+  margin: 0 0 24px;
+  padding-top: 15px;
+  color: #222;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.order-info-heading small {
+  margin-left: 6px;
+  color: #777;
+  font-size: 15px;
+  font-weight: 400;
+}
+
+.order-info-toolbar {
+  margin-bottom: 44px;
+}
+
+.order-info-toolbar__filters {
+  gap: 30px !important;
+}
+
+.order-info-toolbar__filters :deep(.el-input) {
+  width: 170px;
+}
+
+.order-search-button {
+  --el-button-text-color: #fff;
+  --el-button-bg-color: #00c0ef;
+  --el-button-border-color: #00acd6;
+  --el-button-hover-text-color: #fff;
+  --el-button-hover-bg-color: #00acd6;
+  --el-button-hover-border-color: #009abf;
+  min-height: 34px;
+  color: #fff !important;
+  background: #00c0ef !important;
+  border-color: #00acd6 !important;
+}
+
+.order-table-length {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  gap: 8px;
+  color: #333;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.order-table-length :deep(.el-select) {
+  width: 64px;
+}
+
+.order-table-length :deep(.el-select__wrapper) {
+  min-height: 30px;
+}
+
 .order-content-link {
   display: inline-flex;
   max-width: 100%;
   text-align: left;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.legacy-list-box :deep(.el-card__body) {
+  padding: 10px;
 }
 
 .order-detail-content {
@@ -508,10 +573,6 @@ const cancelOrder = async (row: any) => {
 
 :deep(.el-table__body tr.order-detail-row--lost > td.el-table__cell) {
   background: var(--el-color-success-light-9);
-}
-
-.order-type-select {
-  width: 140px;
 }
 
 .order-mobile-actions {
@@ -540,7 +601,31 @@ const cancelOrder = async (row: any) => {
   margin-top: 16px;
 }
 
+.order-info-table :deep(th.el-table__cell) {
+  height: 40px;
+  padding: 0;
+  color: #333;
+  font-size: 16px;
+  font-weight: 600;
+  background: #fff;
+}
+
+.order-info-table :deep(td.el-table__cell) {
+  min-height: 46px;
+  padding: 8px;
+  color: #444;
+  font-size: 15px;
+}
+
 @media (width <= 600px) {
+  .order-info-toolbar {
+    margin-bottom: 20px;
+  }
+
+  .order-info-toolbar__filters {
+    gap: 8px !important;
+  }
+
   .order-pagination {
     align-items: stretch;
     flex-direction: column;

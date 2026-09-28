@@ -35,11 +35,15 @@ public class MemberDO extends LotteryUserBaseDO {
     private Boolean eatEnabled;
     private Boolean searchable;
     private String openId;
+    /** Public short-link token. It is globally unique because /k/{token} has no tenant parameter. */
+    private String shortLinkCode;
     private String fingerprint;
     private Boolean privateChat;
     private Boolean webOnly;
     private String blueWhalePassword;
     private Integer avatar;
+    /** Stable relative path of the selected bundled player avatar. */
+    private String avatarPath;
     private LocalDateTime lastSeenAt;
     private LocalDateTime flowClearedAt;
     private Integer version;

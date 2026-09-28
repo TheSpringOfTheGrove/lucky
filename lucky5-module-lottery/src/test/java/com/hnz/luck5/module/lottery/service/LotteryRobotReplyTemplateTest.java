@@ -15,8 +15,9 @@ class LotteryRobotReplyTemplateTest {
     void shouldFormatBetReceiptLikeReferenceRobot() {
         assertThat(template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
-                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n\n点击退码");
+                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√"
+                        + "\n【编号】3\n【套内】:36\n【套外】:360.00\n【面积】:26764.45"
+                        + "\n\n点击退码");
     }
 
     @Test
@@ -27,34 +28,40 @@ class LotteryRobotReplyTemplateTest {
     }
 
     @Test
-    void shouldRemoveBalanceAndCancelActionFromPublicGroupReceipt() {
+    void shouldShowAreaAndCancelActionInPublicGroupReceipt() {
         String privateReceipt = template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360"), new BigDecimal("26764.45"));
 
         assertThat(template.publicBetReceipt("露露", privateReceipt))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
-                        + "\n【编号】：3\n【套内】：36\n【套外】：360")
-                .doesNotContain("26764.45", "点击退码");
+                .contains("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√",
+                        "【编号】3", "【套内】:36", "【套外】:360.00", "【面积】:26764.45", "点击退码")
+                .doesNotContain("共 36 注", "合计 360.00");
         assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001"))
                 .isEqualTo("@露露\n下注成功");
+        assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001\n点击退码"))
+                .isEqualTo("@露露\n下注成功\n点击退码");
         assertThat(template.publicBetReceipt("露露", "")).isEmpty();
 
         String awaitingDetails = template.betReceiptAwaitingDetails("露露", "20260809194",
                 "654倒二定各10", 3, 36, new BigDecimal("360"), new BigDecimal("26764.45"));
         assertThat(template.publicBetReceipt("露露", awaitingDetails))
-                .doesNotContain("26764.45", "正在确认明细");
+                .contains("【面积】:26764.45")
+                .doesNotContain("正在确认明细");
     }
 
     @Test
-    void shouldKeepOriginalBetReceiptAndReplaceCancelActionAfterCancellation() {
+    void shouldReplaceCancelActionOnOriginalBetReceipt() {
         String receipt = template.betReceipt("玩家2", "20260812153", "三现全倒112各2", 4, 1,
                 new BigDecimal("2"), new BigDecimal("43"));
 
         assertThat(template.cancelSucceeded(receipt))
-                .isEqualTo("@玩家2\n[挂牌时间]153\n三现全倒112各2\n【户型审核成功】✓✓"
-                        + "\n【编号】：4\n【套内】：1\n【套外】：2\n【面积】：43\n已退码")
-                .doesNotContain("退码成功：", "点击退码");
+                .isEqualTo("@玩家2\n[挂牌时间]153\n三现全倒112各2\n【户型审核成功】√√"
+                        + "\n【编号】4\n【套内】:1\n【套外】:2.00\n【面积】:43.00"
+                        + "\n\n已退码")
+                .doesNotContain("退码成功：");
         assertThat(template.cancelSucceeded(template.cancelSucceeded(receipt)))
+                .isEqualTo(template.cancelSucceeded(receipt));
+        assertThat(template.cancelSucceeded(receipt + "\n已退码"))
                 .isEqualTo(template.cancelSucceeded(receipt));
     }
 
@@ -64,8 +71,9 @@ class LotteryRobotReplyTemplateTest {
                 .isEqualTo("@露露\n提交中");
         assertThat(template.betReceiptAwaitingDetails("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】✓✓"
-                        + "\n【编号】：3\n【套内】：36\n【套外】：360\n【面积】：26764.45\n\n正在确认明细")
+                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√"
+                        + "\n【编号】3\n【套内】:36\n【套外】:360.00\n【面积】:26764.45"
+                        + "\n\n正在确认明细")
                 .doesNotContain("盘口", "外盘");
         assertThat(template.betFailed("露露", new BigDecimal("360.00")))
                 .isEqualTo("@露露\n下注失败\n下注金额360已退回")

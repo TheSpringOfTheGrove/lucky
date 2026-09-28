@@ -12,10 +12,14 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
+import { lotteryPlayerAvatarSrc } from '@/views/lottery/utils/playerAvatar'
 
 const store = useLucky5Store()
 const timeType = ref(0)
 const puller = ref('')
+const memberSearchInput = ref('')
+const memberSearchKeyword = ref('')
 const memberVisible = ref(false)
 const transferVisible = ref(false)
 const clearAllVisible = ref(false)
@@ -29,6 +33,7 @@ const details = ref<any>(null)
 const isMobile = useMediaQuery('(max-width: 768px)')
 const memberForm = reactive({
   id: '',
+  avatar: 1,
   name: '',
   balance: 0,
   status: '离线',
@@ -47,13 +52,38 @@ const transferForm = reactive({ id: '', type: '上分' as '上分' | '下分', a
 const pullers = computed(() => [
   ...new Set(store.members.map((item) => item.partner).filter((item) => item && item !== '无'))
 ])
-const rows = computed(() =>
-  puller.value ? store.members.filter((item) => item.partner === puller.value) : store.members
-)
+const rows = computed(() => {
+  const keyword = memberSearchKeyword.value.trim().toLocaleLowerCase()
+  return store.members.filter((item) => {
+    if (puller.value && item.partner !== puller.value) return false
+    if (!keyword) return true
+    return [item.name, item.externalNickname].some((value) =>
+      String(value || '').toLocaleLowerCase().includes(keyword)
+    )
+  })
+})
 const linkEntries = computed(() => {
+  // 玩家端只开放群聊。链接 3 沿用接口短链接，链接 5 使用浏览器可识别的
+  // 百分号编码形式，供封号严重时复制到浏览器打开。
+  const groupUrl = String(
+    linkData.value.groupUrl || linkData.value.roomUrl || linkData.value.longUrl || ''
+  )
+  const link3 = String(linkData.value.shortUrl || groupUrl)
+  const toBrowserOnlyLink = (value: string) => {
+    try {
+      const parsed = new URL(value)
+      const encodedHost = Array.from(parsed.hostname)
+        .map((character) => `%${character.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join('')
+      return `${parsed.protocol}//${encodedHost}${parsed.port ? `:${parsed.port}` : ''}${parsed.pathname}${parsed.search}${parsed.hash}`
+    } catch {
+      return value
+    }
+  }
   const entries = [
-    { key: 'groupUrl', label: '群聊链接', url: String(linkData.value.groupUrl || '') },
-    { key: 'privateUrl', label: '私聊链接', url: String(linkData.value.privateUrl || '') }
+    { key: 'original', label: '原始', url: groupUrl, withQr: true },
+    { key: 'link3', label: '链接3', url: link3, withQr: true },
+    { key: 'link5', label: '链接5', url: toBrowserOnlyLink(groupUrl), withQr: false }
   ]
   return entries.filter((item) => item.url)
 })
@@ -94,6 +124,7 @@ const realProfit = computed(() =>
 const openMember = (row?: any) => {
   Object.assign(memberForm, {
     id: row?.id || '',
+    avatar: Number(row?.avatar || 1),
     name: row?.name || '',
     balance: Number(row?.balance || 0),
     status: row?.status || '离线',
@@ -167,7 +198,7 @@ const setLinkData = async (data: Record<string, string | number>) => {
   await Promise.all(
     linkEntries.value.map(async (item) => {
       linkQrs.value[item.key] = await QRCode.toDataURL(item.url, {
-        width: 160,
+        width: 260,
         margin: 1,
         color: { dark: '#111111', light: '#ffffff' }
       })
@@ -194,10 +225,6 @@ const rotateLink = async () => {
 const copy = async (value: string) => {
   await navigator.clipboard.writeText(value)
   ElMessage.success('已复制')
-}
-
-const openLink = (value: string) => {
-  window.open(value, '_blank', 'noopener,noreferrer')
 }
 
 const clearMember = async (row: any) => {
@@ -235,8 +262,12 @@ const isSearchable = (row: any) => row.searchable !== false
 const isBound = (row: any) => Boolean(String(row.fingerprint || '').trim())
 const formatStatistic = (value: number) => {
   const amount = Number(value)
-  if (!Number.isFinite(amount)) return '0.00'
-  return (Math.abs(amount) < 0.005 ? 0 : amount).toFixed(2)
+  if (!Number.isFinite(amount)) return '0'
+  return String(Math.round((Math.abs(amount) < 0.005 ? 0 : amount) * 100) / 100)
+}
+
+const applyMemberSearch = () => {
+  memberSearchKeyword.value = memberSearchInput.value.trim()
 }
 
 let memberRefreshTimer: number | undefined
@@ -260,39 +291,30 @@ onBeforeUnmount(stopMemberRefresh)
 <template>
   <div class="lucky-page">
     <h1 class="lucky-page__heading">会员列表 <small>添加/编辑/删除会员</small></h1>
-    <el-card shadow="never">
+    <el-card class="legacy-list-box" shadow="never">
       <div class="lucky-toolbar member-toolbar">
         <div class="lucky-toolbar__filters member-toolbar__actions">
           <el-tooltip content="添加会员">
-            <el-button type="primary" circle @click="openMember()"
+            <el-button class="member-toolbar__add" @click="openMember()"
               ><Icon icon="ep:user-filled"
             /></el-button>
           </el-tooltip>
           <el-tooltip content="清理数据">
-            <el-button type="danger" circle @click="clearAllVisible = true"
+            <el-button class="member-toolbar__delete" @click="clearAllVisible = true"
               ><Icon icon="ep:delete"
             /></el-button>
           </el-tooltip>
-          <el-button type="danger" @click="clearAllFingerprints">抹除标识</el-button>
+          <el-button class="member-toolbar__delete" @click="clearAllFingerprints">抹除标识</el-button>
         </div>
         <div class="member-summary">
-          <span class="member-summary__group">
-            <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}</span>
-            <span class="lucky-member-total">托总余分：{{ formatStatistic(proxyBalance) }}</span>
-            <span class="lucky-danger">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
-          </span>
-          <span class="member-summary__separator">|</span>
-          <span class="member-summary__group">
-            <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}</span>
-            <span class="lucky-member-total">托总投额：{{ formatStatistic(proxyBet) }}</span>
-            <span class="lucky-danger">真实会员总投额：{{ formatStatistic(realBet) }}</span>
-          </span>
-          <span class="member-summary__separator">|</span>
-          <span class="member-summary__group">
-            <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}</span>
-            <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}</span>
-            <span class="lucky-danger">托盈亏：{{ formatStatistic(proxyProfit) }}</span>
-          </span>
+          <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}，托总余分：{{ formatStatistic(proxyBalance) }}，</span>
+          <span class="lucky-danger">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
+          <span class="member-summary__separator"> || </span>
+          <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}，托总投额：{{ formatStatistic(proxyBet) }}，</span>
+          <span class="lucky-danger">真实会员总投额：{{ formatStatistic(realBet) }}</span>
+          <span class="member-summary__separator"> || </span>
+          <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}，</span>
+          <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}，托盈亏：{{ formatStatistic(proxyProfit) }}</span>
         </div>
       </div>
 
@@ -306,9 +328,26 @@ onBeforeUnmount(stopMemberRefresh)
         <el-select v-model="puller" clearable placeholder="选择拉手">
           <el-option v-for="item in pullers" :key="item" :label="item" :value="item" />
         </el-select>
+        <label class="member-search" for="member-nickname-search">搜索：</label>
+        <el-input
+          id="member-nickname-search"
+          v-model="memberSearchInput"
+          clearable
+          placeholder="输入昵称"
+          @clear="applyMemberSearch"
+          @keyup.enter="applyMemberSearch"
+        />
       </div>
 
-      <PaginatedTable :data="rows" border>
+      <PaginatedTable
+        :data="rows"
+        :expand-row-keys="rows.map((row) => row.id)"
+        row-key="id"
+        border
+        class="member-list-table"
+        show-summary
+        :summary-method="legacyFooterHeaders"
+      >
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <div class="member-identity member-identity--mobile">
@@ -340,67 +379,9 @@ onBeforeUnmount(stopMemberRefresh)
             <el-button size="small" type="danger" @click="deleteMember(row)">删除</el-button>
           </div>
         </template>
-        <el-table-column label="微信/飞鱼/蓝鲸昵称" min-width="170">
+        <el-table-column type="expand" width="1">
           <template #default="{ row }">
-            <div class="member-identity">
-              <el-avatar :size="30" :style="{ backgroundColor: avatarColor(row.avatar) }">
-                {{ String(row.name || '?').slice(0, 1) }}
-              </el-avatar>
-              <span>{{ row.externalNickname || row.name }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="name" label="昵称" min-width="110" />
-        <el-table-column prop="balance" label="积分" min-width="90" />
-        <el-table-column label="投分" min-width="90"
-          ><template #default="{ row }">{{ row.totalBet || 0 }}</template></el-table-column
-        >
-        <el-table-column label="盈亏" min-width="90"
-          ><template #default="{ row }">{{ row.profitLoss || 0 }}</template></el-table-column
-        >
-        <el-table-column label="自动托" width="80" align="center">
-          <template #default="{ row }">
-            <span
-              class="member-boolean"
-              :class="isAutoProxy(row) ? 'member-boolean--yes' : 'member-boolean--no'"
-              :title="isAutoProxy(row) ? '已开启自动托' : '未开启自动托'"
-              >{{ isAutoProxy(row) ? '✓' : '×' }}</span
-            >
-          </template>
-        </el-table-column>
-        <el-table-column label="吃" width="60" align="center">
-          <template #default="{ row }">
-            <span
-              class="member-boolean"
-              :class="row.eatEnabled ? 'member-boolean--yes' : 'member-boolean--no'"
-              :title="row.eatEnabled ? '已开启吃码' : '未开启吃码'"
-              >{{ row.eatEnabled ? '✓' : '×' }}</span
-            >
-          </template>
-        </el-table-column>
-        <el-table-column label="查" width="60" align="center">
-          <template #default="{ row }">
-            <span
-              class="member-boolean"
-              :class="isSearchable(row) ? 'member-boolean--yes' : 'member-boolean--no'"
-              :title="isSearchable(row) ? '允许查询流水' : '禁止查询流水'"
-              >{{ isSearchable(row) ? '✓' : '×' }}</span
-            >
-          </template>
-        </el-table-column>
-        <el-table-column label="绑定" width="70" align="center">
-          <template #default="{ row }">
-            <span
-              class="member-boolean"
-              :class="isBound(row) ? 'member-boolean--yes' : 'member-boolean--no'"
-              :title="isBound(row) ? '已绑定设备标识' : '未绑定设备标识'"
-              >{{ isBound(row) ? '✓' : '×' }}</span
-            >
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="420" fixed="right">
-          <template #default="{ row }">
-            <div class="lucky-table-actions">
+            <div class="member-row-actions">
               <el-tooltip content="编辑"
                 ><el-button size="small" circle @click="openMember(row)"
                   ><Icon icon="ep:edit" /></el-button
@@ -419,6 +400,61 @@ onBeforeUnmount(stopMemberRefresh)
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="微信/飞鱼/蓝鲸昵称" min-width="170">
+          <template #default="{ row }">
+            <div class="member-identity">
+              <span>{{ row.externalNickname || '//' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="昵称" min-width="110" />
+        <el-table-column prop="balance" label="积分" min-width="90" />
+        <el-table-column label="投分" min-width="90"
+          ><template #default="{ row }">{{ row.totalBet || 0 }}</template></el-table-column
+        >
+        <el-table-column label="盈亏" min-width="90"
+          ><template #default="{ row }">{{ row.profitLoss || 0 }}</template></el-table-column
+        >
+        <el-table-column label="自动托" width="80" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="isAutoProxy(row) ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="isAutoProxy(row) ? '已开启自动托' : '未开启自动托'"
+              >{{ isAutoProxy(row) ? '√' : '×' }}</span
+            >
+          </template>
+        </el-table-column>
+        <el-table-column label="吃" width="60" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="row.eatEnabled ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="row.eatEnabled ? '已开启吃码' : '未开启吃码'"
+              >{{ row.eatEnabled ? '√' : '×' }}</span
+            >
+          </template>
+        </el-table-column>
+        <el-table-column label="查" width="60" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="isSearchable(row) ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="isSearchable(row) ? '允许查询流水' : '禁止查询流水'"
+              >{{ isSearchable(row) ? '√' : '×' }}</span
+            >
+          </template>
+        </el-table-column>
+        <el-table-column label="绑定" width="70" align="center">
+          <template #default="{ row }">
+            <span
+              class="member-boolean"
+              :class="isBound(row) ? 'member-boolean--yes' : 'member-boolean--no'"
+              :title="isBound(row) ? '已绑定设备标识' : '未绑定设备标识'"
+              >{{ isBound(row) ? '√' : '×' }}</span
+            >
+          </template>
+        </el-table-column>
       </PaginatedTable>
     </el-card>
 
@@ -430,7 +466,7 @@ onBeforeUnmount(stopMemberRefresh)
     >
       <el-form :model="memberForm" label-width="110px">
         <el-form-item label="头像"
-          ><el-avatar :size="40"><Icon icon="ep:user" /></el-avatar
+          ><el-avatar :size="40" :src="lotteryPlayerAvatarSrc(memberForm.avatar)" />
         ></el-form-item>
         <el-form-item label="昵称"
           ><el-input v-model="memberForm.name" placeholder="NickName"
@@ -505,28 +541,29 @@ onBeforeUnmount(stopMemberRefresh)
 
     <el-dialog
       v-model="linkVisible"
-      :title="`${linkMember} 会员链接`"
-      width="620px"
-      class="lucky-dialog"
+      width="1200px"
+      class="lucky-dialog member-link-dialog"
     >
-      <div class="member-link-token">
-        <span>会员标识&nbsp; {{ linkData.openId }}</span>
-        <el-button type="danger" plain size="small" @click="rotateLink">换链接</el-button>
+      <p class="member-link-dialog__warning">封号严重的用链接5。链接5只能浏览器打开</p>
+      <div class="member-link-dialog__member">
+        <strong>{{ linkMember }}</strong>
+        <el-button type="primary" @click="rotateLink"
+          ><Icon icon="ep:copy-document" />换链接</el-button
+        >
       </div>
       <div v-for="item in linkEntries" :key="item.key" class="member-link-row">
-        <img v-if="linkQrs[item.key]" :src="linkQrs[item.key]" :alt="`${item.label}二维码`" />
+        <span class="member-link-row__label">{{ item.label }}</span>
         <div class="member-link-row__content">
-          <strong>{{ item.label }}</strong>
           <span>{{ item.url }}</span>
-          <div class="member-link__actions">
-            <el-button link type="primary" @click="openLink(item.url)"
-              ><Icon icon="ep:top-right" />打开</el-button
-            >
-            <el-button link type="primary" @click="copy(item.url)"
-              ><Icon icon="ep:copy-document" />复制</el-button
-            >
-          </div>
+          <img
+            v-if="item.withQr && linkQrs[item.key]"
+            :src="linkQrs[item.key]"
+            :alt="`${item.label}二维码`"
+          />
         </div>
+        <el-button type="primary" @click="copy(item.url)"
+          ><Icon icon="ep:copy-document" />复制</el-button
+        >
       </div>
       <el-empty v-if="!linkEntries.length" description="当前未开启玩家房间入口" :image-size="64" />
     </el-dialog>
@@ -547,6 +584,8 @@ onBeforeUnmount(stopMemberRefresh)
         :data="details?.amountRecords || []"
         :default-page-size="10"
         border
+        show-summary
+        :summary-method="legacyFooterHeaders"
         max-height="220"
       >
         <template #mobile="{ row }">
@@ -565,7 +604,7 @@ onBeforeUnmount(stopMemberRefresh)
         <el-table-column prop="createdAt" label="时间" min-width="180" />
       </PaginatedTable>
       <h3 class="member-detail-title">订单记录</h3>
-      <PaginatedTable :data="details?.orders || []" :default-page-size="10" border max-height="260">
+      <PaginatedTable :data="details?.orders || []" :default-page-size="10" border max-height="260" show-summary :summary-method="legacyFooterHeaders">
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <span>{{ row.period }}</span>
@@ -592,10 +631,15 @@ onBeforeUnmount(stopMemberRefresh)
   color: #00f;
 }
 
+.legacy-list-box :deep(.el-card__body) {
+  padding: 10px;
+}
+
 .member-toolbar {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 16px;
+  display: flex !important;
+  justify-content: flex-start !important;
+  flex-wrap: nowrap;
+  gap: 10px !important;
   align-items: center;
 }
 
@@ -603,32 +647,61 @@ onBeforeUnmount(stopMemberRefresh)
   flex-wrap: nowrap;
 }
 
-.member-summary {
-  display: flex;
-  min-width: 0;
-  overflow-x: auto;
+.member-toolbar__add,
+.member-toolbar__delete {
+  min-width: 42px;
+  min-height: 32px;
+  padding: 5px 10px;
+  color: #fff !important;
   font-size: 14px;
-  line-height: 28px;
-  white-space: nowrap;
-  scrollbar-width: thin;
-  align-items: center;
-  gap: 8px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 4px;
+  box-shadow: inset 0 -3px 0 rgb(0 0 0 / 22%);
+  -webkit-text-fill-color: #fff;
 }
 
-.member-summary__group {
-  display: inline-flex;
+.member-toolbar__add {
+  background: #00c0ef !important;
+  border-color: #00acd6 !important;
+}
+
+.member-toolbar__delete {
+  background: #dd4b39 !important;
+  border-color: #d73925 !important;
+}
+
+.member-toolbar__add:hover,
+.member-toolbar__add:focus-visible {
+  background: #00acd6 !important;
+}
+
+.member-toolbar__delete:hover,
+.member-toolbar__delete:focus-visible {
+  background: #d73925 !important;
+}
+
+.member-summary {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: visible;
+  color: #00f;
+  font-size: 14px;
+  line-height: 34px;
+  white-space: nowrap;
   align-items: center;
-  gap: 8px;
 }
 
 .member-summary__separator {
-  color: #9aa1aa;
+  color: #333;
 }
 
-@media (width <= 900px) {
-  .member-toolbar {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.member-search {
+  color: #333;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 34px;
 }
 
 .member-boolean {
@@ -637,17 +710,18 @@ onBeforeUnmount(stopMemberRefresh)
   justify-content: center;
   width: 24px;
   height: 24px;
-  font-size: 20px;
-  font-weight: 700;
+  color: #333;
+  font-size: 22px;
+  font-weight: 400;
   line-height: 1;
 }
 
 .member-boolean--yes {
-  color: #159447;
+  color: #333;
 }
 
 .member-boolean--no {
-  color: #d44747;
+  color: #333;
 }
 
 .member-identity,
@@ -657,6 +731,65 @@ onBeforeUnmount(stopMemberRefresh)
   align-items: center;
   justify-content: center;
   gap: 8px;
+}
+
+.member-list-table :deep(.el-table__expand-column),
+.member-list-table :deep(.el-table__expand-column .cell) {
+  width: 1px !important;
+  min-width: 1px !important;
+  padding: 0 !important;
+}
+
+.member-list-table :deep(.el-table__expand-icon) {
+  display: none;
+}
+
+.member-list-table :deep(.el-table__expanded-cell) {
+  padding: 9px 14px !important;
+  background: #fff !important;
+}
+
+.member-row-actions {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+}
+
+.member-row-actions :deep(.el-button) {
+  min-width: 48px;
+  min-height: 40px;
+  padding: 5px 11px;
+  margin: 0;
+  color: #fff !important;
+  font-size: 16px;
+  background: #3c8dbc !important;
+  border-color: #367fa9 !important;
+  border-radius: 4px;
+  box-shadow: inset 0 -3px 0 rgb(0 0 0 / 28%);
+  -webkit-text-fill-color: #fff;
+}
+
+.member-row-actions :deep(.el-button.is-circle) {
+  min-width: 42px;
+  padding: 5px;
+}
+
+.member-row-actions :deep(.el-button--danger) {
+  background: #dd4b39 !important;
+  border-color: #d73925 !important;
+}
+
+.member-row-actions :deep(.el-button:hover),
+.member-row-actions :deep(.el-button:focus-visible) {
+  background: #367fa9 !important;
+  border-color: #2e6f8f !important;
+}
+
+.member-row-actions :deep(.el-button--danger:hover),
+.member-row-actions :deep(.el-button--danger:focus-visible) {
+  background: #d73925 !important;
+  border-color: #c9301f !important;
 }
 
 .member-identity--mobile {
@@ -676,42 +809,83 @@ onBeforeUnmount(stopMemberRefresh)
   display: flex;
   flex: none;
   align-items: center;
+  gap: 10px;
 }
 
-.member-link-token {
+/* The legacy backend skin makes Element's link buttons solid. Keep the
+ * actions legible when the member-link dialog is teleported outside layout. */
+.member-link__actions :deep(.el-button) {
+  min-height: 30px;
+  padding: 4px 10px;
+  color: #fff !important;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  background: #3c8dbc !important;
+  border-color: #367fa9 !important;
+  -webkit-text-fill-color: #fff;
+}
+
+.member-link__actions :deep(.el-button > span),
+.member-link__actions :deep(.el-button .el-icon),
+.member-link__actions :deep(.el-button svg) {
+  color: #fff !important;
+}
+
+.member-link__actions :deep(.el-button:hover),
+.member-link__actions :deep(.el-button:focus-visible) {
+  color: #fff !important;
+  background: #367fa9 !important;
+  border-color: #2e6f8f !important;
+}
+
+.member-link-dialog__warning {
+  margin: 0 0 24px;
+  color: #f00;
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.member-link-dialog__member {
   display: flex;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  color: #555;
-  background: #f5f6f8;
-  border: 1px solid #dfe2e7;
-  overflow-wrap: anywhere;
+  border-bottom: 1px solid #eee;
 }
 
-.member-link-token span {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.member-link-dialog__member strong {
+  color: #333;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.member-link-dialog__member :deep(.el-button),
+.member-link-row :deep(.el-button) {
+  min-height: 54px;
+  padding: 10px 18px;
+  color: #fff;
+  font-size: 20px;
+  background: #3c8dbc;
+  border-color: #367fa9;
 }
 
 .member-link-row {
   display: grid;
-  padding: 14px 0;
-  border-bottom: 1px solid #e2e5e9;
-  grid-template-columns: 116px minmax(0, 1fr);
-  gap: 16px;
+  padding: 18px 16px 28px;
+  border-bottom: 1px solid #eee;
+  /* 原页面的标签是窄列，会自然换行成“原 / 始”、“链 / 接3”。 */
+  grid-template-columns: 48px minmax(0, 1fr) max-content;
+  gap: 32px;
+  align-items: start;
 }
 
-.member-link-row:last-of-type {
-  border-bottom: 0;
-}
-
-.member-link-row > img {
-  width: 116px;
-  height: 116px;
-  border: 1px solid #e1e1e1;
+.member-link-row__label {
+  padding-top: 2px;
+  color: #333;
+  font-size: 26px;
+  line-height: 34px;
+  overflow-wrap: anywhere;
 }
 
 .member-link-row__content {
@@ -719,17 +893,26 @@ onBeforeUnmount(stopMemberRefresh)
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
-  gap: 8px;
+  gap: 26px;
 }
 
 .member-link-row__content > span {
-  line-height: 1.55;
-  color: #606266;
+  color: #333;
+  font-size: 24px;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
+.member-link-row__content > img {
+  width: 260px;
+  height: 260px;
+}
+
 @media (width <= 560px) {
+  .member-toolbar {
+    flex-wrap: wrap;
+  }
+
   .member-toolbar__actions {
     flex-wrap: wrap;
   }
@@ -759,13 +942,26 @@ onBeforeUnmount(stopMemberRefresh)
   }
 
   .member-link-row {
-    align-items: center;
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 10px;
   }
 
-  .member-link-row > img {
-    width: 72px;
-    height: 72px;
+  .member-link-row__label,
+  .member-link-row__content > span {
+    font-size: 15px;
+  }
+
+  .member-link-row__content > img {
+    width: 180px;
+    height: 180px;
+  }
+
+  .member-link-row :deep(.el-button) {
+    grid-column: 2;
+    justify-self: start;
+    min-height: 34px;
+    padding: 6px 12px;
+    font-size: 14px;
   }
 }
 

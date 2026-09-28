@@ -112,12 +112,14 @@ export interface RoomSession {
     content: string
     status: string
     orderId: string | null
+    drawImage?: string
     error: string
     reply: string
     commandType: string
-    messageType: 'PLAYER' | 'AUTO_PROXY'
-    own: boolean
-    createdAt: string
+      messageType: 'PLAYER' | 'AUTO_PROXY'
+      own: boolean
+      memberAvatar?: number
+      createdAt: string
     /** 玩家原始指令的发送时间；后续机器人回复更新不会改变该时间。 */
     sentAt?: string | null
     /** 仅机器人回复使用的最后修改时间。 */
@@ -187,6 +189,11 @@ export const getRoomDrawStateApi = async (credential: RoomCredential) => {
   )
   return { ...state, draws: (state.draws || []).map(normalizeDraw) }
 }
+
+export const getRoomMessageHistoryApi = async (credential: RoomCredential, beforeId: number) =>
+  request<{ messages: RoomSession['messages']; hasMore: boolean }>(
+    `/app-api/lottery/room/messages/history?${credentialQuery(credential)}&beforeId=${beforeId}`
+  )
 
 export const placeRoomBetApi = (
   credential: RoomCredential,

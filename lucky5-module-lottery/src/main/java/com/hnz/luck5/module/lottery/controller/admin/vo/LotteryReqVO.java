@@ -53,6 +53,15 @@ public final class LotteryReqVO {
     }
 
     @Data
+    public static class AmountRecordPage extends PageParam {
+        @Size(max = 100)
+        private String nickname;
+        @Min(0)
+        @Max(3)
+        private Integer timeType = 1;
+    }
+
+    @Data
     public static class OrderItemPage extends PageParam {
     }
 
@@ -159,6 +168,7 @@ public final class LotteryReqVO {
         private Boolean privateChat;
         private Boolean webOnly;
         private String blueWhalePassword;
+        private Integer avatar;
     }
 
     @Data

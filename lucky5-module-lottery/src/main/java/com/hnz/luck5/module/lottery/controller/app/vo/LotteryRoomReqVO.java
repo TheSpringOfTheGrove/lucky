@@ -4,6 +4,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -58,6 +59,13 @@ public final class LotteryRoomReqVO {
         private String externalId;
         /** Milliseconds since epoch when the member pressed send. */
         private Long sentAt;
+    }
+
+    @Data
+    public static class MessageHistory extends Credential {
+        @NotNull
+        @Positive
+        private Long beforeId;
     }
 
     @Data

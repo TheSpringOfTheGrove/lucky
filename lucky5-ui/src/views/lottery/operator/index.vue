@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
 const nickname = ref('')
@@ -51,7 +52,7 @@ const rows = computed(() => {
       </div>
     </div>
     <el-card shadow="never">
-      <PaginatedTable :data="rows" border>
+      <PaginatedTable :data="rows" border show-summary :summary-method="legacyFooterHeaders">
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <span>{{ memberLabel(row) }}</span>

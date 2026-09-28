@@ -1,10 +1,43 @@
 <script setup lang="ts">
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import type { IntegrationKey } from '@/api/lottery'
 import { useLucky5Store, type SwitchKey } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
 const router = useRouter()
 let dashboardRefreshTimer: number | undefined
+
+const integrationKeys: IntegrationKey[] = ['blueWhale', 'wechat', 'fish']
+const integrationStyles: Record<IntegrationKey, { iconClass: string }> = {
+  blueWhale: { iconClass: 'dashboard-service-card__icon--orange' },
+  wechat: { iconClass: 'dashboard-service-card__icon--green' },
+  fish: { iconClass: 'dashboard-service-card__icon--aqua' }
+}
+const integrationDialogVisible = ref(false)
+const selectedIntegrationKey = ref<IntegrationKey>('blueWhale')
+const integrationForm = reactive({ account: '', group: '' })
+const selectedIntegration = computed(() => store.integrations[selectedIntegrationKey.value])
+const integrationCards = computed(() =>
+  integrationKeys.map((key) => ({
+    key,
+    ...store.integrations[key],
+    ...integrationStyles[key]
+  }))
+)
+
+const openIntegrationConfig = (key: IntegrationKey) => {
+  const integration = store.integrations[key]
+  selectedIntegrationKey.value = key
+  integrationForm.account = integration?.account || ''
+  integrationForm.group = integration?.group || ''
+  integrationDialogVisible.value = true
+}
+
+const saveIntegration = async () => {
+  const saved = await store.bindIntegration(selectedIntegrationKey.value, integrationForm)
+  if (saved) integrationDialogVisible.value = false
+}
 
 onMounted(() => {
   void store.refreshMembers()
@@ -18,73 +51,57 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="lucky-page lucky-dashboard-page">
-    <h1 class="lucky-page__heading">仪表盘 <small>版本 2.0</small></h1>
-    <div class="dashboard-layout">
-      <div class="dashboard-card-grid">
-        <button
-          type="button"
-          class="dashboard-info-card dashboard-info-card--interactive"
-          @click="router.push('/lucky5/members')"
-        >
-          <span class="dashboard-info-card__icon dashboard-info-card__icon--teal">
-            <span class="dashboard-users-icon">
-              <Icon icon="ep:user" :size="23" />
-              <Icon icon="ep:user-filled" :size="31" />
-              <Icon icon="ep:user" :size="23" />
-            </span>
+    <h1 class="lucky-page__heading">Dashboard <small>Version 2.0</small></h1>
+    <div class="dashboard-top-grid">
+      <button
+        type="button"
+        class="dashboard-info-card dashboard-info-card--interactive"
+        @click="router.push('/lucky5/members')"
+      >
+        <span class="dashboard-info-card__icon dashboard-info-card__icon--teal">
+          <span class="dashboard-users-icon">
+            <Icon icon="ep:user" :size="23" />
+            <Icon icon="ep:user-filled" :size="31" />
+            <Icon icon="ep:user" :size="23" />
           </span>
-          <span class="dashboard-info-card__content">
-            <span class="dashboard-info-card__label">会员总数</span>
-            <strong class="dashboard-info-card__value">{{ store.stats.totalMembers }}</strong>
-          </span>
-        </button>
+        </span>
+        <span class="dashboard-info-card__content">
+          <span class="dashboard-info-card__label">会员总数</span>
+          <strong class="dashboard-info-card__value">{{ store.stats.totalMembers }}</strong>
+        </span>
+      </button>
 
-        <button
-          type="button"
-          class="dashboard-info-card dashboard-info-card--interactive"
-          @click="router.push('/lucky5/members')"
-        >
-          <span class="dashboard-info-card__icon dashboard-info-card__icon--olive">
-            <span class="dashboard-users-icon">
-              <Icon icon="ep:user" :size="23" />
-              <Icon icon="ep:user-filled" :size="31" />
-              <Icon icon="ep:user" :size="23" />
-            </span>
+      <button
+        type="button"
+        class="dashboard-info-card dashboard-info-card--interactive"
+        @click="router.push('/lucky5/members')"
+      >
+        <span class="dashboard-info-card__icon dashboard-info-card__icon--olive">
+          <span class="dashboard-users-icon">
+            <Icon icon="ep:user" :size="23" />
+            <Icon icon="ep:user-filled" :size="31" />
+            <Icon icon="ep:user" :size="23" />
           </span>
-          <span class="dashboard-info-card__content">
-            <span class="dashboard-info-card__label">在线会员总数</span>
-            <strong class="dashboard-info-card__value">{{ store.stats.onlineMembers }}</strong>
-          </span>
-        </button>
+        </span>
+        <span class="dashboard-info-card__content">
+          <span class="dashboard-info-card__label">在线会员总数</span>
+          <strong class="dashboard-info-card__value">{{ store.stats.onlineMembers }}</strong>
+        </span>
+      </button>
 
-        <button
-          type="button"
-          class="dashboard-info-card dashboard-info-card--interactive"
-          @click="router.push('/lucky5/amount-records')"
-        >
-          <span class="dashboard-info-card__icon dashboard-info-card__icon--orange">
-            <Icon icon="ep:credit-card" :size="42" />
-          </span>
-          <span class="dashboard-info-card__content">
-            <span class="dashboard-info-card__label">未审核上分请求</span>
-            <strong class="dashboard-info-card__value">{{ store.stats.pendingDeposits }}</strong>
-          </span>
-        </button>
-
-        <article class="dashboard-info-card dashboard-platform-card">
-          <span class="dashboard-info-card__icon dashboard-info-card__icon--red">
-            <Icon icon="ep:switch-button" :size="42" />
-          </span>
-          <div class="dashboard-info-card__content dashboard-startup">
-            <span class="dashboard-info-card__label">启动状态</span>
-            <el-checkbox
-              :model-value="store.room.open"
-              :disabled="store.saving"
-              @change="(value: boolean) => store.setRoomOpen(value)"
-            />
-          </div>
-        </article>
-      </div>
+      <button
+        type="button"
+        class="dashboard-info-card dashboard-info-card--interactive"
+        @click="router.push('/lucky5/amount-records')"
+      >
+        <span class="dashboard-info-card__icon dashboard-info-card__icon--orange">
+          <Icon icon="ep:credit-card" :size="42" />
+        </span>
+        <span class="dashboard-info-card__content">
+          <span class="dashboard-info-card__label">未审核上分请求</span>
+          <strong class="dashboard-info-card__value">{{ store.stats.pendingDeposits }}</strong>
+        </span>
+      </button>
 
       <aside class="dashboard-settings-card">
         <div class="dashboard-settings-card__icon">
@@ -105,6 +122,67 @@ onBeforeUnmount(() => {
         </div>
       </aside>
     </div>
+
+    <div class="dashboard-service-grid">
+      <article
+        v-for="integration in integrationCards"
+        :key="integration.key"
+        class="dashboard-service-card"
+        :class="`dashboard-service-card--${integration.key}`"
+      >
+        <span class="dashboard-service-card__icon" :class="integration.iconClass">
+          <Icon icon="ep:chat-dot-round" :size="42" />
+        </span>
+        <div class="dashboard-service-card__content">
+          <div>{{ integration.name }}账号：{{ integration.account || '未绑定' }}</div>
+          <div>{{ integration.name }}群：{{ integration.group || '未绑定' }}</div>
+          <div>状态：{{ integration.status || '未登录' }}</div>
+          <button
+            type="button"
+            class="dashboard-service-card__button"
+            @click="openIntegrationConfig(integration.key)"
+          >
+            配置{{ integration.name }}
+          </button>
+        </div>
+      </article>
+
+      <article class="dashboard-service-card dashboard-startup-card">
+        <span class="dashboard-service-card__icon dashboard-service-card__icon--red">
+          <Icon icon="ep:switch-button" :size="42" />
+        </span>
+        <div class="dashboard-service-card__content dashboard-startup">
+          <span>启动状态</span>
+          <el-checkbox
+            :model-value="store.room.open"
+            :disabled="store.saving"
+            @change="(value: boolean) => store.setRoomOpen(value)"
+          >
+            在线 {{ store.room.online }}
+          </el-checkbox>
+        </div>
+      </article>
+    </div>
+
+    <el-dialog
+      v-model="integrationDialogVisible"
+      :title="`配置${selectedIntegration?.name || ''}`"
+      width="440px"
+      class="lucky-dialog"
+    >
+      <el-form label-width="90px">
+        <el-form-item label="账号">
+          <el-input v-model="integrationForm.account" maxlength="100" autocomplete="off" />
+        </el-form-item>
+        <el-form-item label="群名称">
+          <el-input v-model="integrationForm.group" maxlength="100" autocomplete="off" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="integrationDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="store.saving" @click="saveIntegration">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -113,32 +191,25 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.dashboard-layout {
+.dashboard-top-grid {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(250px, 1fr);
-  gap: 18px;
-  align-items: start;
-}
-
-.dashboard-card-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 30px;
   align-items: start;
 }
 
 .dashboard-info-card {
   display: grid;
   min-width: 0;
-  min-height: 102px;
+  min-height: 90px;
   grid-template-columns: 90px minmax(0, 1fr);
   align-items: center;
   overflow: hidden;
   padding: 0;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 3px;
+  border: 0;
+  border-radius: 0;
   background: var(--el-bg-color-overlay);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+  box-shadow: none;
   color: var(--el-text-color-primary);
   text-align: left;
 }
@@ -153,15 +224,15 @@ onBeforeUnmount(() => {
 }
 
 .dashboard-info-card--interactive:hover {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 3px 8px rgb(0 0 0 / 14%);
+  outline: 1px solid var(--el-color-primary);
+  box-shadow: none;
 }
 
 .dashboard-info-card__icon {
   display: flex;
   width: 90px;
   height: 100%;
-  min-height: 100px;
+  min-height: 90px;
   align-items: center;
   justify-content: center;
   color: #fff;
@@ -213,42 +284,16 @@ onBeforeUnmount(() => {
 
 .dashboard-info-card__label {
   color: var(--el-text-color-regular);
-  font-size: 15px;
-  line-height: 22px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .dashboard-info-card__value {
-  margin-top: 2px;
-  font-size: 22px;
-  line-height: 1.2;
-}
-
-.dashboard-platform-card {
-  min-height: 116px;
-}
-
-.dashboard-platform-card .dashboard-info-card__icon {
-  min-height: 114px;
-}
-
-.dashboard-platform-card p {
-  margin: 0;
-  color: var(--el-text-color-regular);
-  font-size: 14px;
-  line-height: 21px;
-  overflow-wrap: anywhere;
-}
-
-.dashboard-platform-card .el-button {
-  margin-top: 6px;
-}
-
-.dashboard-startup {
-  gap: 4px;
-}
-
-.dashboard-startup :deep(.el-checkbox) {
-  height: 22px;
+  margin-top: 0;
+  color: #3c8dbc;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 36px;
 }
 
 .dashboard-settings-card {
@@ -256,15 +301,16 @@ onBeforeUnmount(() => {
   min-width: 0;
   grid-template-columns: 90px minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 3px;
+  min-height: 165px;
+  border: 0;
+  border-radius: 0;
   background: var(--el-bg-color-overlay);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+  box-shadow: none;
 }
 
 .dashboard-settings-card__icon {
   display: flex;
-  min-height: 102px;
+  min-height: 165px;
   align-items: center;
   justify-content: center;
   align-self: start;
@@ -274,18 +320,21 @@ onBeforeUnmount(() => {
 
 .dashboard-settings-card__content {
   display: grid;
-  gap: 3px;
-  padding: 10px 12px 12px;
+  grid-template-columns: repeat(3, max-content);
+  align-content: start;
+  gap: 7px 4px;
+  padding: 10px;
 }
 
 .dashboard-settings-card__item {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 7px;
-  color: var(--el-text-color-regular);
-  font-size: 13px;
-  line-height: 20px;
+  gap: 2px;
+  color: #222;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 18px;
   cursor: pointer;
 }
 
@@ -293,38 +342,118 @@ onBeforeUnmount(() => {
   height: 22px;
 }
 
+.dashboard-service-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 15px 30px;
+  margin-top: 15px;
+}
+
+.dashboard-service-card {
+  display: grid;
+  min-width: 0;
+  min-height: 105px;
+  grid-template-columns: 90px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--el-bg-color-overlay);
+}
+
+.dashboard-service-card__icon {
+  display: flex;
+  min-height: 91px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+
+.dashboard-service-card__icon--orange {
+  background: #e49300;
+}
+
+.dashboard-service-card__icon--green {
+  background: #009551;
+}
+
+.dashboard-service-card__icon--aqua {
+  background: #2fc2c0;
+}
+
+.dashboard-service-card__icon--red {
+  background: #dd2f20;
+}
+
+.dashboard-service-card__content {
+  min-width: 0;
+  padding: 7px 10px;
+  color: #222;
+  font-size: 14px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-service-card__button {
+  height: 30px;
+  margin-top: 2px;
+  padding: 4px 10px;
+  border: 1px solid #367fa9;
+  border-radius: 3px;
+  color: #fff;
+  background: #3c8dbc;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.dashboard-startup {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+/* The reference dashboard keeps the red start card in the third slot; the
+ * Feiyu card begins the following row. */
+.dashboard-startup-card {
+  order: 3;
+}
+
+.dashboard-service-card--fish {
+  order: 4;
+}
+
+.dashboard-startup :deep(.el-checkbox) {
+  height: 22px;
+}
+
 @media (max-width: 1199px) {
-  .dashboard-layout {
-    grid-template-columns: 1fr;
+  .dashboard-top-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .dashboard-settings-card__content {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .dashboard-service-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
-  .dashboard-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .dashboard-settings-card__content {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 600px) {
-  .dashboard-card-grid,
+  .dashboard-top-grid,
+  .dashboard-service-grid,
   .dashboard-settings-card__content {
     grid-template-columns: 1fr;
   }
 
   .dashboard-info-card,
-  .dashboard-settings-card {
+  .dashboard-settings-card,
+  .dashboard-service-card {
     grid-template-columns: 78px minmax(0, 1fr);
   }
 
-  .dashboard-info-card__icon {
+  .dashboard-info-card__icon,
+  .dashboard-service-card__icon {
     width: 78px;
   }
 }

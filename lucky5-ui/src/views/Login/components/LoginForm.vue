@@ -11,16 +11,11 @@
   >
     <el-row class="mx-[-10px]">
       <el-col :span="24" class="px-10px">
-        <el-form-item>
-          <LoginFormTitle class="w-full" />
-        </el-form-item>
-      </el-col>
-      <el-col :span="24" class="px-10px">
         <el-form-item prop="username">
           <el-input
             v-model="loginData.loginForm.username"
             :placeholder="t('login.usernamePlaceholder')"
-            :prefix-icon="iconAvatar"
+            :suffix-icon="iconMessage"
           />
         </el-form-item>
       </el-col>
@@ -29,14 +24,13 @@
           <el-input
             v-model="loginData.loginForm.password"
             :placeholder="t('login.passwordPlaceholder')"
-            :prefix-icon="iconLock"
-            show-password
+            :suffix-icon="iconLock"
             type="password"
             @keyup.enter="getCode()"
           />
         </el-form-item>
       </el-col>
-      <el-col :span="24" class="px-10px mt-[-20px] mb-[-20px]">
+      <el-col :span="24" class="legacy-login-remember px-10px mt-[-20px] mb-[-20px]">
         <el-form-item>
           <el-row style="width: 100%">
             <el-col :span="24">
@@ -47,7 +41,7 @@
           </el-row>
         </el-form-item>
       </el-col>
-      <el-col :span="24" class="px-10px">
+      <el-col :span="24" class="legacy-login-action px-10px">
         <el-form-item>
           <el-button :loading="loginLoading" class="w-full" type="primary" @click="getCode()">
             {{ t('login.login') }}
@@ -67,7 +61,6 @@
 </template>
 <script lang="ts" setup>
 import { ElLoading } from 'element-plus'
-import LoginFormTitle from './LoginFormTitle.vue'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 
 import { useIcon } from '@/hooks/web/useIcon'
@@ -82,7 +75,7 @@ import { unlockMarketBalanceAlarmAudio } from '@/utils/marketBalanceAlarmAudio'
 defineOptions({ name: 'LoginForm' })
 
 const { t } = useI18n()
-const iconAvatar = useIcon({ icon: 'ep:avatar' })
+const iconMessage = useIcon({ icon: 'ep:message' })
 const iconLock = useIcon({ icon: 'ep:lock' })
 const formLogin = ref()
 const { validForm } = useFormValid(formLogin)

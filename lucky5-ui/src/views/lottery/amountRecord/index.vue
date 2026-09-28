@@ -5,25 +5,37 @@ import {
   onBeforeUnmount,
   onDeactivated,
   onMounted,
-  reactive,
-  ref
+  ref,
+  watch
 } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { getAmountRecordPageApi } from '@/api/lottery'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
 const nickname = ref('')
 const timeType = ref(1)
-const visible = ref(false)
 const refreshing = ref(false)
-const form = reactive({ memberId: '', type: '上分' as '上分' | '下分', amount: 0, remark: '' })
+const page = ref(1)
+const pageSize = ref(10)
+const pageResult = ref({
+  items: [] as Record<string, any>[],
+  total: 0,
+  summary: { topup: 0, withdraw: 0, balance: 0 }
+})
 let refreshTimer: number | undefined
 
 const refreshAmountRecords = async () => {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    await store.refreshAmountRecords()
+    pageResult.value = await getAmountRecordPageApi({
+      pageNo: page.value,
+      pageSize: pageSize.value,
+      nickname: nickname.value.trim() || undefined,
+      timeType: timeType.value
+    })
   } finally {
     refreshing.value = false
   }
@@ -46,21 +58,31 @@ onActivated(startAutoRefresh)
 onDeactivated(stopAutoRefresh)
 onBeforeUnmount(stopAutoRefresh)
 
-const rows = computed(() => {
-  const keyword = nickname.value.trim()
-  if (!keyword) return store.amountRecords
-  return store.amountRecords.filter((item) => item.member.includes(keyword))
+const rows = computed(() => pageResult.value.items || [])
+const total = computed(() => Number(pageResult.value.total || 0))
+const firstItem = computed(() => (total.value ? (page.value - 1) * pageSize.value + 1 : 0))
+const lastItem = computed(() => Math.min(page.value * pageSize.value, total.value))
+const lastPage = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const totalUp = computed(() => pageResult.value.summary?.topup || 0)
+const totalDown = computed(() => pageResult.value.summary?.withdraw || 0)
+const netAmount = computed(() => pageResult.value.summary?.balance || 0)
+const legacyStatus = (status: string) =>
+  ({ '待审核': '未确认', '已通过': '已确认', '已拒绝': '作废' })[status] || '作废'
+const legacyAmount = (row: Record<string, any>) => {
+  const amount = Number(row.amount || 0)
+  return row.type === '下分' && amount > 0 ? -amount : amount
+}
+
+watch(pageSize, () => {
+  page.value = 1
+  void refreshAmountRecords()
 })
-const totalUp = computed(() =>
-  rows.value
-    .filter((item) => item.type === '上分' && item.status === '已通过')
-    .reduce((sum, item) => sum + Number(item.amount || 0), 0)
-)
-const totalDown = computed(() =>
-  rows.value
-    .filter((item) => item.type === '下分' && item.status === '已通过')
-    .reduce((sum, item) => sum + Number(item.amount || 0), 0)
-)
+
+watch(lastPage, (value) => {
+  page.value = Math.min(page.value, value)
+})
+
+watch(page, () => void refreshAmountRecords())
 
 const audit = async (row: any, status: '已通过' | '已拒绝') => {
   try {
@@ -69,6 +91,7 @@ const audit = async (row: any, status: '已通过' | '已拒绝') => {
         inputValidator: (text) => Boolean(String(text || '').trim()) || '请输入拒绝原因'
       })
       await store.auditAmount(row.id, status, value)
+      await refreshAmountRecords()
       return
     }
     await ElMessageBox.confirm(
@@ -77,36 +100,24 @@ const audit = async (row: any, status: '已通过' | '已拒绝') => {
       { type: 'warning' }
     )
     await store.auditAmount(row.id, status)
+    await refreshAmountRecords()
   } catch {
     // User cancelled.
   }
 }
 
-const submit = async () => {
-  if (!form.memberId || form.amount <= 0) {
-    ElMessage.warning('请选择会员并填写分数')
-    return
-  }
-  const saved = await store.createAmountRequest(form.memberId, form.amount, form.type, form.remark)
-  if (saved) visible.value = false
-}
 </script>
 
 <template>
-  <div class="lucky-page">
-    <h1 class="lucky-page__heading">
+  <div class="lucky-page lucky-legacy-content">
+    <div class="amount-record-heading">
       积分列表 <small>上下分审核</small>
       <span class="lucky-amount-total"
-        >上分：{{ totalUp }}，下分：{{ totalDown }}，净额：{{ totalUp - totalDown }}</span
+        >{{ totalUp }} - {{ totalDown }} = {{ netAmount }}</span
       >
-    </h1>
-    <div class="lucky-toolbar">
-      <div class="lucky-toolbar__filters">
-        <el-tooltip content="提交上下分申请">
-          <el-button type="primary" circle @click="visible = true"
-            ><Icon icon="ep:plus"
-          /></el-button>
-        </el-tooltip>
+    </div>
+    <div class="lucky-toolbar amount-record-toolbar">
+      <div class="lucky-toolbar__filters amount-record-toolbar__filters">
         <el-input v-model="nickname" clearable placeholder="昵称" />
         <el-select v-model="timeType">
           <el-option label="全部" :value="0" />
@@ -114,87 +125,190 @@ const submit = async () => {
           <el-option label="昨天" :value="2" />
           <el-option label="本周" :value="3" />
         </el-select>
-        <el-button type="primary" :loading="refreshing" @click="refreshAmountRecords"
+        <el-button class="amount-record-search-button" :loading="refreshing" @click="page = 1; refreshAmountRecords()"
           >搜索</el-button
         >
       </div>
     </div>
-    <el-card shadow="never">
-      <PaginatedTable :data="rows" border>
-        <template #mobile="{ row }">
-          <div class="lucky-mobile-card__title">
-            <span>{{ row.member }}</span>
-            <el-tag :type="row.type === '上分' ? 'success' : 'warning'" size="small">
-              {{ row.type }} {{ row.amount }}
-            </el-tag>
-          </div>
-          <div v-if="row.remark" class="lucky-mobile-card__content">{{ row.remark }}</div>
-          <div class="lucky-mobile-card__meta">
-            <span>状态：{{ row.status }}</span>
-            <span>{{ row.createdAt }}</span>
-          </div>
-          <div v-if="row.status === '待审核'" class="lucky-mobile-card__actions">
-            <el-button size="small" type="warning" @click="audit(row, '已通过')">通过</el-button>
-            <el-button size="small" type="danger" @click="audit(row, '已拒绝')">拒绝</el-button>
-          </div>
-        </template>
+    <el-card class="legacy-list-box" shadow="never">
+      <el-table
+        :data="rows"
+        border
+        empty-text="No data available in table"
+        class="amount-record-table"
+        show-summary
+        :summary-method="legacyFooterHeaders"
+      >
         <el-table-column prop="member" label="昵称" min-width="140" />
-        <el-table-column prop="amount" label="分数" min-width="100" />
+        <el-table-column label="分数" min-width="100">
+          <template #default="{ row }">{{ legacyAmount(row) }}</template>
+        </el-table-column>
         <el-table-column prop="type" label="类型" min-width="100" />
-        <el-table-column prop="status" label="状态" min-width="110" />
-        <el-table-column prop="remark" label="备注" min-width="160" />
+        <el-table-column label="状态" min-width="110">
+          <template #default="{ row }">{{ legacyStatus(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" min-width="200" />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="150">
           <template #default="{ row }">
             <div v-if="row.status === '待审核'" class="lucky-table-actions">
               <el-button size="small" type="warning" @click="audit(row, '已通过')">通过</el-button>
               <el-button size="small" type="danger" @click="audit(row, '已拒绝')">拒绝</el-button>
             </div>
-            <span v-else>{{ row.status }}</span>
+            <span v-else>{{ legacyStatus(row.status) }}</span>
           </template>
         </el-table-column>
-      </PaginatedTable>
+      </el-table>
+      <div class="amount-record-footer">
+        <span>显示{{ total }}个条目中的{{ firstItem }}到{{ lastItem }}</span>
+        <div class="amount-record-footer__pager">
+          <el-button :disabled="page <= 1" @click="page -= 1">上一页</el-button>
+          <el-button :disabled="page >= lastPage" @click="page += 1">下一页</el-button>
+        </div>
+      </div>
     </el-card>
-
-    <el-dialog v-model="visible" title="提交上下分申请" width="480px" class="lucky-dialog">
-      <el-form :model="form" label-width="80px">
-        <el-form-item label="会员">
-          <el-select v-model="form.memberId" filterable>
-            <el-option
-              v-for="member in store.members.filter(
-                (item) => item.memberType !== 'BOT' && !item.autoProxy
-              )"
-              :key="member.id"
-              :label="`${member.name}（余分 ${member.balance}）`"
-              :value="member.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="类型">
-          <el-radio-group v-model="form.type">
-            <el-radio-button label="上分" />
-            <el-radio-button label="下分" />
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="分数"
-          ><el-input-number v-model="form.amount" :min="0.01"
-        /></el-form-item>
-        <el-form-item label="备注"
-          ><el-input v-model="form.remark" type="textarea" :rows="3"
-        /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="visible = false">取消</el-button>
-        <el-button type="primary" :loading="store.saving" @click="submit">提交</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.amount-record-heading {
+  display: block !important;
+  margin: 0 0 24px;
+  padding-top: 15px;
+  color: #222;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.amount-record-heading small {
+  margin-left: 6px;
+  color: #777;
+  font-size: 15px;
+  font-weight: 400;
+}
+
 .lucky-amount-total {
+  display: inline-block;
   margin-left: 12px;
-  font-size: 14px;
-  color: var(--el-color-danger);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  color: #f00;
+  visibility: visible;
+}
+
+.legacy-list-box :deep(.el-card__body) {
+  padding: 10px;
+}
+
+.amount-record-toolbar {
+  margin-bottom: 34px;
+}
+
+.amount-record-toolbar__filters {
+  gap: 26px !important;
+}
+
+.amount-record-toolbar__filters :deep(.el-input),
+.amount-record-toolbar__filters :deep(.el-select) {
+  width: 142px;
+}
+
+.amount-record-search-button {
+  --el-button-text-color: #fff;
+  --el-button-bg-color: #00c0ef;
+  --el-button-border-color: #00acd6;
+  --el-button-hover-text-color: #fff;
+  --el-button-hover-bg-color: #00acd6;
+  --el-button-hover-border-color: #009abf;
+  min-height: 34px;
+  color: #fff !important;
+  background: #00c0ef !important;
+  border-color: #00acd6 !important;
+}
+
+.amount-record-search-button:hover,
+.amount-record-search-button:focus {
+  color: #fff !important;
+  background: #00acd6 !important;
+  border-color: #009abf !important;
+}
+
+.amount-record-table :deep(th.el-table__cell) {
+  height: 40px;
+  padding: 0;
+  color: #333;
+  font-size: 16px;
+  font-weight: 600;
+  background: #fff;
+}
+
+.amount-record-table :deep(td.el-table__cell) {
+  height: 46px;
+  padding: 0 8px;
+  color: #444;
+  font-size: 15px;
+}
+
+.amount-record-table :deep(.el-table__empty-block) {
+  left: 0;
+  width: 100% !important;
+  transform: none;
+}
+
+.amount-record-table :deep(.el-table__empty-text) {
+  width: 100%;
+  padding-left: 10px;
+  color: #555;
+  text-align: left;
+}
+
+.amount-record-footer,
+.amount-record-footer__pager {
+  display: flex;
+  align-items: center;
+}
+
+.amount-record-footer {
+  position: relative;
+  min-height: 54px;
+  color: #555;
+  font-size: 13px;
+}
+
+.amount-record-footer__pager {
+  position: absolute;
+  left: 50%;
+  gap: 0;
+  transform: translateX(-50%);
+}
+
+.amount-record-footer__pager :deep(.el-button) {
+  min-height: 30px;
+  margin: 0;
+  border-radius: 3px;
+}
+
+.amount-record-footer__pager :deep(.el-button + .el-button) {
+  margin-left: 4px;
+}
+
+@media (width <= 768px) {
+  .amount-record-toolbar__filters {
+    gap: 8px !important;
+  }
+
+  .amount-record-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding-bottom: 40px;
+  }
+
+  .amount-record-footer__pager {
+    bottom: 0;
+    left: 0;
+    transform: none;
+  }
 }
 </style>

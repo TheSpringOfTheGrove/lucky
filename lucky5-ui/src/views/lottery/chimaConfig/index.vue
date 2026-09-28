@@ -17,7 +17,14 @@ const form = reactive({
 
 watch(
   () => store.chimaConfig,
-  (value) => Object.assign(form, value),
+  (value) => {
+    // The API may serialize decimal configuration as "0.0".  Keep the
+    // numeric value, but let the legacy input show a plain 0 for zero.
+    Object.assign(
+      form,
+      Object.fromEntries(Object.entries(value).map(([key, amount]) => [key, Number(amount) || 0]))
+    )
+  },
   { deep: true, immediate: true }
 )
 </script>
@@ -28,7 +35,7 @@ watch(
       <template #header>
         <strong>吃码额度设定</strong>
       </template>
-      <el-form :model="form" class="lucky-original-form" label-width="150px">
+      <el-form :model="form" class="lucky-original-form chima-config-form" label-width="150px">
         <el-form-item label="四字现"
           ><el-input-number v-model="form.siZiXian" :controls="false"
         /></el-form-item>
@@ -56,7 +63,7 @@ watch(
         <el-form-item label="盈亏下限"
           ><el-input-number v-model="form.yinKuiMin" :controls="false"
         /></el-form-item>
-        <el-form-item>
+        <el-form-item class="chima-config-form__action">
           <el-button type="primary" :loading="store.saving" @click="store.saveChimaConfig(form)"
             >保存</el-button
           >
@@ -66,3 +73,20 @@ watch(
   </div>
 </template>
 
+<style scoped>
+.chima-config-form :deep(.el-input-number) {
+  width: 190px;
+}
+
+.chima-config-form :deep(.el-input__inner) {
+  text-align: left !important;
+}
+
+.chima-config-form__action {
+  margin-top: 20px;
+}
+
+.chima-config-form__action :deep(.el-form-item__content) {
+  justify-content: flex-end;
+}
+</style>

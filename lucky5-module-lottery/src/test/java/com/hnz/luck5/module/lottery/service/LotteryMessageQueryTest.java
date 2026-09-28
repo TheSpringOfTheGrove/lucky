@@ -2,6 +2,7 @@ package com.hnz.luck5.module.lottery.service;
 
 import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,7 @@ class LotteryMessageQueryTest {
         service = new LotteryServiceImpl();
         messageMapper = mock(MessageMapper.class);
         ReflectionTestUtils.setField(service, "messageMapper", messageMapper);
+        ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
     }
 
     @Test
@@ -80,7 +82,28 @@ class LotteryMessageQueryTest {
         assertThat(result.getList()).extracting(row -> row.get("sender"))
                 .containsExactly("机器人", "A01");
         assertThat(result.getList()).extracting(row -> row.get("content"))
-                .containsExactly("@A01\n【户型审核成功】✓✓", "大100");
+                .containsExactly("@A01\n【户型审核成功】√√", "大100");
+    }
+
+    @Test
+    void canceledRoomBetKeepsReceiptButNeverRestoresCancelLink() {
+        MessageDO bet = message(4L, "玩家A", "20260810001", "大100",
+                "@玩家A\n[挂牌时间]001\n大100\n【户型审核成功】√√\n\n点击退码\n已退码");
+        bet.setCommandType("BET");
+        bet.setStatus("已退码");
+        bet.setOrderId("O-1");
+        bet.setMemberId("M-1");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("玩家A");
+
+        Map<String, Object> roomMessage = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                bet, member, Map.of(), Map.of());
+
+        assertThat(roomMessage).containsEntry("status", "已退码");
+        assertThat(roomMessage.get("reply").toString())
+                .contains("[挂牌时间]001", "【户型审核成功】", "已退码")
+                .doesNotContain("点击退码");
     }
 
     private MessageDO message(Long id, String member, String period, String content, String reply) {

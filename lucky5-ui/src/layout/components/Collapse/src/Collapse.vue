@@ -15,21 +15,13 @@ defineProps({
 
 const appStore = useAppStore()
 
-const collapse = computed(() => appStore.getCollapse)
-
 const toggleCollapse = () => {
-  const collapsed = unref(collapse)
-  appStore.setCollapse(!collapsed)
+  appStore.setCollapse(!appStore.getCollapse)
 }
 </script>
 
 <template>
   <div :class="prefixCls" @click="toggleCollapse">
-    <Icon
-      :color="color"
-      :icon="collapse ? 'ep:expand' : 'ep:fold'"
-      :size="18"
-      class="cursor-pointer"
-    />
+    <span class="lucky-admin-hamburger" aria-hidden="true"></span>
   </div>
 </template>

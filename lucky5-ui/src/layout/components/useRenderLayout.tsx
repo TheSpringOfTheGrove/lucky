@@ -47,14 +47,13 @@ export const useRenderLayout = () => {
       <>
         <div
           class={[
-            'absolute top-0 left-0 h-full layout-border__right',
-            { '!fixed z-3000': mobile.value }
+            'lucky-admin-header-shell absolute top-0 left-0 z-20 h-[var(--top-tool-height)] w-full bg-[var(--top-header-bg-color)] layout-border__bottom'
           ]}
         >
           {logo.value ? (
             <Logo
               class={[
-                'bg-[var(--left-menu-bg-color)] relative',
+                'absolute top-0 left-0 z-10 bg-[var(--top-header-bg-color)] lucky-admin-logo-shell',
                 {
                   '!pl-0': mobile.value && collapse.value,
                   'w-[var(--left-menu-min-width)]': appStore.getCollapse,
@@ -64,59 +63,50 @@ export const useRenderLayout = () => {
               style="transition: all var(--transition-time-02);"
             ></Logo>
           ) : undefined}
-          <Menu class={[{ '!h-[calc(100%-var(--logo-height))]': logo.value }]}></Menu>
+          <ToolHeader
+            class={[
+              'lucky-admin-tool-header h-[var(--top-tool-height)] bg-[var(--top-header-bg-color)]',
+              {
+                'ml-[var(--left-menu-min-width)] w-[calc(100%-var(--left-menu-min-width))]':
+                  collapse.value && !mobile.value,
+                'ml-[var(--left-menu-max-width)] w-[calc(100%-var(--left-menu-max-width))]':
+                  !collapse.value && !mobile.value,
+                '!ml-0 !w-full': mobile.value
+              }
+            ]}
+          ></ToolHeader>
         </div>
         <div
           class={[
-            `${prefixCls}-content`,
-            'absolute top-0 h-[100%]',
+            'lucky-admin-sidebar-shell absolute top-[var(--top-tool-height)] left-0 h-[calc(100%-var(--top-tool-height))] layout-border__right',
+            {
+              '!fixed z-3000': mobile.value,
+              'lucky-admin-sidebar-shell--open': mobile.value && !collapse.value
+            }
+          ]}
+        >
+          <div class="lucky-admin-nav-title">MAIN NAVIGATION</div>
+          <Menu class="lucky-admin-menu"></Menu>
+        </div>
+        <div
+          class={[
+            `${prefixCls}-content lucky-admin-content-shell`,
+            'absolute top-[var(--top-tool-height)] h-[calc(100%-var(--top-tool-height))]',
             {
               'w-[calc(100%-var(--left-menu-min-width))] left-[var(--left-menu-min-width)]':
-                collapse.value && !mobile.value && !mobile.value,
+                collapse.value && !mobile.value,
               'w-[calc(100%-var(--left-menu-max-width))] left-[var(--left-menu-max-width)]':
-                !collapse.value && !mobile.value && !mobile.value,
-              'fixed !w-full !left-0': mobile.value
+                !collapse.value && !mobile.value,
+              'fixed !w-full !left-0': mobile.value,
+              'lucky-admin-content-shell--drawer-open': mobile.value && !collapse.value
             }
           ]}
           style="transition: all var(--transition-time-02);"
         >
           <ElScrollbar
             v-loading={pageLoading.value}
-            class={[
-              `${prefixCls}-content-scrollbar`,
-              {
-                '!h-[calc(100%-var(--top-tool-height)-var(--tags-view-height))] mt-[calc(var(--top-tool-height)+var(--tags-view-height))]':
-                  fixedHeader.value
-              }
-            ]}
+            class={`${prefixCls}-content-scrollbar h-full`}
           >
-            <div
-              class={[
-                {
-                  'fixed top-0 left-0 z-10': fixedHeader.value,
-                  'w-[calc(100%-var(--left-menu-min-width))] !left-[var(--left-menu-min-width)]':
-                    collapse.value && fixedHeader.value && !mobile.value,
-                  'w-[calc(100%-var(--left-menu-max-width))] !left-[var(--left-menu-max-width)]':
-                    !collapse.value && fixedHeader.value && !mobile.value,
-                  '!w-full !left-0': mobile.value
-                }
-              ]}
-              style="transition: all var(--transition-time-02);"
-            >
-              <ToolHeader
-                class={[
-                  'bg-[var(--top-header-bg-color)]',
-                  {
-                    'layout-border__bottom': !tagsView.value
-                  }
-                ]}
-              ></ToolHeader>
-
-              {tagsView.value ? (
-                <TagsView class="layout-border__top layout-border__bottom"></TagsView>
-              ) : undefined}
-            </div>
-
             <AppView></AppView>
           </ElScrollbar>
         </div>

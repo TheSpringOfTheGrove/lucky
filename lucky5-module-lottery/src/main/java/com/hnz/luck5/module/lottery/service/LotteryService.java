@@ -48,6 +48,8 @@ public interface LotteryService {
 
     List<Map<String, Object>> getAmountRecords();
 
+    Map<String, Object> getAmountRecordPage(LotteryReqVO.AmountRecordPage reqVO);
+
     PageResult<Map<String, Object>> getOrders(LotteryReqVO.OrderPage reqVO);
 
     Map<String, Object> getOrderItems(String id, LotteryReqVO.OrderItemPage reqVO);
@@ -61,6 +63,9 @@ public interface LotteryService {
     Map<String, String> getMemberLinks(String id, String origin);
 
     Map<String, String> rotateMemberLink(String id, String origin);
+
+    /** Resolves the public short-link token to the group room URL, or null when it has expired. */
+    String resolveMemberShortLink(String code, String origin);
 
     void clearMemberFingerprint(String id);
 
@@ -133,6 +138,8 @@ public interface LotteryService {
     Map<String, Object> getRoomSession(LotteryRoomReqVO.Credential reqVO);
 
     Map<String, Object> getRoomDrawState(LotteryRoomReqVO.Credential reqVO);
+
+    Map<String, Object> getRoomMessageHistory(LotteryRoomReqVO.MessageHistory reqVO);
 
     Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO);
 

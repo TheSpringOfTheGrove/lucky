@@ -10,3 +10,5 @@
 lucky5-ui
 script
 sql
+*.tar
+.codex-deploy

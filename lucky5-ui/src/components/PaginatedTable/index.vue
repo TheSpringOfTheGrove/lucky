@@ -8,15 +8,19 @@ const props = withDefaults(
   defineProps<{
     data: any[]
     defaultPageSize?: number
+    // 标准后台在窄屏仍保留表格；未明确声明时不切换成卡片。
+    mobileCards?: boolean
   }>(),
-  { defaultPageSize: 20 }
+  { defaultPageSize: 20, mobileCards: false }
 )
 
 const page = ref(1)
 const pageSize = ref(props.defaultPageSize)
 const slots = useSlots()
 const isMobile = useMediaQuery('(max-width: 768px)')
-const useMobileList = computed(() => isMobile.value && Boolean(slots.mobile))
+const useMobileList = computed(
+  () => props.mobileCards && isMobile.value && Boolean(slots.mobile)
+)
 const total = computed(() => props.data?.length || 0)
 const pagedRows = computed(() => {
   const start = (page.value - 1) * pageSize.value

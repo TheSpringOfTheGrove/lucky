@@ -152,31 +152,32 @@ watch(
 }
 
 .scratch-dialog {
-  width: min(390px, 100%);
-  padding: 30px 24px 26px;
-  color: #bd367a;
+  width: min(340px, 100%);
+  height: 600px;
+  padding: 20px;
+  color: #b44c8d;
   text-align: center;
-  background: #fff0fb;
-  border: 1px solid #ead7e5;
-  border-radius: 8px;
-  box-shadow: 0 18px 50px rgb(0 0 0 / 28%);
+  background: #f7e6f2;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: none;
   box-sizing: border-box;
 }
 
 .scratch-dialog h2,
 .scratch-dialog h3 {
-  margin: 0;
-  font-size: 20px;
+  margin: 5px 0 15px;
+  font-size: 14px;
   letter-spacing: 0;
 }
 
 .scratch-stage {
   position: relative;
-  width: 100%;
-  margin: 24px 0 26px;
-  overflow: hidden;
-  background: #efefef;
-  aspect-ratio: 2 / 1;
+  width: 300px;
+  height: 150px;
+  margin: 20px auto;
+  background: #fff;
+  aspect-ratio: auto;
 }
 
 .scratch-numbers {
@@ -190,14 +191,14 @@ watch(
 
 .scratch-numbers span {
   display: grid;
-  width: 52px;
-  max-width: 17%;
+  width: 44px;
+  max-width: none;
   color: #fff;
-  background: #c95759;
+  background: #cd665d;
   border-radius: 50%;
   aspect-ratio: 1;
   place-items: center;
-  font-size: 27px;
+  font-size: 16px;
 }
 
 .scratch-stage canvas {
@@ -210,45 +211,45 @@ watch(
 }
 
 .scratch-countdown {
-  min-height: 24px;
-  margin: 28px 0;
-  font-size: 18px;
-  font-weight: 600;
+  min-height: 21px;
+  margin: 5px 0 20px;
+  font-size: 14px;
+  font-weight: 400;
 }
 
 .scratch-refresh,
 .scratch-close {
   display: block;
   width: 100%;
-  height: 48px;
-  margin-top: 14px;
+  height: 40px;
+  margin-top: 20px;
   color: #fff;
   border: 0;
-  border-radius: 3px;
-  font-size: 18px;
+  border-radius: 5px;
+  font-size: 16px;
   cursor: pointer;
 }
 
 .scratch-refresh {
-  background: #c5d94f;
+  background: #c8ce5f;
 }
 
 .scratch-close {
-  background: #c85b58;
+  background: #cd635a;
 }
 
 .scratch-auto {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-  margin-top: 24px;
+  display: block;
+  margin-top: 20px;
   color: #333;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .scratch-auto input {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 4px;
+  vertical-align: middle;
 }
 
 @media (max-width: 420px) {

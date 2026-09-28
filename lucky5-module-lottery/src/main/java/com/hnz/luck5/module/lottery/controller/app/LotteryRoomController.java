@@ -41,6 +41,11 @@ public class LotteryRoomController {
         return success(lotteryService.getRoomDrawState(reqVO));
     }
 
+    @GetMapping("/messages/history")
+    public CommonResult<Map<String, Object>> getMessageHistory(@Valid LotteryRoomReqVO.MessageHistory reqVO) {
+        return success(lotteryService.getRoomMessageHistory(reqVO));
+    }
+
     @PostMapping("/bets")
     public CommonResult<Map<String, Object>> placeBet(@Valid @RequestBody LotteryRoomReqVO.Bet reqVO) {
         return success(lotteryService.roomPlaceBet(reqVO));

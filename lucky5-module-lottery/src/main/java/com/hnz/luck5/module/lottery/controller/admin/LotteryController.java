@@ -271,6 +271,12 @@ public class LotteryController {
         return success(lotteryService.getAmountRecords());
     }
 
+    @GetMapping("/amount-records/page")
+    @PreAuthorize("@ss.hasPermission('lottery:amount:manage')")
+    public CommonResult<Map<String, Object>> getAmountRecordPage(@Valid LotteryReqVO.AmountRecordPage reqVO) {
+        return success(lotteryService.getAmountRecordPage(reqVO));
+    }
+
     @GetMapping("/orders")
     @PreAuthorize("@ss.hasAnyPermissions('lottery:order:manage', 'lottery:history:query')")
     public CommonResult<PageResult<Map<String, Object>>> getOrders(@Valid LotteryReqVO.OrderPage reqVO) {

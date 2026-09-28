@@ -28,6 +28,7 @@ public class MessageDO extends LotteryUserBaseDO {
     private String commandType;
     private String messageType;
     private String reply;
+    private String drawImage;
     private LocalDateTime processedAt;
 
 }

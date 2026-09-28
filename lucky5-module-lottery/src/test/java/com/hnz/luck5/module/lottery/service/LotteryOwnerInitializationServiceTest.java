@@ -119,7 +119,7 @@ class LotteryOwnerInitializationServiceTest {
         ArgumentCaptor<LinkConfigDO> linkCaptor = ArgumentCaptor.forClass(LinkConfigDO.class);
         verify(linkConfigMapper).insert(linkCaptor.capture());
         assertThat(linkCaptor.getValue().getGroupLinkEnabled()).isTrue();
-        assertThat(linkCaptor.getValue().getPrivateLinkEnabled()).isTrue();
+        assertThat(linkCaptor.getValue().getPrivateLinkEnabled()).isFalse();
         assertThat(linkCaptor.getValue().getDefaultRoomMode()).isEqualTo("GROUP");
 
         ArgumentCaptor<IntegrationDO> integrationCaptor = ArgumentCaptor.forClass(IntegrationDO.class);

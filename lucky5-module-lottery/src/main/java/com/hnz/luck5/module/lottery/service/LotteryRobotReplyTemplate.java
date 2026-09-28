@@ -70,16 +70,15 @@ public class LotteryRobotReplyTemplate {
             return "已退码";
         }
         String receipt = originalReceipt.stripTrailing();
-        if (receipt.endsWith("已退码")) {
-            return receipt;
+        while (!receipt.isEmpty()) {
+            int lastLineStart = receipt.lastIndexOf('\n') + 1;
+            String lastLine = receipt.substring(lastLineStart).trim();
+            if (!List.of("点击退码", "已退码", "正在确认明细").contains(lastLine)) {
+                break;
+            }
+            receipt = receipt.substring(0, Math.max(0, lastLineStart - 1)).stripTrailing();
         }
-        if (receipt.endsWith("点击退码")) {
-            receipt = receipt.substring(0, receipt.length() - "点击退码".length()).stripTrailing();
-        }
-        if (receipt.endsWith("正在确认明细")) {
-            receipt = receipt.substring(0, receipt.length() - "正在确认明细".length()).stripTrailing();
-        }
-        return receipt + "\n已退码";
+        return receipt.isEmpty() ? "已退码" : receipt + "\n\n已退码";
     }
 
     public String cancelPending(String orderId) {
@@ -134,30 +133,32 @@ public class LotteryRobotReplyTemplate {
     private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                               BigDecimal amount, BigDecimal balance, String action) {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + displayCommands(content)
-                + "\n【户型审核成功】✓✓\n【编号】：" + sequence
-                + "\n【套内】：" + itemCount + "\n【套外】：" + number(amount)
-                + "\n【面积】：" + number(balance) + "\n\n" + action;
+                + "\n【户型审核成功】√√\n【编号】" + sequence
+                + "\n【套内】:" + itemCount + "\n【套外】:" + receiptMoney(amount)
+                + "\n【面积】:" + receiptMoney(balance) + "\n\n" + action;
+    }
+
+    private String receiptMoney(BigDecimal value) {
+        return value.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
     }
 
     private String displayCommands(String content) {
         return String.join("\n", bettingService.splitCommandsForDisplay(content));
     }
 
-    /**
-     * Group rooms may show that another player was accepted, but must not expose their balance or cancellation entry.
-     */
+    /** Group receipts use the same visible fields as the member's receipt. */
     public String publicBetReceipt(String memberName, String receipt) {
         if (receipt == null || receipt.isBlank()) {
             return "";
         }
         if (receipt.contains("订单号")) {
-            return "@" + memberName + "\n下注成功";
+            return "@" + memberName + "\n下注成功"
+                    + (receipt.contains("点击退码") ? "\n点击退码" : "");
         }
         List<String> visible = new ArrayList<>();
         for (String line : receipt.split("\\R")) {
             String normalized = line.trim();
-            if (normalized.startsWith("【面积】") || normalized.startsWith("面积：")
-                    || normalized.equals("点击退码") || normalized.equals("正在确认明细")
+            if (normalized.equals("正在确认明细")
                     || normalized.startsWith("可用积分")
                     || normalized.startsWith("余额")) {
                 continue;

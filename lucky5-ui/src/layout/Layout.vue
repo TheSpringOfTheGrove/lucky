@@ -1,5 +1,5 @@
 <script lang="tsx">
-import { computed, defineComponent, unref } from 'vue'
+import { computed, defineComponent, onBeforeUnmount, onMounted, unref } from 'vue'
 import { useAppStore } from '@/store/modules/app'
 import { Backtop } from '@/components/Backtop'
 import { Setting } from '@/layout/components/Setting'
@@ -48,10 +48,19 @@ const renderLayout = () => {
 export default defineComponent({
   name: 'Layout',
   setup() {
+    onMounted(() => {
+      document.body.classList.add('lucky-admin-theme')
+    })
+
+    onBeforeUnmount(() => {
+      document.body.classList.remove('lucky-admin-theme')
+    })
+
     return () => (
       <section
         class={[
           prefixCls,
+          'luck-layout',
           `${prefixCls}__${layout.value}`,
           `${prefixCls}__${getLayoutRenderMode(layout.value)}`,
           'w-[100%] h-[100%] relative'

@@ -544,7 +544,9 @@ export default defineComponent({
         ref={menuWrapRef}
         class={[
           `${prefixCls} ${prefixCls}__${unref(menuMode)}`,
+          'luck-menu',
           `${prefixCls}--${props.theme}`,
+          `luck-menu--${props.theme}`,
           'h-[100%] overflow-hidden flex-col bg-[var(--left-menu-bg-color)]',
           {
             'w-[var(--left-menu-min-width)]':

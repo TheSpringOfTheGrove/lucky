@@ -6,6 +6,7 @@ import {
   type LotteryMessagePageParams,
   type LotteryMessageRow
 } from '@/api/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const period = ref('')
 const content = ref('')
@@ -16,6 +17,7 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const isMobile = useMediaQuery('(max-width: 768px)')
+const useMobileCards = false
 
 const startRow = computed(() => (total.value ? (pageNo.value - 1) * pageSize.value + 1 : 0))
 const endRow = computed(() => Math.min(pageNo.value * pageSize.value, total.value))
@@ -71,8 +73,8 @@ onMounted(load)
       </div>
     </div>
 
-    <el-card v-loading="loading" shadow="never">
-      <div v-if="isMobile" class="message-mobile-list">
+    <el-card v-loading="loading" class="legacy-list-box" shadow="never">
+      <div v-if="useMobileCards" class="message-mobile-list">
         <article v-for="row in rows" :key="row.id" class="lucky-mobile-card message-mobile-item">
           <div class="lucky-mobile-card__title">
             <span>{{ row.sender }}</span>
@@ -86,9 +88,17 @@ onMounted(load)
         <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
       </div>
 
-      <el-table v-else :data="rows" row-key="id" border>
+      <el-table
+        v-else
+        :data="rows"
+        row-key="id"
+        border
+        class="message-table"
+        show-summary
+        :summary-method="legacyFooterHeaders"
+      >
         <el-table-column prop="sender" label="发送人" min-width="140" />
-        <el-table-column label="内容" min-width="520">
+        <el-table-column label="内容" min-width="520" align="left" class-name="message-content-column">
           <template #default="{ row }">
             <div class="message-content">{{ row.content }}</div>
           </template>
@@ -120,6 +130,10 @@ onMounted(load)
   margin-bottom: 18px;
 }
 
+.legacy-list-box :deep(.el-card__body) {
+  padding: 10px;
+}
+
 .message-filters {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 240px)) auto;
@@ -128,10 +142,17 @@ onMounted(load)
 }
 
 .message-content {
+  margin: 0;
+  text-align: left !important;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
   line-height: 1.65;
+}
+
+.message-table :deep(td.message-content-column),
+.message-table :deep(td.message-content-column .cell) {
+  text-align: left !important;
 }
 
 .message-time {

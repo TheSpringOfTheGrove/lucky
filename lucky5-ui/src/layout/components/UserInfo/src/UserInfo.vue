@@ -1,19 +1,16 @@
 <script lang="ts" setup>
 import { ElMessageBox } from 'element-plus'
 
-import avatarImg from '@/assets/imgs/avatar.gif'
+import defaultAvatar from '@/assets/imgs/adminlte-user2-160x160.jpg'
 import { useDesign } from '@/hooks/web/useDesign'
 import { useTagsViewStore } from '@/store/modules/tagsView'
 import { useUserStore } from '@/store/modules/user'
-import LockDialog from './components/LockDialog.vue'
-import LockPage from './components/LockPage.vue'
-import { useLockStore } from '@/store/modules/lock'
 
 defineOptions({ name: 'UserInfo' })
 
 const { t } = useI18n()
 
-const { push, replace } = useRouter()
+const { replace } = useRouter()
 
 const userStore = useUserStore()
 
@@ -23,16 +20,10 @@ const { getPrefixCls } = useDesign()
 
 const prefixCls = getPrefixCls('user-info')
 
-const avatar = computed(() => userStore.user.avatar || avatarImg)
-const userName = computed(() => userStore.user.nickname ?? 'Admin')
-
-// 锁定屏幕
-const lockStore = useLockStore()
-const getIsLock = computed(() => lockStore.getLockInfo?.isLock ?? false)
-const dialogVisible = ref<boolean>(false)
-const lockScreen = () => {
-  dialogVisible.value = true
-}
+// The legacy backend uses this fixed AdminLTE portrait as its default rather
+// than the generic avatar returned by the framework profile endpoint.
+const avatar = computed(() => defaultAvatar)
+const userName = computed(() => userStore.user.username || userStore.user.nickname || 'Admin')
 
 const loginOut = async () => {
   try {
@@ -52,55 +43,28 @@ const toProfile = async () => {
 </script>
 
 <template>
-  <ElDropdown class="custom-hover" :class="prefixCls" trigger="click">
-    <div class="flex items-center">
-      <ElAvatar :src="avatar" alt="" class="w-[calc(var(--logo-height)-25px)] rounded-[50%]" />
-      <span class="pl-[5px] text-14px text-[var(--top-header-text-color)] <lg:hidden">
-        {{ userName }}
-      </span>
-    </div>
+  <ElDropdown
+    class="custom-hover"
+    :class="[prefixCls, 'lucky-admin-user-info']"
+    placement="bottom-end"
+    popper-class="lucky-admin-profile-popper"
+    :popper-options="{ modifiers: [{ name: 'offset', options: { offset: [0, 0] } }] }"
+    trigger="click"
+  >
+    <button type="button" class="lucky-admin-user-trigger">
+      <ElAvatar :src="avatar" alt="" class="lucky-admin-user-trigger__avatar" />
+      <span class="lucky-admin-user-trigger__name">{{ userName }}</span>
+    </button>
     <template #dropdown>
-      <ElDropdownMenu>
-        <ElDropdownItem>
-          <Icon icon="ep:tools" />
-          <div @click="toProfile">{{ t('common.profile') }}</div>
-        </ElDropdownItem>
-        <ElDropdownItem divided>
-          <Icon icon="ep:lock" />
-          <div @click="lockScreen">{{ t('lock.lockScreen') }}</div>
-        </ElDropdownItem>
-        <ElDropdownItem divided @click="loginOut">
-          <Icon icon="ep:switch-button" />
-          <div>{{ t('common.loginOut') }}</div>
-        </ElDropdownItem>
-      </ElDropdownMenu>
+      <div class="lucky-admin-profile-menu">
+        <div class="lucky-admin-profile-menu__header">
+          <ElAvatar :src="avatar" alt="" class="lucky-admin-profile-menu__avatar" />
+          <p>{{ userName }}</p>
+        </div>
+        <div class="lucky-admin-profile-menu__footer">
+          <button type="button" @click="loginOut">登出</button>
+        </div>
+      </div>
     </template>
   </ElDropdown>
-
-  <LockDialog v-if="dialogVisible" v-model="dialogVisible" />
-
-  <teleport to="body">
-    <transition name="fade-bottom" mode="out-in">
-      <LockPage v-if="getIsLock" />
-    </transition>
-  </teleport>
 </template>
-
-<style scoped lang="scss">
-.fade-bottom-enter-active,
-.fade-bottom-leave-active {
-  transition:
-    opacity 0.25s,
-    transform 0.3s;
-}
-
-.fade-bottom-enter-from {
-  opacity: 0;
-  transform: translateY(-10%);
-}
-
-.fade-bottom-leave-to {
-  opacity: 0;
-  transform: translateY(10%);
-}
-</style>

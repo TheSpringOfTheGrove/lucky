@@ -11,7 +11,7 @@ public interface ErrorCodeConstants {
     ErrorCode RECORD_ALREADY_PROCESSED = new ErrorCode(2_001_000_005, "记录已经处理");
     ErrorCode ISSUE_NOT_OPEN = new ErrorCode(2_001_000_006, "当前期号未开盘");
     ErrorCode ORDER_NOT_FOUND = new ErrorCode(2_001_000_007, "订单不存在");
-    ErrorCode ORDER_CAN_NOT_CANCEL = new ErrorCode(2_001_000_008, "只有未开奖订单可以退码");
+    ErrorCode ORDER_CAN_NOT_CANCEL = new ErrorCode(2_001_000_008, "当前订单不符合退码条件");
     ErrorCode PERIOD_ALREADY_SETTLED = new ErrorCode(2_001_000_009, "该期号已经结算");
     ErrorCode BET_CONTENT_INVALID = new ErrorCode(2_001_000_010, "下注内容无法识别");
     ErrorCode CONFIG_NOT_FOUND = new ErrorCode(2_001_000_011, "配置不存在");
@@ -49,4 +49,5 @@ public interface ErrorCodeConstants {
     ErrorCode MARKET_ROOM_START_NOT_READY = new ErrorCode(2_001_000_037,
             "盘口账号尚未连接，无法开启盘口模式");
     ErrorCode MARKET_BALANCE_NOT_ENOUGH = new ErrorCode(2_001_000_038, "余额不足");
+    ErrorCode ROOM_CANCEL_NO_RECORD = new ErrorCode(2_001_000_039, "没有记录");
 }

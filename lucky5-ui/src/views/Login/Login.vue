@@ -1,76 +1,25 @@
 <template>
-  <div
-    :class="prefixCls"
-    class="relative h-[100%] lt-md:px-10px lt-sm:px-10px lt-xl:px-10px lt-xl:px-10px"
-  >
-    <div class="relative mx-auto h-full flex">
-      <div
-        :class="`${prefixCls}__left flex-1 bg-gray-500 bg-opacity-20 relative p-30px lt-xl:hidden overflow-x-hidden overflow-y-auto`"
-      >
-        <!-- 左上角的 logo + 系统标题 -->
-        <div class="relative flex items-center text-white">
-          <img alt="" class="mr-10px h-48px w-48px" src="@/assets/imgs/logo.png" />
-          <span class="text-20px font-bold">{{ underlineToHump(appStore.getTitle) }}</span>
-        </div>
-        <!-- 左边的背景图 + 欢迎语 -->
-        <div class="h-[calc(100%-60px)] flex items-center justify-center">
-          <TransitionGroup
-            appear
-            enter-active-class="animate__animated animate__bounceInLeft"
-            tag="div"
-          >
-            <img key="1" alt="" class="w-350px" src="@/assets/svgs/login-box-bg.svg" />
-            <div key="2" class="text-3xl text-white">{{ t('login.welcome') }}</div>
-          </TransitionGroup>
-        </div>
-      </div>
-      <div
-        class="relative flex-1 p-30px dark:bg-[var(--login-bg-color)] lt-sm:p-10px overflow-x-hidden overflow-y-auto"
-      >
-        <!-- 右上角的主题、语言选择 -->
-        <div
-          class="flex items-center justify-between at-2xl:justify-end at-xl:justify-end"
-          style="color: var(--el-text-color-primary)"
-        >
-          <div class="flex items-center at-2xl:hidden at-xl:hidden">
-            <img alt="" class="mr-10px h-48px w-48px" src="@/assets/imgs/logo.png" />
-            <span class="text-20px font-bold">{{ underlineToHump(appStore.getTitle) }}</span>
-          </div>
-          <div class="flex items-center justify-end space-x-10px h-48px">
-            <ThemeSwitch />
-            <LocaleDropdown />
-          </div>
-        </div>
-        <!-- 右边的登录界面 -->
-        <Transition appear enter-active-class="animate__animated animate__bounceInRight">
-          <div
-            class="m-auto h-[calc(100%-60px)] w-[100%] flex items-center at-2xl:max-w-500px at-lg:max-w-500px at-md:max-w-500px at-xl:max-w-500px"
-          >
-            <!-- 账号登录 -->
-            <LoginForm class="m-auto h-auto p-20px lt-xl:(rounded-3xl light:bg-white)" />
-            <!-- 手机登录 -->
-            <MobileForm class="m-auto h-auto p-20px lt-xl:(rounded-3xl light:bg-white)" />
-            <!-- 二维码登录 -->
-            <QrCodeForm class="m-auto h-auto p-20px lt-xl:(rounded-3xl light:bg-white)" />
-            <!-- 注册 -->
-            <RegisterForm class="m-auto h-auto p-20px lt-xl:(rounded-3xl light:bg-white)" />
-            <!-- 三方登录 -->
-            <SSOLoginVue class="m-auto h-auto p-20px lt-xl:(rounded-3xl light:bg-white)" />
-            <!-- 忘记密码 -->
-            <ForgetPasswordForm class="m-auto h-auto p-20px lt-xl:(rounded-3xl light:bg-white)" />
+  <div :class="[prefixCls, 'legacy-login-page']">
+    <main class="legacy-login-box">
+      <div class="legacy-login-logo">管理系统</div>
+      <section class="legacy-login-box__body">
+        <p class="legacy-login-box__hint">登录即可使用本网站</p>
+        <Transition appear enter-active-class="animate__animated animate__fadeInDown">
+          <div class="legacy-login-form-wrap">
+            <LoginForm />
+            <MobileForm />
+            <QrCodeForm />
+            <RegisterForm />
+            <SSOLoginVue />
+            <ForgetPasswordForm />
           </div>
         </Transition>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 </template>
 <script lang="ts" setup>
-import { underlineToHump } from '@/utils'
-
 import { useDesign } from '@/hooks/web/useDesign'
-import { useAppStore } from '@/store/modules/app'
-import { ThemeSwitch } from '@/layout/components/ThemeSwitch'
-import { LocaleDropdown } from '@/layout/components/LocaleDropdown'
 
 import {
   LoginForm,
@@ -83,43 +32,134 @@ import {
 
 defineOptions({ name: 'Login' })
 
-const { t } = useI18n()
-const appStore = useAppStore()
 const { getPrefixCls } = useDesign()
 const prefixCls = getPrefixCls('login')
 </script>
 
 <style lang="scss" scoped>
-$prefix-cls: #{$namespace}-login;
+.legacy-login-page {
+  display: flex;
+  min-height: 100%;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0 12px 24px;
+  overflow-x: hidden;
+  background: #d2d6de;
+  color: #333;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
 
-.#{$prefix-cls} {
-  overflow: auto;
+.legacy-login-box {
+  width: 360px;
+  max-width: 100%;
+  margin: 7% 0 0;
+  box-sizing: border-box;
+}
 
-  &__left {
-    &::before {
-      position: absolute;
-      top: 0;
-      left: 0;
-      z-index: -1;
-      width: 100%;
-      height: 100%;
-      background-image: url('@/assets/svgs/login-bg.svg');
-      background-position: center;
-      background-repeat: no-repeat;
-      content: '';
-    }
+.legacy-login-logo {
+  margin-bottom: 30px;
+  color: #444;
+  text-align: center;
+  font-size: 35px;
+  font-weight: 300;
+  line-height: 1.2;
+}
+
+.legacy-login-box__body {
+  width: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  background: #fff;
+  color: #666;
+}
+
+.legacy-login-box__hint {
+  margin: 0 0 20px;
+  color: #555;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.legacy-login-form-wrap {
+  width: 100%;
+}
+
+@media (width <= 767px) {
+  .legacy-login-page {
+    padding-top: 0;
+  }
+
+  .legacy-login-box {
+    width: 90%;
+    max-width: 360px;
+    margin-top: 20px;
+  }
+
+  .legacy-login-logo {
+    margin-bottom: 20px;
+    font-size: 30px;
   }
 }
 </style>
 
 <style lang="scss">
-.dark .login-form {
-  .el-divider__text {
-    background-color: var(--login-bg-color);
+.legacy-login-page .login-form {
+  width: 100%;
+  min-width: 0;
+
+  .el-row {
+    margin: 0 !important;
+    max-width: 100%;
   }
 
-  .el-card {
-    background-color: var(--login-bg-color);
+  .el-col {
+    padding: 0 !important;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .el-form-item {
+    margin-bottom: 15px;
+  }
+
+  .legacy-login-form-title,
+  .legacy-login-remember {
+    display: none;
+  }
+
+  .el-input__wrapper {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 34px;
+    border-radius: 0;
+    box-shadow: 0 0 0 1px #d2d6de inset;
+  }
+
+  .el-input__wrapper.is-focus {
+    box-shadow: 0 0 0 1px #3c8dbc inset;
+  }
+
+  .el-button--primary {
+    width: 87px;
+    min-height: 34px;
+    border-color: #367fa9;
+    border-radius: 0;
+    background: #3c8dbc;
+  }
+
+  .el-button--primary:hover {
+    border-color: #367fa9;
+    background: #367fa9;
+  }
+
+  .el-checkbox__input.is-checked .el-checkbox__inner {
+    border-color: #3c8dbc;
+    background-color: #3c8dbc;
+  }
+
+  .legacy-login-action .el-form-item__content {
+    justify-content: flex-end;
   }
 }
 </style>

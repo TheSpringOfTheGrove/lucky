@@ -271,7 +271,7 @@ public class LotteryOwnerInitializationService {
                 changed = true;
             }
             if (existing.getPrivateLinkEnabled() == null) {
-                existing.setPrivateLinkEnabled(true);
+                existing.setPrivateLinkEnabled(false);
                 changed = true;
             }
             if (!"GROUP".equals(existing.getDefaultRoomMode()) && !"PRIVATE".equals(existing.getDefaultRoomMode())) {
@@ -285,7 +285,7 @@ public class LotteryOwnerInitializationService {
         }
         LinkConfigDO linkConfig = new LinkConfigDO().setDeviceId("").setDealerUrl("")
                 .setRoomUrl("").setShortUrl("").setQrMode("").setShortUrlMode(2)
-                .setGroupLinkEnabled(true).setPrivateLinkEnabled(true).setDefaultRoomMode("GROUP");
+                .setGroupLinkEnabled(true).setPrivateLinkEnabled(false).setDefaultRoomMode("GROUP");
         linkConfig.setUserId(userId);
         linkConfigMapper.insert(linkConfig);
     }

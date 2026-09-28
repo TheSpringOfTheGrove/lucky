@@ -1,17 +1,20 @@
 <script lang="tsx">
-import { computed, defineComponent } from 'vue'
+import { computed, defineComponent, ref } from 'vue'
 import { Breadcrumb } from '@/layout/components/Breadcrumb'
 import { Collapse } from '@/layout/components/Collapse'
 import { UserInfo } from '@/layout/components/UserInfo'
 import { useSetting } from '@/layout/components/Setting'
 import { useAppStore } from '@/store/modules/app'
+import { useLucky5Store } from '@/store/modules/lottery'
 import { useDesign } from '@/hooks/web/useDesign'
 import { Icon } from '@/components/Icon'
+import ChangePasswordDialog from './ChangePasswordDialog.vue'
 import { isHorizontalMenuLayout, isMixedNavLayout, isTwoColumnLayout } from '@/utils/layout'
 
 const { getPrefixCls, variables } = useDesign()
 const prefixCls = getPrefixCls('tool-header')
 const appStore = useAppStore()
+const lotteryStore = useLucky5Store()
 
 const breadcrumb = computed(() => appStore.getBreadcrumb)
 const hamburger = computed(() => appStore.getHamburger)
@@ -22,6 +25,7 @@ export default defineComponent({
   setup() {
     const { t } = useI18n()
     const { openSetting } = useSetting()
+    const passwordDialogVisible = ref(false)
     const showSidebarControl = computed(
       () => !isHorizontalMenuLayout(layout.value) || isMixedNavLayout(layout.value)
     )
@@ -44,6 +48,16 @@ export default defineComponent({
             {showBreadcrumb.value && breadcrumb.value ? (
               <Breadcrumb class="lt-md:hidden"></Breadcrumb>
             ) : undefined}
+            <div class="lucky-admin-top-meta">
+              {lotteryStore.operator.expireAt ? (
+                <>
+                  <span>到期时间：{lotteryStore.operator.expireAt}</span>
+                  <button type="button" onClick={() => (passwordDialogVisible.value = true)}>
+                    修改密码
+                  </button>
+                </>
+              ) : undefined}
+            </div>
           </div>
         ) : undefined}
         <div class="h-full flex items-center">
@@ -56,6 +70,10 @@ export default defineComponent({
           </div>
           <UserInfo></UserInfo>
         </div>
+        <ChangePasswordDialog
+          modelValue={passwordDialogVisible.value}
+          onUpdate:modelValue={(value: boolean) => (passwordDialogVisible.value = value)}
+        />
       </div>
     )
   }

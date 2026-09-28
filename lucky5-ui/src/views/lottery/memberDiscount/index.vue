@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
 const puller = ref('')
@@ -9,6 +10,8 @@ const keyword = ref('')
 const editVisible = ref(false)
 const batchVisible = ref(false)
 const listVersion = ref(0)
+const page = ref(1)
+const pageSize = ref(10)
 
 const editForm = reactive<Record<string, any>>({
   id: '',
@@ -31,7 +34,7 @@ const pullers = computed(() => pullerMembers.value.map((item) => item.name))
 const availablePullers = computed(() =>
   pullerMembers.value.filter((item) => item.id !== editForm.id)
 )
-const rows = computed(() => {
+const filteredRows = computed(() => {
   const search = keyword.value.trim().toLowerCase()
   return realMembers.value.filter((item) => {
     if (puller.value && item.partner !== puller.value) return false
@@ -39,9 +42,31 @@ const rows = computed(() => {
     return String(item.name || '').toLowerCase().includes(search)
   })
 })
+const total = computed(() => filteredRows.value.length)
+const rows = computed(() => {
+  const start = (page.value - 1) * pageSize.value
+  return filteredRows.value.slice(start, start + pageSize.value)
+})
+const startRow = computed(() => (total.value ? (page.value - 1) * pageSize.value + 1 : 0))
+const endRow = computed(() => Math.min(page.value * pageSize.value, total.value))
+const lastPage = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const changePage = (value: number) => {
+  page.value = Math.max(1, Math.min(value, lastPage.value))
+}
+const changePageSize = (value: number) => {
+  pageSize.value = value
+  page.value = 1
+}
+watch([puller, keyword], () => {
+  page.value = 1
+})
+watch(lastPage, (value) => {
+  page.value = Math.min(page.value, value)
+})
 
 const numberValue = (value: unknown) => Number(value || 0)
 const money = (value: unknown) => numberValue(value).toFixed(2)
+const rateSummary = (value: unknown) => money(value).replace(/\.00$/, '')
 const rate = (value: unknown) => `${numberValue(value).toFixed(2).replace(/\.00$/, '')}%`
 const ownRebate = (row: Record<string, any>) =>
   numberValue(row.normalRebate) + numberValue(row.dragonRebate)
@@ -138,11 +163,11 @@ const openBatch = () => {
 }
 
 const saveBatch = async () => {
-  if (!rows.value.length) {
+  if (!filteredRows.value.length) {
     ElMessage.warning('当前没有可设置的会员')
     return
   }
-  const payload = rows.value.map((row) => ({
+  const payload = filteredRows.value.map((row) => ({
     ...row,
     normalRate: batchForm.normalRate,
     lhhRate: batchForm.lhhRate,
@@ -158,62 +183,58 @@ const saveBatch = async () => {
 </script>
 
 <template>
-  <div class="lucky-page rebate-page">
-    <h1 class="lucky-page__heading">返水列表</h1>
-    <el-card shadow="never">
+  <div class="lucky-page lucky-legacy-content rebate-page">
+    <div class="rebate-heading">返水列表</div>
+    <el-card class="legacy-list-box" shadow="never">
       <div class="rebate-toolbar">
         <div class="rebate-toolbar__actions">
-          <el-button type="danger" :disabled="totalRebate <= 0" @click="apply">一键返水</el-button>
-          <el-button type="primary" @click="openBatch">一键设置</el-button>
+          <el-button class="rebate-apply-button" @click="apply">一键返水</el-button>
+          <el-button class="rebate-batch-button" @click="openBatch">一键设置</el-button>
         </div>
         <div class="rebate-summary">
-          <span>返水合计：<strong>{{ money(totalRebate) }}</strong></span>
-          <span>真实玩家：{{ money(playerTotal) }}</span>
-          <span>吃：{{ money(eatTotal) }}</span>
-          <span>普通：{{ money(normalTotal) }}</span>
-          <span>龙虎：{{ money(dragonTotal) }}</span>
-          <span>拉手：{{ money(pullerTotal) }}</span>
+          <span>返水合计：<strong>{{ rateSummary(totalRebate) }}</strong></span>
+          <span>真实玩家：{{ rateSummary(playerTotal) }}</span>
+          <span>吃：{{ rateSummary(eatTotal) }}</span>
+          <span>普通：{{ rateSummary(normalTotal) }}</span>
+          <span>龙虎：{{ rateSummary(dragonTotal) }}</span>
+          <span>拉手：{{ rateSummary(pullerTotal) }}</span>
         </div>
       </div>
 
-      <div class="lucky-toolbar__filters rebate-filters mb-16px">
+      <div class="lucky-toolbar__filters rebate-filters">
         <el-select v-model="puller" clearable placeholder="选择拉手">
           <el-option v-for="item in pullers" :key="item" :label="item" :value="item" />
         </el-select>
-        <el-input v-model="keyword" clearable placeholder="搜索昵称" />
+        <span class="rebate-search-label">搜索:</span>
+        <el-input v-model="keyword" clearable />
       </div>
 
-      <PaginatedTable
+      <div class="rebate-table-length">
+        <span>显示</span>
+        <el-select v-model="pageSize" @change="changePageSize">
+          <el-option :value="10" label="10" />
+          <el-option :value="20" label="20" />
+          <el-option :value="50" label="50" />
+          <el-option :value="100" label="100" />
+        </el-select>
+        <span>条目</span>
+      </div>
+      <el-table
         :key="listVersion"
         v-loading="store.rebateMembersRefreshing || store.saving"
         :data="rows"
         border
+        class="rebate-table"
+        empty-text="No data available in table"
+        show-summary
+        :summary-method="legacyFooterHeaders"
       >
-        <template #mobile="{ row }">
-          <div class="lucky-mobile-card__title">
-            <span>{{ row.name }}</span>
-            <span>合计 {{ money(rowTotal(row)) }}</span>
-          </div>
-          <div class="lucky-mobile-card__meta rebate-mobile-meta">
-            <span>是否拉手：{{ isPuller(row) ? '是' : '否' }}</span>
-            <span>所属拉手：{{ row.partner || '无' }}</span>
-            <span>幸运五比例：{{ rate(row.normalRate) }}</span>
-            <span>幸运五返水：{{ money(row.normalRebate) }}</span>
-            <span>龙虎比例：{{ rate(row.lhhRate) }}</span>
-            <span>龙虎返水：{{ money(row.dragonRebate) }}</span>
-            <span>拉手返水：{{ money(row.partnerRebate) }}</span>
-          </div>
-          <div class="lucky-mobile-card__actions">
-            <el-button size="small" @click="togglePuller(row)">{{ isPuller(row) ? '取消拉手' : '设为拉手' }}</el-button>
-            <el-button size="small" type="primary" @click="openEdit(row)">编辑</el-button>
-          </div>
-        </template>
 
         <el-table-column prop="name" label="昵称" min-width="110" />
         <el-table-column label="拉手设置" width="90" align="center">
           <template #default="{ row }">
             <el-tooltip :content="isPuller(row) ? '取消拉手' : '设为拉手'">
-              <el-button size="small" @click="togglePuller(row)">{{ isPuller(row) ? '取消' : '拉' }}</el-button>
+              <el-button class="rebate-puller-button" size="small" @click="togglePuller(row)">{{ isPuller(row) ? '取消' : '拉' }}</el-button>
             </el-tooltip>
           </template>
         </el-table-column>
@@ -247,7 +268,14 @@ const saveBatch = async () => {
             </el-tooltip>
           </template>
         </el-table-column>
-      </PaginatedTable>
+      </el-table>
+      <div class="rebate-pagination">
+        <span>显示{{ total }}个条目中的{{ startRow }}到{{ endRow }}</span>
+        <div class="rebate-pagination__buttons">
+          <el-button :disabled="page <= 1" @click="changePage(page - 1)">上一页</el-button>
+          <el-button :disabled="page >= lastPage" @click="changePage(page + 1)">下一页</el-button>
+        </div>
+      </div>
     </el-card>
 
     <el-dialog v-model="editVisible" title="编辑会员" width="560px" class="lucky-dialog">
@@ -311,13 +339,27 @@ const saveBatch = async () => {
 </template>
 
 <style scoped>
+.rebate-heading {
+  display: block !important;
+  margin: 0 0 10px;
+  padding-top: 15px;
+  color: #222;
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.legacy-list-box :deep(.el-card__body) {
+  padding: 10px;
+}
+
 .rebate-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px 22px;
-  margin-bottom: 14px;
+  gap: 8px 14px;
+  margin-bottom: 10px;
 }
 
 .rebate-toolbar__actions {
@@ -330,25 +372,138 @@ const saveBatch = async () => {
   margin-left: 0;
 }
 
+.rebate-apply-button {
+  min-height: 34px;
+  color: #fff !important;
+  background: #dd4b39 !important;
+  border-color: #d73925 !important;
+}
+
+.rebate-batch-button {
+  min-height: 34px;
+  color: #fff !important;
+  background: #3c8dbc !important;
+  border-color: #367fa9 !important;
+}
+
+.rebate-puller-button {
+  min-width: 28px;
+  color: #fff !important;
+  background: #3c8dbc !important;
+  border-color: #367fa9 !important;
+}
+
+.rebate-puller-button:hover,
+.rebate-puller-button:focus {
+  color: #fff !important;
+  background: #367fa9 !important;
+  border-color: #204d74 !important;
+}
+
 .rebate-summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px 18px;
-  color: var(--el-text-color-regular);
-  font-size: 14px;
-  line-height: 32px;
+  gap: 6px 20px;
+  color: #555;
+  font-size: 16px;
+  line-height: 34px;
   text-align: left;
 }
 
 .rebate-summary strong {
-  color: var(--el-color-danger);
+  color: #555;
   font-weight: 600;
 }
 
 .rebate-filters {
   justify-content: flex-start;
+  align-items: center;
+  gap: 24px !important;
+  margin: 0 0 10px;
+}
+
+.rebate-filters :deep(.el-select),
+.rebate-filters :deep(.el-input) {
+  width: 148px;
+}
+
+.rebate-search-label {
+  margin-right: -18px;
+  color: #333;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rebate-table-length {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  gap: 8px;
+  color: #333;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.rebate-table-length :deep(.el-select) {
+  width: 64px;
+}
+
+.rebate-table-length :deep(.el-select__wrapper) {
+  min-height: 30px;
+}
+
+.rebate-table :deep(th.el-table__cell) {
+  height: 40px;
+  padding: 0;
+  color: #333;
+  font-size: 15px;
+  font-weight: 600;
+  background: #fff;
+}
+
+.rebate-table :deep(td.el-table__cell) {
+  height: 46px;
+  padding: 0 8px;
+  color: #444;
+  font-size: 14px;
+}
+
+.rebate-table :deep(.el-table__empty-block) {
+  left: 0;
+  width: 100% !important;
+  transform: none;
+}
+
+.rebate-table :deep(.el-table__empty-text) {
+  width: 100%;
+  padding-left: 10px;
+  color: #555;
+  text-align: left;
+}
+
+.rebate-pagination {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 54px;
+  color: #555;
+  font-size: 13px;
+}
+
+.rebate-pagination__buttons {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  gap: 4px;
+  transform: translateX(-50%);
+}
+
+.rebate-pagination__buttons :deep(.el-button) {
+  min-height: 30px;
+  margin: 0;
+  border-radius: 3px;
 }
 
 .rebate-mobile-meta {
@@ -378,6 +533,11 @@ const saveBatch = async () => {
 
   .rebate-mobile-meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rebate-pagination__buttons {
+    position: static;
+    transform: none;
   }
 }
 </style>

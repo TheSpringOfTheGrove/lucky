@@ -8,12 +8,16 @@ import com.hnz.luck5.module.lottery.dal.dataobject.MarketRouteItemDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.SwitchSettingDO;
+import com.hnz.luck5.module.lottery.controller.app.vo.LotteryRoomReqVO;
 import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.LinkConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketRouteItemMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MemberMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OperationLogMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OrderMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.SwitchSettingMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +52,8 @@ class LotteryOrderCancelTest {
                 MarketRouteItemDO.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "lottery-order-cancel-issue-test"),
                 IssueDO.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, "lottery-order-cancel-switch-test"),
+                SwitchSettingDO.class);
     }
 
     private LotteryServiceImpl service;
@@ -53,6 +61,8 @@ class LotteryOrderCancelTest {
     private MemberMapper memberMapper;
     private MessageMapper messageMapper;
     private IssueMapper issueMapper;
+    private SwitchSettingMapper switchSettingMapper;
+    private LinkConfigMapper linkConfigMapper;
 
     @BeforeEach
     void setUp() {
@@ -61,10 +71,14 @@ class LotteryOrderCancelTest {
         memberMapper = mock(MemberMapper.class);
         messageMapper = mock(MessageMapper.class);
         issueMapper = mock(IssueMapper.class);
+        switchSettingMapper = mock(SwitchSettingMapper.class);
+        linkConfigMapper = mock(LinkConfigMapper.class);
         ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
         ReflectionTestUtils.setField(service, "memberMapper", memberMapper);
         ReflectionTestUtils.setField(service, "messageMapper", messageMapper);
         ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "switchSettingMapper", switchSettingMapper);
+        ReflectionTestUtils.setField(service, "linkConfigMapper", linkConfigMapper);
         ReflectionTestUtils.setField(service, "issueFreshnessPolicy", new LotteryIssueFreshnessPolicy());
         ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
         ReflectionTestUtils.setField(service, "operationLogMapper", mock(OperationLogMapper.class));
@@ -124,6 +138,41 @@ class LotteryOrderCancelTest {
     }
 
     @Test
+    void roomMemberCanCancelOwnPendingAutoProxyOrderWhenCancelIsEnabled() {
+        OrderDO order = pendingOrder("AUTO_PROXY", "网页群");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("自动托A");
+        member.setUserId(142L);
+        member.setBalance(BigDecimal.ZERO);
+        member.setTotalBet(new BigDecimal("100"));
+        member.setVersion(0);
+        SwitchSettingDO openCancel = new SwitchSettingDO();
+        openCancel.setEnabled(true);
+        when(orderMapper.selectById("O-1")).thenReturn(order);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(switchSettingMapper.selectOne(any())).thenReturn(openCancel);
+        when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
+        when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(messageMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        when(memberMapper.selectOne(any())).thenReturn(member);
+        LotteryRoomReqVO.Credential credential = new LotteryRoomReqVO.Credential();
+        credential.setTenantId(1L);
+        credential.setOpenId("member-room");
+        credential.setRoomMode("GROUP");
+
+        Map<String, Object> result = service.cancelRoomOrder("O-1", credential);
+
+        assertThat(result).containsEntry("status", "已退码");
+        assertThat(member.getBalance()).isEqualByComparingTo("100.00");
+        assertThat(member.getTotalBet()).isEqualByComparingTo("0.00");
+        verify(messageMapper, never()).insert(any(MessageDO.class));
+        verify(messageMapper).update(any(), any(LambdaUpdateWrapper.class));
+    }
+
+    @Test
     void confirmedMarketOrderWithoutExternalBetIdsCannotRefundLocally() {
         OrderDO order = pendingOrder("PLAYER", "网页群");
         order.setDeliveryMode("MARKET_ADAPTER");
@@ -176,7 +225,7 @@ class LotteryOrderCancelTest {
         when(issueMapper.selectOne(any())).thenReturn(issue);
 
         assertThatThrownBy(() -> service.cancelOrder("O-1"))
-                .hasMessageContaining("未开奖订单");
+                .hasMessageContaining("不符合退码条件");
 
         verifyNoInteractions(messageMapper);
         assertThat(member.getBalance()).isEqualByComparingTo("50");
@@ -200,7 +249,7 @@ class LotteryOrderCancelTest {
         when(issueMapper.selectOne(any())).thenReturn(issue);
 
         assertThatThrownBy(() -> service.cancelOrder("O-1"))
-                .hasMessageContaining("未开奖订单");
+                .hasMessageContaining("不符合退码条件");
 
         verifyNoInteractions(messageMapper);
         assertThat(member.getBalance()).isEqualByComparingTo("50");

@@ -5,19 +5,38 @@ import {
   onBeforeUnmount,
   onDeactivated,
   onMounted,
-  ref
+  ref,
+  watch
 } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
+import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
 const visible = ref(false)
 const password = ref('')
+const page = ref(1)
+const pageSize = 10
 const totalBet = computed(() =>
   store.chimaRecords.reduce((sum, item) => sum + Number(item.fakeAmount || 0), 0)
 )
 const totalWin = computed(() =>
   store.chimaRecords.reduce((sum, item) => sum + Number(item.totalWin || 0), 0)
+)
+const pagedRows = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return store.chimaRecords.slice(start, start + pageSize)
+})
+const firstItem = computed(() => (store.chimaRecords.length ? (page.value - 1) * pageSize + 1 : 0))
+const lastItem = computed(() => Math.min(page.value * pageSize, store.chimaRecords.length))
+const lastPage = computed(() => Math.max(1, Math.ceil(store.chimaRecords.length / pageSize)))
+const money = (value: number) => value.toFixed(2)
+
+watch(
+  () => store.chimaRecords.length,
+  () => {
+    page.value = Math.min(page.value, lastPage.value)
+  }
 )
 
 let refreshTimer: ReturnType<typeof setInterval> | undefined
@@ -51,29 +70,25 @@ const clear = async () => {
 <template>
   <div class="lucky-page">
     <h1 class="lucky-page__heading">吃码盈亏</h1>
-    <div class="lucky-summary"
-      >总盈亏：{{ totalBet - totalWin }}，总中奖：{{ totalWin }}，总投分：{{ totalBet }}</div
+    <div class="chima-record-summary"
+      >总盈亏：{{ money(totalBet - totalWin) }}，总中奖：{{ money(totalWin) }}，总投分：{{ money(totalBet) }}</div
     >
-    <el-card shadow="never">
-      <div class="mb-14px">
+    <el-card shadow="never" class="lucky-card chima-record-card">
+      <div class="chima-record-toolbar">
         <el-tooltip content="清理数据">
-          <el-button type="danger" circle @click="visible = true"
+          <el-button class="chima-clear-button" @click="visible = true"
             ><Icon icon="ep:delete"
           /></el-button>
         </el-tooltip>
       </div>
-      <PaginatedTable :data="store.chimaRecords" border>
-        <template #mobile="{ row }">
-          <div class="lucky-mobile-card__title">
-            <span>{{ row.periods || row.member || '-' }}</span>
-            <strong>{{ Number(row.fakeAmount || 0) - Number(row.totalWin || 0) }}</strong>
-          </div>
-          <div class="lucky-mobile-card__meta">
-            <span>投额：{{ row.fakeAmount || 0 }}</span>
-            <span>中奖：{{ row.totalWin || 0 }}</span>
-            <span>盈亏：{{ Number(row.fakeAmount || 0) - Number(row.totalWin || 0) }}</span>
-          </div>
-        </template>
+      <el-table
+        :data="pagedRows"
+        border
+        empty-text="No data available in table"
+        class="chima-record-table"
+        show-summary
+        :summary-method="legacyFooterHeaders"
+      >
         <el-table-column label="期数" min-width="160"
           ><template #default="{ row }">{{ row.periods || row.member }}</template></el-table-column
         >
@@ -84,7 +99,14 @@ const clear = async () => {
             Number(row.fakeAmount || 0) - Number(row.totalWin || 0)
           }}</template></el-table-column
         >
-      </PaginatedTable>
+      </el-table>
+      <div class="chima-record-footer">
+        <span>显示{{ store.chimaRecords.length }}个条目中的{{ firstItem }}到{{ lastItem }}</span>
+        <div class="chima-record-footer__pager">
+          <el-button :disabled="page <= 1" @click="page -= 1">上一页</el-button>
+          <el-button :disabled="page >= lastPage" @click="page += 1">下一页</el-button>
+        </div>
+      </div>
     </el-card>
 
     <el-dialog v-model="visible" title="清理数据" width="460px" class="lucky-dialog">
@@ -100,3 +122,63 @@ const clear = async () => {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.chima-record-summary {
+  margin: 0 0 14px;
+  color: #ff1e1e;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.chima-record-card :deep(.el-card__body) {
+  padding: 10px;
+}
+
+.chima-record-toolbar {
+  margin: 0 0 20px;
+}
+
+.chima-clear-button {
+  width: 43px;
+  height: 34px;
+  padding: 0;
+  color: #fff !important;
+  background: #dd4b39 !important;
+  border-color: #d73925 !important;
+  border-radius: 0;
+}
+
+.chima-clear-button:hover,
+.chima-clear-button:focus {
+  background: #d73925 !important;
+  border-color: #d73925 !important;
+}
+
+.chima-record-footer {
+  position: relative;
+  min-height: 44px;
+  padding-top: 14px;
+  color: #444;
+  font-size: 14px;
+}
+
+.chima-record-footer__pager {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  display: flex;
+  transform: translateX(-50%);
+}
+
+.chima-record-footer__pager :deep(.el-button) {
+  min-height: 30px;
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 2px;
+}
+
+.chima-record-footer__pager :deep(.el-button + .el-button) {
+  margin-left: -1px;
+}
+</style>
