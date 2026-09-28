@@ -132,6 +132,13 @@
             </template>
           </el-table-column>
           <el-table-column
+            label="到期时间"
+            align="left"
+            prop="expireTime"
+            :formatter="dateFormatter"
+            width="180"
+          />
+          <el-table-column
             label="创建时间"
             align="center"
             prop="createTime"
@@ -202,7 +209,7 @@
   </el-row>
 
   <!-- 添加或修改用户对话框 -->
-  <UserForm ref="formRef" @success="getList" />
+  <UserForm ref="formRef" @success="handleUserSaved" />
   <!-- 用户导入对话框 -->
   <UserImportForm ref="importFormRef" @success="getList" />
   <!-- 分配角色 -->
@@ -388,6 +395,12 @@ const handleResetPwd = async (row: UserApi.UserVO) => {
 const assignRoleFormRef = ref()
 const handleRole = (row: UserApi.UserVO) => {
   assignRoleFormRef.value.open(row)
+}
+
+/** 列表与顶部当前账号期限都重新读取服务端，不能保留旧期限。 */
+const handleUserSaved = async () => {
+  await getList()
+  await userStore.setUserInfoAction()
 }
 
 /** 手动初始化老板配置 */

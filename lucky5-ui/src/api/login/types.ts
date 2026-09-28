@@ -28,6 +28,7 @@ export type UserVO = {
   avatar: string
   loginIp: string
   loginDate: string
+  expireTime?: number
 }
 
 export type RegisterVO = {

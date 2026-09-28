@@ -21,7 +21,7 @@ const toggleCollapse = () => {
 </script>
 
 <template>
-  <div :class="prefixCls" @click="toggleCollapse">
+  <div :class="prefixCls" role="button" tabindex="0" aria-label="切换菜单" :aria-expanded="!appStore.getCollapse" @click="toggleCollapse" @keydown.enter.prevent="toggleCollapse" @keydown.space.prevent="toggleCollapse">
     <span class="lucky-admin-hamburger" aria-hidden="true"></span>
   </div>
 </template>

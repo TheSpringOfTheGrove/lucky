@@ -1,0 +1,59 @@
+const { test } = require('node:test')
+const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
+const { resolve } = require('node:path')
+const ts = require('typescript')
+const vue = require('vue')
+const { renderToString } = require('vue/server-renderer')
+const { parse, compileScript } = require('vue/compiler-sfc')
+
+function load(code, dependencies = {}) {
+  const output = ts.transpileModule(code, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+  }).outputText
+  const module = { exports: {} }
+  new Function('require', 'module', 'exports', output)(
+    (id) => dependencies[id] || require(id), module, module.exports
+  )
+  return module.exports
+}
+const receipt = load(readFileSync(resolve(__dirname, '../src/views/lottery/utils/receipt.ts'), 'utf8'))
+const source = readFileSync(resolve(__dirname, '../src/views/lottery/messages/MessageContent.vue'), 'utf8')
+const { descriptor } = parse(source)
+const component = load(compileScript(descriptor, { id: 'audit-message', inlineTemplate: true }).content, {
+  '../utils/receipt': receipt
+}).default
+const render = (row) => renderToString(vue.h(component, { row }))
+
+test('room and audit share receipt punctuation, amounts and action handling', () => {
+  const text = '@会员\n【户型审核成功】✓✓\n【编号】： 2\n【套外】：560\n【面积】：680\n\n点击退码'
+  assert.equal(receipt.receiptText(text), '@会员\n【户型审核成功】√√\n【编号】2\n【套外】:560.00\n【面积】:680.00')
+  assert.equal(receipt.receiptAction(text), 'cancelable')
+  assert.equal(receipt.receiptAction(text + '\n已退码'), 'canceled')
+})
+
+test('robot cancel label is orange and readonly; player text is not an action', async () => {
+  const html = await render({ kind: 'robot', content: '@会员\n【面积】:123.00\n\n点击退码' })
+  assert.match(html, /class="message-content__cancel">点击退码<\/span>/)
+  assert.doesNotMatch(html, /<button|<a\b/)
+  assert.match(source, /color: #ffa500/)
+  const player = await render({ kind: 'member', content: '点击退码' })
+  assert.doesNotMatch(player, /class="message-content__cancel"/)
+})
+
+test('canceled receipt retains its body but never restores the cancel label', async () => {
+  const html = await render({ kind: 'robot', content: '@会员\n【面积】:123.00\n点击退码\n已退码' })
+  assert.match(html, /【面积】:123.00/)
+  assert.match(html, /class="message-content__canceled">已退码<\/span>/)
+  assert.doesNotMatch(html, /点击退码/)
+})
+
+test('draw displays the unchanged saved image and escapes untrusted text', async () => {
+  const drawImage = 'data:image/svg+xml;base64,PHN2Zy8+'
+  const html = await render({ kind: 'robot', period: '20260928215', content: '215期开奖结果-9|9|7|9|6|龙', drawImage })
+  assert.match(html, /215期开奖结果-9\|9\|7\|9\|6\|龙/)
+  assert.ok(html.includes(`src="${drawImage}"`))
+  const unsafe = await render({ kind: 'member', content: '<img src=x onerror=alert(1)>', drawImage: 'javascript:alert(1)' })
+  assert.match(unsafe, /&lt;img/)
+  assert.doesNotMatch(unsafe, /<img|javascript:/)
+})

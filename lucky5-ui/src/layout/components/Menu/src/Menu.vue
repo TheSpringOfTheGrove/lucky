@@ -375,6 +375,9 @@ export default defineComponent({
 
     const menuSelect = (index: string) => {
       horizontalOverflowOpened.value = false
+      if (appStore.getMobile) {
+        appStore.setCollapse(true)
+      }
       if (props.menuSelect) {
         props.menuSelect(index)
       }

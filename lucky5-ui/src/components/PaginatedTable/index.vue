@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useMediaQuery } from '@vueuse/core'
 import { computed, ref, useSlots, watch } from 'vue'
+import LegacyTable from '@/components/LegacyTable'
 
 defineOptions({ inheritAttrs: false })
 
@@ -10,14 +11,15 @@ const props = withDefaults(
     defaultPageSize?: number
     // 标准后台在窄屏仍保留表格；未明确声明时不切换成卡片。
     mobileCards?: boolean
+    mobileLength?: boolean
   }>(),
-  { defaultPageSize: 20, mobileCards: false }
+  { defaultPageSize: 10, mobileCards: false, mobileLength: false }
 )
 
 const page = ref(1)
 const pageSize = ref(props.defaultPageSize)
 const slots = useSlots()
-const isMobile = useMediaQuery('(max-width: 768px)')
+const isMobile = useMediaQuery('(max-width: 767px)')
 const useMobileList = computed(
   () => props.mobileCards && isMobile.value && Boolean(slots.mobile)
 )
@@ -40,6 +42,13 @@ watch(total, (value) => {
 
 <template>
   <div class="paginated-table">
+    <div v-if="isMobile && mobileLength" class="legacy-table-length">
+      <span>显示</span>
+      <el-select v-model="pageSize" aria-label="每页条目数">
+        <el-option v-for="size in [10, 25, 50, 100]" :key="size" :value="size" :label="String(size)" />
+      </el-select>
+      <span>条目</span>
+    </div>
     <div v-if="useMobileList" class="paginated-table__mobile-list">
       <article
         v-for="(row, index) in pagedRows"
@@ -50,18 +59,18 @@ watch(total, (value) => {
       </article>
       <el-empty v-if="!pagedRows.length" description="暂无数据" :image-size="64" />
     </div>
-    <el-table v-else v-bind="$attrs" :data="pagedRows">
+    <LegacyTable v-else v-bind="$attrs" :data="pagedRows">
       <slot></slot>
-    </el-table>
+    </LegacyTable>
     <div class="paginated-table__footer">
       <span>显示第 {{ startRow }} 到 {{ endRow }} 条，共 {{ total }} 条</span>
       <el-pagination
         v-model:current-page="page"
         v-model:page-size="pageSize"
-        :page-sizes="[10, 20, 50, 100]"
+        :page-sizes="[10, 25, 50, 100]"
         :total="total"
         :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next'"
-        :pager-count="isMobile ? 3 : 7"
+        :pager-count="isMobile ? 5 : 7"
         :small="isMobile"
         background
       />

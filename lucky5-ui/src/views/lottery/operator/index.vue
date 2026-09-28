@@ -52,7 +52,7 @@ const rows = computed(() => {
       </div>
     </div>
     <el-card shadow="never">
-      <PaginatedTable :data="rows" border show-summary :summary-method="legacyFooterHeaders">
+      <PaginatedTable :data="rows" mobile-length border show-summary :summary-method="legacyFooterHeaders">
         <template #mobile="{ row }">
           <div class="lucky-mobile-card__title">
             <span>{{ memberLabel(row) }}</span>

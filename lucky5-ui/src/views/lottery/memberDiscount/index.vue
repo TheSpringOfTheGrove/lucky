@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
@@ -213,13 +214,13 @@ const saveBatch = async () => {
         <span>显示</span>
         <el-select v-model="pageSize" @change="changePageSize">
           <el-option :value="10" label="10" />
-          <el-option :value="20" label="20" />
+          <el-option :value="25" label="25" />
           <el-option :value="50" label="50" />
           <el-option :value="100" label="100" />
         </el-select>
         <span>条目</span>
       </div>
-      <el-table
+      <LegacyTable
         :key="listVersion"
         v-loading="store.rebateMembersRefreshing || store.saving"
         :data="rows"
@@ -263,12 +264,12 @@ const saveBatch = async () => {
           <template #default="{ row }">
             <el-tooltip content="编辑">
               <el-button size="small" type="primary" circle @click="openEdit(row)">
-                <Icon icon="ep:edit" />
+                <Icon icon="fa:edit" :size="14" />
               </el-button>
             </el-tooltip>
           </template>
         </el-table-column>
-      </el-table>
+      </LegacyTable>
       <div class="rebate-pagination">
         <span>显示{{ total }}个条目中的{{ startRow }}到{{ endRow }}</span>
         <div class="rebate-pagination__buttons">
@@ -515,7 +516,7 @@ const saveBatch = async () => {
   width: 100%;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .rebate-toolbar {
     align-items: flex-start;
     flex-direction: column;

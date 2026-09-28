@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import { computed, ref, watch } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
 import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
@@ -44,7 +45,7 @@ watch(lastPage, (value) => {
         <div class="follow-order-toolbar__length">
           <span>显示</span>
           <el-select v-model="pageSize" class="follow-page-size-select">
-            <el-option v-for="size in [10, 20, 50, 100]" :key="size" :label="size" :value="size" />
+            <el-option v-for="size in [10, 25, 50, 100]" :key="size" :label="size" :value="size" />
           </el-select>
           <span>条目</span>
         </div>
@@ -54,7 +55,7 @@ watch(lastPage, (value) => {
         </div>
       </div>
 
-      <el-table
+      <LegacyTable
         :data="pagedRows"
         border
         empty-text="No data available in table"
@@ -73,12 +74,12 @@ watch(lastPage, (value) => {
           <template #default="{ row }">
             <el-tooltip content="删除">
               <el-button class="follow-delete-button" @click="store.remove('followOrders', row.id)">
-                <Icon icon="fa:trash" />
+                <Icon icon="fa:trash" :size="14" />
               </el-button>
             </el-tooltip>
           </template>
         </el-table-column>
-      </el-table>
+      </LegacyTable>
 
       <div class="follow-order-footer">
         <span>显示{{ filteredRows.length }}个条目中的{{ firstItem }}到{{ lastItem }}</span>
@@ -222,7 +223,7 @@ watch(lastPage, (value) => {
   margin-left: 4px;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .follow-order-toolbar {
     display: flex;
     flex-direction: column;

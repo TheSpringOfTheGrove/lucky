@@ -296,12 +296,12 @@ onBeforeUnmount(stopMemberRefresh)
         <div class="lucky-toolbar__filters member-toolbar__actions">
           <el-tooltip content="添加会员">
             <el-button class="member-toolbar__add" @click="openMember()"
-              ><Icon icon="ep:user-filled"
+              ><Icon icon="fa:user-plus" :size="14"
             /></el-button>
           </el-tooltip>
           <el-tooltip content="清理数据">
             <el-button class="member-toolbar__delete" @click="clearAllVisible = true"
-              ><Icon icon="ep:delete"
+              ><Icon icon="fa:trash" :size="14"
             /></el-button>
           </el-tooltip>
           <el-button class="member-toolbar__delete" @click="clearAllFingerprints">抹除标识</el-button>
@@ -340,6 +340,7 @@ onBeforeUnmount(stopMemberRefresh)
       </div>
 
       <PaginatedTable
+        mobile-layout="member-scroll"
         :data="rows"
         :expand-row-keys="rows.map((row) => row.id)"
         row-key="id"
@@ -384,7 +385,7 @@ onBeforeUnmount(stopMemberRefresh)
             <div class="member-row-actions">
               <el-tooltip content="编辑"
                 ><el-button size="small" circle @click="openMember(row)"
-                  ><Icon icon="ep:edit" /></el-button
+                  ><Icon icon="fa:edit" :size="14" /></el-button
               ></el-tooltip>
               <el-button size="small" @click="openLinks(row)">链接</el-button>
               <el-button size="small" @click="openTransfer(row, '上分')">上</el-button>
@@ -395,7 +396,7 @@ onBeforeUnmount(stopMemberRefresh)
               <el-button size="small" @click="store.changeMemberAvatar(row.id)">换</el-button>
               <el-tooltip content="删除"
                 ><el-button size="small" type="danger" circle @click="deleteMember(row)"
-                  ><Icon icon="ep:delete" /></el-button
+                  ><Icon icon="fa:trash" :size="14" /></el-button
               ></el-tooltip>
             </div>
           </template>
@@ -465,9 +466,9 @@ onBeforeUnmount(stopMemberRefresh)
       class="lucky-dialog"
     >
       <el-form :model="memberForm" label-width="110px">
-        <el-form-item label="头像"
-          ><el-avatar :size="40" :src="lotteryPlayerAvatarSrc(memberForm.avatar)" />
-        ></el-form-item>
+        <el-form-item label="头像">
+          <el-avatar :size="40" :src="lotteryPlayerAvatarSrc(memberForm.avatar)" />
+        </el-form-item>
         <el-form-item label="昵称"
           ><el-input v-model="memberForm.name" placeholder="NickName"
         /></el-form-item>

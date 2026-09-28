@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
+import { useMediaQuery } from '@vueuse/core'
 import {
   computed,
   onActivated,
@@ -12,6 +14,7 @@ import { useLucky5Store } from '@/store/modules/lottery'
 import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
 const store = useLucky5Store()
+const isMobile = useMediaQuery('(max-width: 767px)')
 const settleVisible = ref(false)
 const settleForm = ref({ period: '', result: '' })
 const periodFilter = ref('')
@@ -108,9 +111,20 @@ onBeforeUnmount(stopAutoRefresh)
     </div>
     <el-card v-loading="refreshing" class="legacy-list-box" shadow="never">
       <el-button class="draw-history-add-button" @click="settleVisible = true">
-        <Icon icon="fa-solid:user-plus" />
+        <Icon icon="fa:user-plus" :size="14" />
       </el-button>
-      <div class="draw-history-filters">
+      <el-popover v-if="isMobile" trigger="click" placement="bottom-end" :width="280">
+        <template #reference>
+          <el-button class="draw-history-filter-trigger" aria-label="期号筛选">
+            <Icon icon="ep:search" />
+          </el-button>
+        </template>
+        <div class="draw-history-filters">
+          <el-input v-model="periodFilter" clearable placeholder="请输入期号" @keyup.enter="searchDrawHistory" />
+          <el-button type="primary" :loading="refreshing" @click="searchDrawHistory">搜索</el-button>
+        </div>
+      </el-popover>
+      <div v-else class="draw-history-filters">
         <el-input
           v-model="periodFilter"
           clearable
@@ -125,13 +139,13 @@ onBeforeUnmount(stopAutoRefresh)
         <span>显示</span>
         <el-select v-model="pageSize" @change="changePageSize">
           <el-option :value="10" label="10" />
-          <el-option :value="20" label="20" />
+          <el-option :value="25" label="25" />
           <el-option :value="50" label="50" />
           <el-option :value="100" label="100" />
         </el-select>
         <span>条目</span>
       </div>
-      <el-table :data="rows" row-key="period" border class="draw-history-table" empty-text="No data available in table" show-summary :summary-method="legacyFooterHeaders">
+      <LegacyTable :data="rows" row-key="period" border class="draw-history-table" empty-text="No data available in table" show-summary :summary-method="legacyFooterHeaders">
         <el-table-column prop="period" label="期号" min-width="160" />
         <el-table-column prop="drawTime" label="开奖时间" min-width="200">
           <template #default="{ row }">{{ row.drawTime || row.settledAt }}</template>
@@ -142,7 +156,7 @@ onBeforeUnmount(stopAutoRefresh)
         <el-table-column label="状态" min-width="110">
           <template #default="{ row }">{{ row.status || '已开奖' }}</template>
         </el-table-column>
-      </el-table>
+      </LegacyTable>
       <div class="draw-history-pagination">
         <span>显示{{ total }}个条目中的{{ startRow }}到{{ endRow }}</span>
         <div class="draw-history-pagination__buttons">
@@ -307,7 +321,7 @@ onBeforeUnmount(stopAutoRefresh)
   border-radius: 3px;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .draw-history-source-status {
     margin: 0 0 20px;
     font-size: 14px;

@@ -1,5 +1,16 @@
 SET NAMES utf8mb4;
 
+-- 后台账号独立期限；已有账号保持原先的 2099 年默认展示，不影响当前登录。
+SET @lucky5_user_expiration_ddl = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema=DATABASE() AND table_name='system_users' AND column_name='expire_time')=0,
+  'ALTER TABLE `system_users` ADD COLUMN `expire_time` datetime NOT NULL DEFAULT ''2099-12-31 23:59:59'' COMMENT ''后台账号到期时间'' AFTER `status`',
+  'SELECT 1'
+);
+PREPARE lucky5_user_expiration_stmt FROM @lucky5_user_expiration_ddl;
+EXECUTE lucky5_user_expiration_stmt;
+DEALLOCATE PREPARE lucky5_user_expiration_stmt;
+
 CREATE TABLE IF NOT EXISTS `lucky5_config` (
   `id` bigint NOT NULL AUTO_INCREMENT, `user_id` bigint NOT NULL, `room_name` varchar(100) NOT NULL DEFAULT '幸运5',
   `close_time` varchar(20) NOT NULL DEFAULT '', `settle_delay` int NOT NULL DEFAULT 0,
@@ -838,6 +849,25 @@ SELECT `id` FROM `retained`;
 UPDATE `system_menu` SET `deleted`=b'1' WHERE `id` NOT IN (SELECT `id` FROM `lucky5_retained_menu`);
 UPDATE `system_menu` SET `deleted`=b'0' WHERE `id` IN (SELECT `id` FROM `lucky5_retained_menu`);
 UPDATE `system_role_menu` rm LEFT JOIN `system_menu` m ON m.id=rm.menu_id SET rm.deleted=b'1' WHERE m.id IS NULL OR m.deleted=b'1';
+
+-- 仅裁剪导航可见性：基础设施整组隐藏，系统管理只展示用户管理和角色管理。
+-- 不禁用/删除菜单，不修改按钮权限、角色授权或租户套餐中的菜单 ID。
+DROP TEMPORARY TABLE IF EXISTS `lucky5_admin_navigation`;
+CREATE TEMPORARY TABLE `lucky5_admin_navigation` (`id` bigint NOT NULL PRIMARY KEY);
+INSERT IGNORE INTO `lucky5_admin_navigation`
+WITH RECURSIVE `navigation` (`id`) AS (
+  SELECT `id` FROM `system_menu` WHERE `id` IN (1,2) AND `deleted`=b'0'
+  UNION DISTINCT
+  SELECT m.`id` FROM `system_menu` m JOIN `navigation` p ON m.`parent_id`=p.`id`
+  WHERE m.`deleted`=b'0'
+)
+SELECT `id` FROM `navigation`;
+
+UPDATE `system_menu` m JOIN `lucky5_admin_navigation` n ON n.`id`=m.`id`
+SET m.`visible`=IF(m.`id` IN (1,100,101),b'1',b'0')
+WHERE m.`type` IN (1,2)
+  AND m.`visible`<>IF(m.`id` IN (1,100,101),b'1',b'0');
+DROP TEMPORARY TABLE IF EXISTS `lucky5_admin_navigation`;
 
 UPDATE `system_role` SET `name`='老板账号',`remark`='Lucky5 独立老板账号',`updater`='1'
 WHERE `tenant_id`=1 AND `code`='crm_admin' AND `deleted`=b'0';

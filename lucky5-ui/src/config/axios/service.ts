@@ -152,6 +152,8 @@ service.interceptors.response.use(
     if (ignoreMsgs.indexOf(msg) !== -1) {
       // 如果是忽略的错误码，直接返回 msg 异常
       return Promise.reject(msg)
+    } else if (code === 1002000006) {
+      return handleAccountExpired(msg)
     } else if (code === 401) {
       if (msg === '账号已在其他地方登录，请重新登录') {
         return handleAuthorized(msg)
@@ -166,6 +168,9 @@ service.interceptors.response.use(
         // 2. 进行刷新访问令牌
         try {
           const refreshTokenRes = await refreshToken()
+          if (refreshTokenRes.data.code === 1002000006) {
+            return handleAccountExpired(refreshTokenRes.data.msg)
+          }
           // 2.1 刷新成功，则回放队列的请求 + 当前请求
           setToken((await refreshTokenRes).data.data)
           config.headers!.Authorization = 'Bearer ' + getAccessToken()
@@ -252,6 +257,29 @@ const refreshToken = async () => {
   axios.defaults.headers.common['tenant-id'] = getTenantId()
   return await axios.post(base_url + '/system/auth/refresh-token?refreshToken=' + getRefreshToken())
 }
+const handleAccountExpired = (message: string) => {
+  if (window.location.pathname.includes('login')) {
+    ElMessage.error(message)
+    return Promise.reject(new Error(message))
+  }
+  // 到期不是普通令牌超时，不再尝试续期；初次加载时也必须提示并清理旧缓存。
+  if (!isAccountExpired) {
+    isAccountExpired = true
+    removeToken()
+    deleteUserCache()
+    ElMessageBox.alert(message, '用户到期', {
+      showClose: false,
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+      confirmButtonText: '确定',
+      type: 'warning'
+    }).then(() => {
+      window.location.href = '/login'
+    })
+  }
+  return Promise.reject(new Error(message))
+}
+let isAccountExpired = false
 const handleAuthorized = (message?: string) => {
   const { t } = useI18n()
   if (!isRelogin.show) {

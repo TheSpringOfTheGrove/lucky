@@ -40,6 +40,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.util.Collection;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -216,6 +217,27 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         AdminUserDO dbUser = userMapper.selectById(id);
         assertEquals(loginIp, dbUser.getLoginIp());
         assertNotNull(dbUser.getLoginDate());
+    }
+
+    @Test
+    public void testUserExpirationSaveAndOmittedFieldPreservation() {
+        AdminUserDO user = randomAdminUserDO(o -> o.setDeptId(null).setPostIds(null)
+                .setExpireTime(LocalDateTime.of(2026, 10, 1, 18, 0)));
+        userMapper.insert(user);
+        UserSaveReqVO request = new UserSaveReqVO().setId(user.getId()).setUsername(user.getUsername())
+                .setNickname(user.getNickname()).setExpireTime(LocalDateTime.of(2027, 1, 1, 12, 0));
+        userService.updateUser(request);
+        assertEquals(request.getExpireTime(), userMapper.selectById(user.getId()).getExpireTime());
+        request.setExpireTime(null);
+        userService.updateUser(request);
+        assertEquals(LocalDateTime.of(2027, 1, 1, 12, 0), userMapper.selectById(user.getId()).getExpireTime());
+    }
+
+    @Test
+    public void testLegacyNewUserGetsDefaultExpiration() {
+        AdminUserDO user = randomAdminUserDO(o -> o.setExpireTime(null));
+        userMapper.insert(user);
+        assertEquals(LocalDateTime.of(2099, 12, 31, 23, 59, 59), userMapper.selectById(user.getId()).getExpireTime());
     }
 
     @Test

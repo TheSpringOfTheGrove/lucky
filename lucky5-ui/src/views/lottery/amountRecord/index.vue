@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import {
   computed,
   onActivated,
@@ -19,7 +20,7 @@ const timeType = ref(1)
 const refreshing = ref(false)
 const page = ref(1)
 const pageSize = ref(10)
-const pageResult = ref({
+const pageResult = ref<{ items: Record<string, any>[]; total: number; summary: Record<string, number> }>({
   items: [] as Record<string, any>[],
   total: 0,
   summary: { topup: 0, withdraw: 0, balance: 0 }
@@ -131,7 +132,7 @@ const audit = async (row: any, status: '已通过' | '已拒绝') => {
       </div>
     </div>
     <el-card class="legacy-list-box" shadow="never">
-      <el-table
+      <LegacyTable
         :data="rows"
         border
         empty-text="No data available in table"
@@ -157,7 +158,7 @@ const audit = async (row: any, status: '已通过' | '已拒绝') => {
             <span v-else>{{ legacyStatus(row.status) }}</span>
           </template>
         </el-table-column>
-      </el-table>
+      </LegacyTable>
       <div class="amount-record-footer">
         <span>显示{{ total }}个条目中的{{ firstItem }}到{{ lastItem }}</span>
         <div class="amount-record-footer__pager">
@@ -293,7 +294,7 @@ const audit = async (row: any, status: '已通过' | '已拒绝') => {
   margin-left: 4px;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .amount-record-toolbar__filters {
     gap: 8px !important;
   }

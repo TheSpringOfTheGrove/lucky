@@ -194,7 +194,7 @@ const save = () => {
   text-align: left;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .lucky-odds-header {
     align-items: flex-start;
     flex-direction: column;

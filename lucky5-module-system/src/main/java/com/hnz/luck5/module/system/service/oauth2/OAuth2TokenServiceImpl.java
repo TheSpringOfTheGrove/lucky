@@ -11,6 +11,7 @@ import com.hnz.luck5.framework.common.exception.enums.GlobalErrorCodeConstants;
 import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.framework.common.util.date.DateUtils;
 import com.hnz.luck5.framework.common.util.object.BeanUtils;
+import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.security.core.LoginUser;
 import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import com.hnz.luck5.framework.tenant.core.util.TenantUtils;
@@ -24,6 +25,7 @@ import com.hnz.luck5.module.system.dal.mysql.oauth2.OAuth2RefreshTokenMapper;
 import com.hnz.luck5.module.system.dal.redis.oauth2.OAuth2AccessTokenRedisDAO;
 import com.hnz.luck5.module.system.dal.redis.oauth2.OAuth2SingleSessionRedisDAO;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
+import com.hnz.luck5.module.system.util.user.AdminUserExpiration;
 import jakarta.annotation.Resource;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -36,6 +38,8 @@ import java.util.Map;
 import java.util.Objects;
 
 import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception0;
+import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.AUTH_LOGIN_USER_EXPIRED;
 import static com.hnz.luck5.framework.common.util.collection.CollectionUtils.convertSet;
 
 /**
@@ -66,6 +70,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
     @Transactional(rollbackFor = Exception.class)
     public OAuth2AccessTokenDO createAccessToken(Long userId, Integer userType, String clientId, List<String> scopes) {
         OAuth2ClientDO clientDO = oauth2ClientService.validOAuthClientFromCache(clientId);
+        validateUserExpiration(TenantContextHolder.getTenantId(), userId, userType);
         if (requiresSingleSession(userId, userType)) {
             removeAccessToken(userId, userType);
         }
@@ -110,6 +115,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "刷新令牌已过期");
         }
 
+        validateUserExpiration(refreshTokenDO.getTenantId(), refreshTokenDO.getUserId(), refreshTokenDO.getUserType());
         // 创建访问令牌
         return createOAuth2AccessToken(refreshTokenDO, clientDO);
     }
@@ -152,6 +158,7 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         }
         validateSingleSession(accessTokenDO.getTenantId(), accessTokenDO.getUserId(), accessTokenDO.getUserType(),
                 accessTokenDO.getRefreshToken(), accessTokenDO.getExpiresTime());
+        validateUserExpiration(accessTokenDO.getTenantId(), accessTokenDO.getUserId(), accessTokenDO.getUserType());
         return accessTokenDO;
     }
 
@@ -277,6 +284,22 @@ public class OAuth2TokenServiceImpl implements OAuth2TokenService {
         }
         if (!Objects.equals(currentRefreshToken, refreshToken)) {
             throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "账号已在其他地方登录，请重新登录");
+        }
+    }
+
+    private void validateUserExpiration(Long tenantId, Long userId, Integer userType) {
+        if (!requiresSingleSession(userId, userType)) {
+            return;
+        }
+        // 不能信任旧令牌中的用户快照；期限变更后下一次请求立即生效。
+        // 仅按令牌已确认的租户和账号读取身份，不依赖尚未建立的部门数据权限上下文。
+        AdminUserDO user = TenantUtils.execute(tenantId,
+                () -> DataPermissionUtils.executeIgnore(() -> adminUserService.getUser(userId)));
+        if (user == null) {
+            throw exception0(GlobalErrorCodeConstants.UNAUTHORIZED.getCode(), "用户不存在");
+        }
+        if (AdminUserExpiration.isExpired(user.getExpireTime(), LocalDateTime.now())) {
+            throw exception(AUTH_LOGIN_USER_EXPIRED);
         }
     }
 

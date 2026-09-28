@@ -235,6 +235,7 @@ CREATE TABLE IF NOT EXISTS "system_users" (
     "status" tinyint not null default '0',
     "login_ip" varchar(50) default '',
     "login_date" timestamp default null,
+    "expire_time" timestamp not null default timestamp '2099-12-31 23:59:59',
     "creator" varchar(64) default '',
     "create_time" timestamp not null default current_timestamp,
     "updater" varchar(64) default '',

@@ -57,7 +57,7 @@ const save = async () => {
   justify-content: flex-end;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .room-mode-options {
     gap: 4px 10px;
   }

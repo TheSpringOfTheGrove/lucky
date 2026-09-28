@@ -33,6 +33,7 @@ import static com.hnz.luck5.framework.test.core.util.RandomUtils.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.AUTH_LOGIN_USER_EXPIRED;
 
 /**
  * {@link OAuth2TokenServiceImpl} 的单元测试类
@@ -132,6 +133,73 @@ public class OAuth2TokenServiceImplTest extends BaseDbAndRedisUnitTest {
         // 调用，并断言
         assertServiceException(() -> oauth2TokenService.refreshAccessToken(refreshToken, clientId),
                 new ErrorCode(400, "无效的刷新令牌"));
+    }
+
+    @Test
+    public void testCreateAccessToken_expiredUser() {
+        TenantContextHolder.setTenantId(0L);
+        when(oauth2ClientService.validOAuthClientFromCache("default"))
+                .thenReturn(new OAuth2ClientDO().setClientId("default"));
+        when(adminUserService.getUser(1L)).thenReturn(new AdminUserDO().setId(1L)
+                .setExpireTime(LocalDateTime.now().minusSeconds(1)));
+        assertServiceException(() -> oauth2TokenService.createAccessToken(1L,
+                UserTypeEnum.ADMIN.getValue(), "default", List.of()), AUTH_LOGIN_USER_EXPIRED);
+        assertEquals(0, oauth2AccessTokenMapper.selectCount());
+        assertEquals(0, oauth2RefreshTokenMapper.selectCount());
+    }
+
+    @Test
+    public void testCachedTokenRechecksDeadlineAndAllowsRenewal() {
+        Long tenantId = 0L;
+        OAuth2AccessTokenDO token = randomPojo(OAuth2AccessTokenDO.class).setUserId(1L)
+                .setUserType(UserTypeEnum.ADMIN.getValue())
+                .setExpiresTime(LocalDateTime.now().plusDays(1));
+        token.setTenantId(tenantId);
+        oauth2AccessTokenMapper.insert(token);
+        oauth2AccessTokenRedisDAO.set(token);
+        oauth2SingleSessionRedisDAO.set(tenantId, UserTypeEnum.ADMIN.getValue(), 1L,
+                token.getRefreshToken(), token.getExpiresTime());
+        AdminUserDO user = new AdminUserDO().setId(1L).setExpireTime(LocalDateTime.now().plusMinutes(1));
+        when(adminUserService.getUser(1L)).thenAnswer(invocation -> {
+            assertEquals(tenantId, TenantContextHolder.getTenantId());
+            return user;
+        });
+        TenantContextHolder.setTenantId(99L);
+        assertNotNull(oauth2TokenService.checkAccessToken(token.getAccessToken()));
+        assertEquals(99L, TenantContextHolder.getTenantId());
+
+        user.setExpireTime(LocalDateTime.now().minusSeconds(1));
+        assertServiceException(() -> oauth2TokenService.checkAccessToken(token.getAccessToken()), AUTH_LOGIN_USER_EXPIRED);
+        assertEquals(99L, TenantContextHolder.getTenantId());
+        user.setExpireTime(LocalDateTime.now().plusDays(1));
+        assertNotNull(oauth2TokenService.checkAccessToken(token.getAccessToken()));
+        TenantContextHolder.clear();
+    }
+
+    @Test
+    public void testRefreshAccessToken_expiredUser() {
+        OAuth2RefreshTokenDO token = randomPojo(OAuth2RefreshTokenDO.class).setUserId(1L)
+                .setUserType(UserTypeEnum.ADMIN.getValue())
+                .setClientId("default").setExpiresTime(LocalDateTime.now().plusDays(1));
+        token.setTenantId(0L);
+        oauth2RefreshTokenMapper.insert(token);
+        when(oauth2ClientService.validOAuthClientFromCache("default"))
+                .thenReturn(new OAuth2ClientDO().setClientId("default"));
+        when(adminUserService.getUser(1L)).thenReturn(new AdminUserDO().setId(1L)
+                .setExpireTime(LocalDateTime.now().minusSeconds(1)));
+        assertServiceException(() -> oauth2TokenService.refreshAccessToken(token.getRefreshToken(), "default"),
+                AUTH_LOGIN_USER_EXPIRED);
+        assertEquals(0, oauth2AccessTokenMapper.selectCount());
+    }
+
+    @Test
+    public void testMemberTokensUnaffectedByAdminExpiration() {
+        OAuth2AccessTokenDO token = randomPojo(OAuth2AccessTokenDO.class).setUserId(1L)
+                .setUserType(UserTypeEnum.MEMBER.getValue()).setExpiresTime(LocalDateTime.now().plusDays(1));
+        oauth2AccessTokenMapper.insert(token);
+        when(adminUserService.getUser(1L)).thenReturn(new AdminUserDO()
+                .setExpireTime(LocalDateTime.now().minusDays(1)));
+        assertNotNull(oauth2TokenService.checkAccessToken(token.getAccessToken()));
     }
 
     @Test

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useMediaQuery } from '@vueuse/core'
+import LegacyTable from '@/components/LegacyTable'
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref } from 'vue'
 import { getOrderHistoryApi } from '@/api/lottery'
 import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
@@ -12,7 +12,6 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const summary = ref<Record<string, number>>({})
-const isMobile = useMediaQuery('(max-width: 768px)')
 const useMobileCards = false
 let refreshTimer: number | undefined
 
@@ -87,6 +86,7 @@ const totals = computed(() => ({
 <template>
   <div class="lucky-page lucky-legacy-content">
     <div class="history-heading">历史记录 <small>查询历史记录</small></div>
+    <el-card v-loading="refreshing" class="legacy-list-box" shadow="never">
     <div class="history-summary">
         <p
           >总盈亏：{{ money(totals.profit) }}，总中奖：{{ money(totals.win) }}，总投分：{{
@@ -111,12 +111,11 @@ const totals = computed(() => ({
           <el-button class="history-search-button" :loading="refreshing" @click="search">搜索</el-button>
         </div>
     </div>
-    <el-card v-loading="refreshing" class="legacy-list-box" shadow="never">
       <div class="history-table-length">
         <span>显示</span>
         <el-select v-model="pageSize" @change="changePageSize">
           <el-option :value="10" label="10" />
-          <el-option :value="20" label="20" />
+          <el-option :value="25" label="25" />
           <el-option :value="50" label="50" />
           <el-option :value="100" label="100" />
         </el-select>
@@ -138,14 +137,14 @@ const totals = computed(() => ({
         </article>
         <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
       </div>
-      <el-table v-else :data="rows" row-key="periods" border class="history-table" empty-text="No data available in table" show-summary :summary-method="legacyFooterHeaders">
+      <LegacyTable v-else :data="rows" row-key="periods" border class="history-table" empty-text="No data available in table" show-summary :summary-method="legacyFooterHeaders">
         <el-table-column prop="periods" label="期号" min-width="160" />
         <el-table-column prop="zongTou" label="投额" min-width="110" />
         <el-table-column prop="zhongJiang" label="中奖" min-width="110" />
         <el-table-column prop="yinKui" label="盈亏" min-width="110" />
         <el-table-column prop="shiTou" label="实投" min-width="110" />
         <el-table-column prop="betMoney" label="网盘下单" min-width="130" />
-      </el-table>
+      </LegacyTable>
       <div class="history-pagination">
         <span>显示{{ total }}个条目中的{{ startRow }}到{{ endRow }}</span>
         <div class="history-pagination__buttons">
@@ -300,7 +299,7 @@ const totals = computed(() => ({
   border-radius: 3px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .history-summary {
     margin: 0 0 24px;
     font-size: 14px;

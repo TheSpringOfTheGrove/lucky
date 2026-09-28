@@ -40,7 +40,7 @@ onBeforeUnmount(() => {
     <section class="legacy-box legacy-box-info">
       <header class="legacy-box__header">
         <strong>配置信息</strong>
-        <span class="legacy-config-balance">余额：{{ balanceText }}</span>
+        <span class="legacy-config-balance">余额：{{ balanceText }}（{{ store.room.open ? '已开盘' : '已封盘' }}）</span>
       </header>
 
       <el-form :model="form" class="legacy-horizontal-form">
@@ -188,10 +188,10 @@ onBeforeUnmount(() => {
   min-width: 54px;
   height: 34px;
   margin-top: 0;
-  border-radius: 0;
+  border-radius: 3px;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .legacy-config-balance {
     margin-left: 12px;
   }

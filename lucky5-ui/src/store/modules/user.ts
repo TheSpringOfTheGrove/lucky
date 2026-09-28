@@ -12,6 +12,7 @@ interface UserVO {
   username?: string
   nickname: string
   deptId: number
+  expireTime?: number
 }
 
 interface UserInfoVO {

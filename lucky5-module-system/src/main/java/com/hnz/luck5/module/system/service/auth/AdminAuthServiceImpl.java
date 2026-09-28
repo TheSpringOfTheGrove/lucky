@@ -26,6 +26,7 @@ import com.hnz.luck5.module.system.service.member.MemberService;
 import com.hnz.luck5.module.system.service.oauth2.OAuth2TokenService;
 import com.hnz.luck5.module.system.service.social.SocialUserService;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
+import com.hnz.luck5.module.system.util.user.AdminUserExpiration;
 import com.anji.captcha.model.common.ResponseModel;
 import com.anji.captcha.model.vo.CaptchaVO;
 import com.anji.captcha.service.CaptchaService;
@@ -38,6 +39,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Objects;
 
 import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
@@ -95,6 +97,7 @@ public class AdminAuthServiceImpl implements AdminAuthService {
             createLoginLog(user.getId(), username, logTypeEnum, LoginResultEnum.USER_DISABLED);
             throw exception(AUTH_LOGIN_USER_DISABLED);
         }
+        validateUserExpiration(user, logTypeEnum);
         return user;
     }
 
@@ -146,6 +149,7 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         }
 
         // 创建 Token 令牌，记录登录日志
+        validateUserExpiration(user, LoginLogTypeEnum.LOGIN_MOBILE);
         return createTokenAfterLoginSuccess(user.getId(), reqVO.getMobile(), LoginLogTypeEnum.LOGIN_MOBILE);
     }
 
@@ -184,6 +188,7 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         }
 
         // 创建 Token 令牌，记录登录日志
+        validateUserExpiration(user, LoginLogTypeEnum.LOGIN_SOCIAL);
         return createTokenAfterLoginSuccess(user.getId(), user.getUsername(), LoginLogTypeEnum.LOGIN_SOCIAL);
     }
 
@@ -210,13 +215,20 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     }
 
     private AuthLoginRespVO createTokenAfterLoginSuccess(Long userId, String username, LoginLogTypeEnum logType) {
-        // 插入登陆日志
-        createLoginLog(userId, username, logType, LoginResultEnum.SUCCESS);
         // 创建访问令牌
         OAuth2AccessTokenDO accessTokenDO = oauth2TokenService.createAccessToken(userId, getUserType().getValue(),
                 OAuth2ClientConstants.CLIENT_ID_DEFAULT, null);
+        // 只有令牌真正创建成功才记录成功，避免到期边界被误记为成功登录。
+        createLoginLog(userId, username, logType, LoginResultEnum.SUCCESS);
         // 构建返回结果
         return BeanUtils.toBean(accessTokenDO, AuthLoginRespVO.class);
+    }
+
+    private void validateUserExpiration(AdminUserDO user, LoginLogTypeEnum logType) {
+        if (AdminUserExpiration.isExpired(user.getExpireTime(), LocalDateTime.now())) {
+            createLoginLog(user.getId(), user.getUsername(), logType, LoginResultEnum.USER_EXPIRED);
+            throw exception(AUTH_LOGIN_USER_EXPIRED);
+        }
     }
 
     @Override

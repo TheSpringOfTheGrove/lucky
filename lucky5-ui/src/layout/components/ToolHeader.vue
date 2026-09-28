@@ -5,7 +5,8 @@ import { Collapse } from '@/layout/components/Collapse'
 import { UserInfo } from '@/layout/components/UserInfo'
 import { useSetting } from '@/layout/components/Setting'
 import { useAppStore } from '@/store/modules/app'
-import { useLucky5Store } from '@/store/modules/lottery'
+import { useUserStore } from '@/store/modules/user'
+import { formatDate } from '@/utils/formatTime'
 import { useDesign } from '@/hooks/web/useDesign'
 import { Icon } from '@/components/Icon'
 import ChangePasswordDialog from './ChangePasswordDialog.vue'
@@ -14,7 +15,7 @@ import { isHorizontalMenuLayout, isMixedNavLayout, isTwoColumnLayout } from '@/u
 const { getPrefixCls, variables } = useDesign()
 const prefixCls = getPrefixCls('tool-header')
 const appStore = useAppStore()
-const lotteryStore = useLucky5Store()
+const userStore = useUserStore()
 
 const breadcrumb = computed(() => appStore.getBreadcrumb)
 const hamburger = computed(() => appStore.getHamburger)
@@ -49,9 +50,14 @@ export default defineComponent({
               <Breadcrumb class="lt-md:hidden"></Breadcrumb>
             ) : undefined}
             <div class="lucky-admin-top-meta">
-              {lotteryStore.operator.expireAt ? (
+              {userStore.getIsSetUser ? (
                 <>
-                  <span>到期时间：{lotteryStore.operator.expireAt}</span>
+                  <span>
+                    到期时间：
+                    {userStore.getUser.expireTime
+                      ? formatDate(userStore.getUser.expireTime, 'YYYY-MM-DD HH:mm:ss')
+                      : '未设置'}
+                  </span>
                   <button type="button" onClick={() => (passwordDialogVisible.value = true)}>
                     修改密码
                   </button>

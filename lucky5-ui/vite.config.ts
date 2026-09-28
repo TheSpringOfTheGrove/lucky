@@ -35,6 +35,12 @@ export default ({command, mode}: ConfigEnv): UserConfig => {
             port: env.VITE_PORT, // 端口号
             host: "0.0.0.0",
             open: env.VITE_OPEN === 'true',
+            // Docker mode uses same-origin APIs. Keep local UI verification on
+            // the existing local server rather than returning Vite's HTML.
+            proxy: env.VITE_BASE_URL ? undefined : {
+                '/admin-api': { target: 'http://127.0.0.1:48080', changeOrigin: true },
+                '/app-api': { target: 'http://127.0.0.1:48080', changeOrigin: true }
+            },
             // 本地跨域代理. 目前注释的原因：暂时没有用途，server 端已经支持跨域
             // proxy: {
             //   ['/admin-api']: {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import { useMediaQuery } from '@vueuse/core'
 import { computed, onMounted, ref } from 'vue'
 import {
@@ -7,6 +8,7 @@ import {
   type LotteryMessageRow
 } from '@/api/lottery'
 import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
+import MessageContent from './MessageContent.vue'
 
 const period = ref('')
 const content = ref('')
@@ -16,7 +18,7 @@ const loading = ref(false)
 const pageNo = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
-const isMobile = useMediaQuery('(max-width: 768px)')
+const isMobile = useMediaQuery('(max-width: 767px)')
 const useMobileCards = false
 
 const startRow = computed(() => (total.value ? (pageNo.value - 1) * pageSize.value + 1 : 0))
@@ -80,7 +82,7 @@ onMounted(load)
             <span>{{ row.sender }}</span>
             <span class="message-time">{{ row.time }}</span>
           </div>
-          <div class="lucky-mobile-card__content message-content">{{ row.content }}</div>
+          <MessageContent :row="row" class="lucky-mobile-card__content" />
           <div v-if="row.period" class="lucky-mobile-card__meta">
             <span>期号 {{ row.period }}</span>
           </div>
@@ -88,7 +90,7 @@ onMounted(load)
         <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
       </div>
 
-      <el-table
+      <LegacyTable
         v-else
         :data="rows"
         row-key="id"
@@ -100,21 +102,21 @@ onMounted(load)
         <el-table-column prop="sender" label="发送人" min-width="140" />
         <el-table-column label="内容" min-width="520" align="left" class-name="message-content-column">
           <template #default="{ row }">
-            <div class="message-content">{{ row.content }}</div>
+            <MessageContent :row="row" />
           </template>
         </el-table-column>
         <el-table-column prop="time" label="创建时间" min-width="180" />
-      </el-table>
+      </LegacyTable>
 
       <div class="message-pagination">
         <span>显示第 {{ startRow }} 到 {{ endRow }} 条，共 {{ total }} 条</span>
         <el-pagination
           :current-page="pageNo"
           :page-size="pageSize"
-          :page-sizes="[10, 20, 50, 100]"
+          :page-sizes="[10, 25, 50, 100]"
           :total="total"
           :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next, jumper'"
-          :pager-count="isMobile ? 3 : 7"
+          :pager-count="isMobile ? 5 : 7"
           :small="isMobile"
           background
           @current-change="changePage"
@@ -139,15 +141,6 @@ onMounted(load)
   grid-template-columns: repeat(3, minmax(180px, 240px)) auto;
   justify-content: start;
   width: 100%;
-}
-
-.message-content {
-  margin: 0;
-  text-align: left !important;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  line-height: 1.65;
 }
 
 .message-table :deep(td.message-content-column),
@@ -185,7 +178,7 @@ onMounted(load)
   vertical-align: top;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .message-filters {
     display: flex;
   }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import { useMediaQuery } from '@vueuse/core'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
@@ -246,7 +247,7 @@ const cancelOrder = async (row: any) => {
         <span>显示</span>
         <el-select v-model="pageSize" @change="changePageSize">
           <el-option :value="10" label="10" />
-          <el-option :value="20" label="20" />
+          <el-option :value="25" label="25" />
           <el-option :value="50" label="50" />
           <el-option :value="100" label="100" />
         </el-select>
@@ -272,13 +273,15 @@ const cancelOrder = async (row: any) => {
           </div>
           <div v-if="canCancel(row) || canReview(row)" class="order-mobile-actions">
             <el-button
-              type="danger"
+              type="primary"
+              class="order-cancel-link"
+              aria-label="退码"
               plain
               size="small"
               :loading="cancellingId === row.id"
               @click.stop="cancelOrder(row)"
             >
-              退码
+              退
             </el-button>
             <el-button
               v-if="canReview(row)"
@@ -293,9 +296,9 @@ const cancelOrder = async (row: any) => {
         </article>
         <el-empty v-if="!rows.length" description="暂无数据" :image-size="64" />
       </div>
-      <el-table v-else :data="rows" row-key="id" border class="order-info-table" show-summary :summary-method="legacyFooterHeaders">
+      <LegacyTable v-else :data="rows" row-key="id" border class="order-info-table" show-summary :summary-method="legacyFooterHeaders">
         <el-table-column prop="period" label="期号" min-width="105" />
-        <el-table-column label="文本" min-width="380">
+        <el-table-column label="文本" min-width="380" align="left" class-name="order-text-cell">
           <template #default="{ row }">
             <el-link
               class="order-content-link"
@@ -318,16 +321,18 @@ const cancelOrder = async (row: any) => {
           <template #default>网页</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" min-width="150" />
-        <el-table-column label="操作" width="110" fixed="right" align="center">
+        <el-table-column label="" width="110" fixed="right" align="center">
           <template #default="{ row }">
             <el-button
               v-if="canCancel(row)"
-              type="danger"
+              type="primary"
+              class="order-cancel-link"
+              aria-label="退码"
               link
               :loading="cancellingId === row.id"
               @click="cancelOrder(row)"
             >
-              退码
+              退
             </el-button>
             <el-button v-else-if="canReview(row)" type="warning" link @click="openMarketReview(row)">
               核对处理
@@ -335,7 +340,7 @@ const cancelOrder = async (row: any) => {
             <span v-else>-</span>
           </template>
         </el-table-column>
-      </el-table>
+      </LegacyTable>
       <div class="order-pagination">
         <span>显示第 {{ startRow }} 到 {{ endRow }} 条，共 {{ total }} 条</span>
         <el-pagination
@@ -343,7 +348,7 @@ const cancelOrder = async (row: any) => {
           :page-size="pageSize"
           :total="total"
           :layout="isMobile ? 'prev, pager, next' : 'prev, pager, next'"
-          :pager-count="isMobile ? 3 : 7"
+          :pager-count="isMobile ? 5 : 7"
           :small="isMobile"
           background
           @current-change="changePage"
@@ -380,7 +385,7 @@ const cancelOrder = async (row: any) => {
         <strong>原始文本</strong>
         <div>{{ detailOrder.content }}</div>
       </div>
-      <el-table
+      <LegacyTable
         v-loading="detailLoading"
         :data="detailItems"
         border
@@ -403,16 +408,16 @@ const cancelOrder = async (row: any) => {
           </template>
         </el-table-column>
         <el-table-column v-if="!isMobile" prop="payout" label="派彩" min-width="90" />
-      </el-table>
+      </LegacyTable>
       <div class="order-pagination order-detail-pagination">
         <span>显示第 {{ detailStartRow }} 到 {{ detailEndRow }} 条，共 {{ detailTotal }} 条</span>
         <el-pagination
           :current-page="detailPageNo"
           :page-size="detailPageSize"
-          :page-sizes="[10, 20, 50, 100]"
+          :page-sizes="[10, 25, 50, 100]"
           :total="detailTotal"
           :layout="isMobile ? 'prev, pager, next' : 'sizes, prev, pager, next, jumper'"
-          :pager-count="isMobile ? 3 : 7"
+          :pager-count="isMobile ? 5 : 7"
           :small="isMobile"
           background
           @current-change="changeDetailPage"
@@ -548,6 +553,7 @@ const cancelOrder = async (row: any) => {
 .order-content-link {
   display: inline-flex;
   max-width: 100%;
+  justify-content: flex-start;
   text-align: left;
   overflow-wrap: anywhere;
   white-space: normal;
@@ -615,6 +621,16 @@ const cancelOrder = async (row: any) => {
   padding: 8px;
   color: #444;
   font-size: 15px;
+}
+
+.order-cancel-link {
+  font-size: inherit;
+  color: #3c8dbc;
+}
+
+.order-cancel-link:hover,
+.order-cancel-link:focus-visible {
+  color: #367fa9;
 }
 
 @media (width <= 600px) {

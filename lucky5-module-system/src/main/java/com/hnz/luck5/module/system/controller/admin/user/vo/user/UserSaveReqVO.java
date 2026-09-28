@@ -12,6 +12,7 @@ import jakarta.validation.constraints.*;
 import lombok.Data;
 import org.hibernate.validator.constraints.Length;
 
+import java.time.LocalDateTime;
 import java.util.Set;
 
 @Schema(description = "管理后台 - 用户创建/修改 Request VO")
@@ -63,6 +64,10 @@ public class UserSaveReqVO {
     @Schema(description = "用户头像", example = "https://www.iocoder.cn/xxx.png")
     @DiffLogField(name = "用户头像")
     private String avatar;
+
+    @Schema(description = "账号到期时间", example = "时间戳格式")
+    @DiffLogField(name = "到期时间")
+    private LocalDateTime expireTime;
 
     // ========== 仅【创建】时，需要传递的字段 ==========
 

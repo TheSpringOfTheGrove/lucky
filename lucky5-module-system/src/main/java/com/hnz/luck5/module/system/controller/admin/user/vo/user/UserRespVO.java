@@ -65,6 +65,10 @@ public class UserRespVO{
     @DictFormat(DictTypeConstants.COMMON_STATUS)
     private Integer status;
 
+    @Schema(description = "账号到期时间", example = "时间戳格式")
+    @ExcelProperty("到期时间")
+    private LocalDateTime expireTime;
+
     @Schema(description = "最后登录 IP", requiredMode = Schema.RequiredMode.REQUIRED, example = "192.168.1.1")
     @ExcelProperty("最后登录IP")
     private String loginIp;

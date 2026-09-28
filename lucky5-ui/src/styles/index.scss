@@ -3,6 +3,7 @@
 @use './theme.scss';
 @use './admin-legacy-theme.scss';
 @use 'element-plus/theme-chalk/dark/css-vars.css';
+@use './admin-mobile.scss';
 
 .reset-margin [class*='el-icon'] + span {
   margin-left: 2px !important;

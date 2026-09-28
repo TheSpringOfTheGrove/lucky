@@ -33,11 +33,11 @@
 }
 
 .fish-info-box__header {
-  min-height: 41px;
+  min-height: 43px;
   padding: 10px;
   border-bottom: 1px solid #f4f4f4;
   color: #444;
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 400;
   line-height: 20px;
   box-sizing: border-box;

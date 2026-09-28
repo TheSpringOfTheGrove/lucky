@@ -19,6 +19,7 @@ import ScratchCard from './components/ScratchCard.vue'
 import QuickPickDialog from './components/QuickPickDialog.vue'
 import { resolveDragonTiger, roomReplyTemplates } from './replyTemplates'
 import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
+import { receiptText } from '../utils/receipt'
 import logo from '@/assets/imgs/logo.png'
 import robotAvatar from '@/assets/lottery/robot-avatar.png'
 import scratchButton from '@/assets/lottery/scratch-button.jpg'
@@ -606,22 +607,6 @@ const applyAuthoritativeIssueClock = (issue: RoomSession['issue'], responseRecei
   scratchRemaining.value =
     issue.status === 'OPEN' ? Math.max(0, Number(issue.remainingSeconds || 0)) : 0
 }
-const receiptText = (value: string) =>
-  value
-    .replace(/【(编号|套内|套外|面积)】：/g, '【$1】:')
-    .replace('【户型审核成功】✓✓', '【户型审核成功】√√')
-    .replace(/【编号】:\s*(\d+)/g, '【编号】$1')
-    .replace(/【(套外|面积)】:\s*(\d+(?:\.\d+)?)/g, (_, label, amount) =>
-      `【${label}】:${Number(amount).toFixed(2)}`
-    )
-    .split('\n')
-    .filter(
-      (line) =>
-        !['点击退码', '已退码'].includes(line.trim()) &&
-        !/^共\s*\d+\s*注\s*合计\s*[\d,.]+$/.test(line.trim())
-    )
-    .join('\n')
-    .trimEnd()
 const persistedDrawFromMessage = (message: RoomSession['messages'][number]): RoomDraw | undefined => {
   if (message.commandType !== 'DRAW_RESULT') return undefined
   const result = message.content.replace(/\D/g, '')
@@ -2097,7 +2082,7 @@ onBeforeUnmount(() => {
   margin: 3px 6px 6px;
   padding: 0;
   font: inherit;
-  color: #ff9800;
+  color: #ffa500;
   cursor: pointer;
   background: transparent;
   border: 0;

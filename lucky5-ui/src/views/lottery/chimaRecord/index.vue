@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import {
   computed,
   onActivated,
@@ -77,11 +78,11 @@ const clear = async () => {
       <div class="chima-record-toolbar">
         <el-tooltip content="清理数据">
           <el-button class="chima-clear-button" @click="visible = true"
-            ><Icon icon="ep:delete"
+            ><Icon icon="fa:trash" :size="14"
           /></el-button>
         </el-tooltip>
       </div>
-      <el-table
+      <LegacyTable
         :data="pagedRows"
         border
         empty-text="No data available in table"
@@ -99,7 +100,7 @@ const clear = async () => {
             Number(row.fakeAmount || 0) - Number(row.totalWin || 0)
           }}</template></el-table-column
         >
-      </el-table>
+      </LegacyTable>
       <div class="chima-record-footer">
         <span>显示{{ store.chimaRecords.length }}个条目中的{{ firstItem }}到{{ lastItem }}</span>
         <div class="chima-record-footer__pager">

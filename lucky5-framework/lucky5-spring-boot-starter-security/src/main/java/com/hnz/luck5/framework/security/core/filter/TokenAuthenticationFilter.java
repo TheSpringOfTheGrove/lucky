@@ -5,6 +5,8 @@ import cn.hutool.core.util.StrUtil;
 import com.hnz.luck5.framework.common.biz.system.oauth2.OAuth2TokenCommonApi;
 import com.hnz.luck5.framework.common.biz.system.oauth2.dto.OAuth2AccessTokenCheckRespDTO;
 import com.hnz.luck5.framework.common.exception.ServiceException;
+import com.hnz.luck5.framework.common.exception.enums.GlobalErrorCodeConstants;
+import com.hnz.luck5.framework.common.enums.UserTypeEnum;
 import com.hnz.luck5.framework.common.pojo.CommonResult;
 import com.hnz.luck5.framework.common.util.servlet.ServletUtils;
 import com.hnz.luck5.framework.security.config.SecurityProperties;
@@ -87,6 +89,12 @@ public class TokenAuthenticationFilter extends OncePerRequestFilter {
                     .setTenantId(accessToken.getTenantId()).setScopes(accessToken.getScopes())
                     .setExpiresTime(accessToken.getExpiresTime());
         } catch (ServiceException serviceException) {
+            // 后台的账号期限等业务拒绝必须保留具体原因，不能降级为普通登录超时。
+            // 公开会员接口仍允许忽略浏览器残留的失效后台令牌。
+            if (ObjectUtil.equal(userType, UserTypeEnum.ADMIN.getValue())
+                    && !ObjectUtil.equal(serviceException.getCode(), GlobalErrorCodeConstants.UNAUTHORIZED.getCode())) {
+                throw serviceException;
+            }
             // 校验 Token 不通过时，考虑到一些接口是无需登录的，所以直接返回 null 即可
             return null;
         }

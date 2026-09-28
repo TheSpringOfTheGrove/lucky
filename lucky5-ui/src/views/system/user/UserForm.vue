@@ -83,6 +83,21 @@
       </el-row>
       <el-row>
         <el-col :span="24">
+          <el-form-item label="到期时间" prop="expireTime">
+            <el-date-picker
+              v-model="formData.expireTime"
+              type="datetime"
+              value-format="x"
+              format="YYYY-MM-DD HH:mm:ss"
+              placeholder="请选择账号到期时间"
+              :clearable="false"
+              class="!w-full"
+            />
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-row>
+        <el-col :span="24">
           <el-form-item label="备注">
             <el-input v-model="formData.remark" placeholder="请输入内容" type="textarea" />
           </el-form-item>
@@ -125,12 +140,14 @@ const formData = ref({
   postIds: [],
   remark: '',
   status: CommonStatusEnum.ENABLE,
+  expireTime: new Date('2099-12-31T23:59:59+08:00').getTime(),
   roleIds: []
 })
 const formRules = reactive<FormRules>({
   username: [{ required: true, message: '用户名称不能为空', trigger: 'blur' }],
   nickname: [{ required: true, message: '用户昵称不能为空', trigger: 'blur' }],
   password: [{ required: true, message: '用户密码不能为空', trigger: 'blur' }],
+  expireTime: [{ required: true, message: '请选择账号到期时间', trigger: 'change' }],
   email: [
     {
       type: 'email',
@@ -212,6 +229,7 @@ const resetForm = () => {
     postIds: [],
     remark: '',
     status: CommonStatusEnum.ENABLE,
+    expireTime: new Date('2099-12-31T23:59:59+08:00').getTime(),
     roleIds: []
   }
   formRef.value?.resetFields()

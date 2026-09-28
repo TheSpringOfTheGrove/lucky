@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LegacyTable from '@/components/LegacyTable'
 import { useMediaQuery } from '@vueuse/core'
 import { computed, reactive, ref, watch } from 'vue'
 import { useLucky5Store } from '@/store/modules/lottery'
@@ -10,7 +11,7 @@ const form = reactive({ id: '', content: '' })
 const keyword = ref('')
 const page = ref(1)
 const pageSize = ref(10)
-const isMobile = useMediaQuery('(max-width: 768px)')
+const isMobile = useMediaQuery('(max-width: 767px)')
 const useMobileCards = false
 
 const filteredRows = computed(() => {
@@ -64,7 +65,7 @@ const submit = async () => {
       <div class="preset-add-row">
         <el-tooltip content="添加格式">
           <el-button class="preset-add-button" @click="openForm()">
-            <Icon icon="fa:user-plus" />
+            <Icon icon="fa:user-plus" :size="14" />
           </el-button>
         </el-tooltip>
       </div>
@@ -72,7 +73,7 @@ const submit = async () => {
         <div class="preset-toolbar__length">
           <span>显示</span>
           <el-select v-model="pageSize" class="page-size-select">
-            <el-option v-for="size in [10, 20, 50, 100]" :key="size" :label="size" :value="size" />
+            <el-option v-for="size in [10, 25, 50, 100]" :key="size" :label="size" :value="size" />
           </el-select>
           <span>条目</span>
         </div>
@@ -106,7 +107,7 @@ const submit = async () => {
         </article>
         <el-empty v-if="!pagedRows.length" description="暂无数据" :image-size="64" />
       </div>
-      <el-table v-else :data="pagedRows" border class="preset-order-table" show-summary :summary-method="legacyFooterHeaders">
+      <LegacyTable v-else :data="pagedRows" border class="preset-order-table" show-summary :summary-method="legacyFooterHeaders">
         <el-table-column type="index" label="序号" width="60" :index="rowIndex" />
         <el-table-column prop="content" label="文本" min-width="300" />
         <el-table-column prop="createdAt" label="创建时间" width="200" />
@@ -115,7 +116,7 @@ const submit = async () => {
             <div class="preset-row-actions">
               <el-tooltip content="编辑">
                 <el-button class="preset-action-button preset-action-button--edit" @click="openForm(row)">
-                  <Icon icon="fa:edit" />
+                  <Icon icon="fa:edit" :size="14" />
                 </el-button>
               </el-tooltip>
               <el-tooltip content="删除">
@@ -123,13 +124,13 @@ const submit = async () => {
                   class="preset-action-button preset-action-button--delete"
                   @click="store.remove('fakeOrders', row.id)"
                 >
-                  <Icon icon="fa:trash" />
+                  <Icon icon="fa:trash" :size="14" />
                 </el-button>
               </el-tooltip>
             </div>
           </template>
         </el-table-column>
-      </el-table>
+      </LegacyTable>
       <div class="preset-pagination">
         <span
           >显示第 {{ filteredRows.length ? (page - 1) * pageSize + 1 : 0 }} 到
@@ -141,7 +142,7 @@ const submit = async () => {
           :page-size="pageSize"
           :total="filteredRows.length"
           layout="prev, pager, next"
-          :pager-count="isMobile ? 3 : 7"
+          :pager-count="isMobile ? 5 : 7"
           :small="isMobile"
           background
         />
@@ -344,7 +345,7 @@ const submit = async () => {
   overflow-wrap: anywhere;
 }
 
-@media (width <= 768px) {
+@media (width <= 767px) {
   .preset-toolbar {
     display: flex;
     align-items: stretch;

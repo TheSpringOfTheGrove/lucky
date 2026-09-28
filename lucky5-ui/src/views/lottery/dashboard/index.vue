@@ -52,6 +52,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="lucky-page lucky-dashboard-page">
     <h1 class="lucky-page__heading">Dashboard <small>Version 2.0</small></h1>
+    <div class="dashboard-breadcrumb"><Icon icon="fa:dashboard" :size="12" /> Home <span>&gt;</span> Dashboard</div>
     <div class="dashboard-top-grid">
       <button
         type="button"
@@ -60,9 +61,7 @@ onBeforeUnmount(() => {
       >
         <span class="dashboard-info-card__icon dashboard-info-card__icon--teal">
           <span class="dashboard-users-icon">
-            <Icon icon="ep:user" :size="23" />
-            <Icon icon="ep:user-filled" :size="31" />
-            <Icon icon="ep:user" :size="23" />
+            <Icon icon="ion:ios-people-outline" :size="45" />
           </span>
         </span>
         <span class="dashboard-info-card__content">
@@ -78,9 +77,7 @@ onBeforeUnmount(() => {
       >
         <span class="dashboard-info-card__icon dashboard-info-card__icon--olive">
           <span class="dashboard-users-icon">
-            <Icon icon="ep:user" :size="23" />
-            <Icon icon="ep:user-filled" :size="31" />
-            <Icon icon="ep:user" :size="23" />
+            <Icon icon="ion:ios-people-outline" :size="45" />
           </span>
         </span>
         <span class="dashboard-info-card__content">
@@ -95,7 +92,7 @@ onBeforeUnmount(() => {
         @click="router.push('/lucky5/amount-records')"
       >
         <span class="dashboard-info-card__icon dashboard-info-card__icon--orange">
-          <Icon icon="ep:credit-card" :size="42" />
+          <Icon icon="ion:card" :size="45" />
         </span>
         <span class="dashboard-info-card__content">
           <span class="dashboard-info-card__label">未审核上分请求</span>
@@ -105,7 +102,7 @@ onBeforeUnmount(() => {
 
       <aside class="dashboard-settings-card">
         <div class="dashboard-settings-card__icon">
-          <Icon icon="ep:setting" :size="44" />
+          <Icon icon="ion:ios-gear-outline" :size="45" />
         </div>
         <div class="dashboard-settings-card__content">
           <label
@@ -131,12 +128,17 @@ onBeforeUnmount(() => {
         :class="`dashboard-service-card--${integration.key}`"
       >
         <span class="dashboard-service-card__icon" :class="integration.iconClass">
-          <Icon icon="ep:chat-dot-round" :size="42" />
+          <Icon icon="ion:chatbubbles" :size="45" />
         </span>
         <div class="dashboard-service-card__content">
-          <div>{{ integration.name }}账号：{{ integration.account || '未绑定' }}</div>
-          <div>{{ integration.name }}群：{{ integration.group || '未绑定' }}</div>
-          <div>状态：{{ integration.status || '未登录' }}</div>
+          <template v-if="integration.key === 'wechat'">
+            <div>微信</div>
+          </template>
+          <template v-else>
+            <div>{{ integration.name }}{{ integration.key === 'fish' ? '昵称' : '账号' }}: {{ integration.account || '未绑定' }}</div>
+            <div>{{ integration.name }}群: {{ integration.group || '未绑定' }}</div>
+            <div>状态: {{ integration.status || '未登录' }}</div>
+          </template>
           <button
             type="button"
             class="dashboard-service-card__button"
@@ -149,17 +151,16 @@ onBeforeUnmount(() => {
 
       <article class="dashboard-service-card dashboard-startup-card">
         <span class="dashboard-service-card__icon dashboard-service-card__icon--red">
-          <Icon icon="ep:switch-button" :size="42" />
+          <Icon icon="ion:power" :size="45" />
         </span>
         <div class="dashboard-service-card__content dashboard-startup">
           <span>启动状态</span>
           <el-checkbox
             :model-value="store.room.open"
             :disabled="store.saving"
+            aria-label="启动状态"
             @change="(value: boolean) => store.setRoomOpen(value)"
-          >
-            在线 {{ store.room.online }}
-          </el-checkbox>
+          />
         </div>
       </article>
     </div>
@@ -310,7 +311,8 @@ onBeforeUnmount(() => {
 
 .dashboard-settings-card__icon {
   display: flex;
-  min-height: 165px;
+  width: 90px;
+  height: 90px;
   align-items: center;
   justify-content: center;
   align-self: start;
@@ -352,7 +354,7 @@ onBeforeUnmount(() => {
 .dashboard-service-card {
   display: grid;
   min-width: 0;
-  min-height: 105px;
+  min-height: 90px;
   grid-template-columns: 90px minmax(0, 1fr);
   overflow: hidden;
   background: var(--el-bg-color-overlay);
@@ -360,7 +362,9 @@ onBeforeUnmount(() => {
 
 .dashboard-service-card__icon {
   display: flex;
-  min-height: 91px;
+  width: 90px;
+  height: 90px;
+  align-self: start;
   align-items: center;
   justify-content: center;
   color: #fff;
@@ -384,17 +388,17 @@ onBeforeUnmount(() => {
 
 .dashboard-service-card__content {
   min-width: 0;
-  padding: 7px 10px;
+  padding: 5px 10px;
   color: #222;
   font-size: 14px;
-  line-height: 21px;
+  line-height: 20px;
   overflow-wrap: anywhere;
 }
 
 .dashboard-service-card__button {
-  height: 30px;
-  margin-top: 2px;
-  padding: 4px 10px;
+  height: 34px;
+  margin-top: 0;
+  padding: 6px 12px;
   border: 1px solid #367fa9;
   border-radius: 3px;
   color: #fff;

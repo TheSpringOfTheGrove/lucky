@@ -29,6 +29,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.LocalDateTime;
+
 import static cn.hutool.core.util.RandomUtil.randomEle;
 import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertPojoEquals;
 import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertServiceException;
@@ -179,6 +181,44 @@ public class AdminAuthServiceImplTest extends BaseDbUnitTest {
         verify(socialUserService).bindSocialUser(eq(new SocialUserBindReqDTO(
                 user.getId(), UserTypeEnum.ADMIN.getValue(),
                 reqVO.getSocialType(), reqVO.getSocialCode(), reqVO.getSocialState())));
+    }
+
+    @Test
+    public void testAuthenticate_expired() {
+        AdminUserDO user = new AdminUserDO().setId(1L).setUsername("expiretest")
+                .setPassword("encoded").setStatus(CommonStatusEnum.ENABLE.getStatus())
+                .setExpireTime(LocalDateTime.now().minusSeconds(1));
+        when(userService.getUserByUsername(user.getUsername())).thenReturn(user);
+        when(userService.isPasswordMatch("correct", "encoded")).thenReturn(true);
+
+        assertServiceException(() -> authService.authenticate("expiretest", "correct"), AUTH_LOGIN_USER_EXPIRED);
+        verify(loginLogService).createLoginLog(argThat(log ->
+                log.getResult().equals(LoginResultEnum.USER_EXPIRED.getResult())));
+        verify(userService, never()).updateUserLogin(anyLong(), any());
+        verifyNoInteractions(oauth2TokenService);
+        // 密码错误时仍只报账号密码错误，不泄露账号期限。
+        assertServiceException(() -> authService.authenticate("expiretest", "wrong"), AUTH_LOGIN_BAD_CREDENTIALS);
+    }
+
+    @Test
+    public void testSmsLogin_expired() {
+        AdminUserDO user = new AdminUserDO().setId(1L).setUsername("expiretest")
+                .setExpireTime(LocalDateTime.now().minusSeconds(1));
+        when(userService.getUserByMobile("15601691300")).thenReturn(user);
+        assertServiceException(() -> authService.smsLogin(new AuthSmsLoginReqVO("15601691300", "1234")),
+                AUTH_LOGIN_USER_EXPIRED);
+        verifyNoInteractions(oauth2TokenService);
+    }
+
+    @Test
+    public void testSocialLogin_expired() {
+        AuthSocialLoginReqVO request = randomPojo(AuthSocialLoginReqVO.class);
+        when(socialUserService.getSocialUserByCode(UserTypeEnum.ADMIN.getValue(), request.getType(),
+                request.getCode(), request.getState())).thenReturn(new SocialUserRespDTO("id", "name", "avatar", 1L));
+        when(userService.getUser(1L)).thenReturn(new AdminUserDO().setId(1L).setUsername("expiretest")
+                .setExpireTime(LocalDateTime.now().minusSeconds(1)));
+        assertServiceException(() -> authService.socialLogin(request), AUTH_LOGIN_USER_EXPIRED);
+        verifyNoInteractions(oauth2TokenService);
     }
 
     @Test

@@ -562,18 +562,44 @@ public class LotteryServiceImpl implements LotteryService {
 
     private List<Map<String, Object>> messageDisplayRows(MessageDO item) {
         String sourceMember = StrUtil.blankToDefault(item.getMember(), "未知会员");
+        boolean drawResult = DRAW_RESULT_COMMANDS.contains(value(item.getCommandType(), ""));
         List<Map<String, Object>> rows = new ArrayList<>(2);
-        if (StrUtil.isNotBlank(item.getReply())) {
+        if (StrUtil.isNotBlank(item.getReply()) || drawResult) {
             rows.add(map("id", "robot-" + item.getId(), "sender", "机器人", "sourceMember", sourceMember,
-                    "period", value(item.getPeriod(), ""), "content", roomDisplayText(normalizeCheckMarks(item.getReply())), "kind", "robot",
+                    "period", value(item.getPeriod(), ""), "content", roomRobotReply(item), "kind", "robot",
+                    "commandType", value(item.getCommandType(), ""), "drawImage", "",
                     "time", date(value(item.getProcessedAt(), item.getCreateTime()))));
         }
-        if (StrUtil.isNotBlank(item.getContent())) {
+        if (StrUtil.isNotBlank(item.getContent()) && !drawResult) {
             rows.add(map("id", "member-" + item.getId(), "sender", sourceMember, "sourceMember", sourceMember,
                     "period", value(item.getPeriod(), ""), "content", item.getContent(), "kind", "member",
                     "time", date(item.getCreateTime())));
         }
         return rows;
+    }
+
+    private String messageDrawImage(MessageDO item) {
+        return StrUtil.isBlank(item.getDrawImage()) ? "" : "data:image/svg+xml;base64,"
+                + Base64.getEncoder().encodeToString(LotteryDrawHistoryImageRenderer.completeSnapshot(item.getDrawImage())
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The audit view and room replay the same receipt, including its current cancel state. */
+    private String roomRobotReply(MessageDO item) {
+        String reply = roomDisplayText(normalizeCheckMarks(value(item.getReply(), "")));
+        if (DRAW_RESULT_COMMANDS.contains(value(item.getCommandType(), ""))
+                && value(item.getContent(), "").replaceAll("\\D", "").matches("\\d{5}")) {
+            return robotReplyTemplate.drawResult(item.getPeriod(), item.getContent());
+        }
+        if (!"BET".equals(item.getCommandType())) return reply;
+        if ("已退码".equals(item.getStatus())) return robotReplyTemplate.cancelSucceeded(reply);
+        if (StrUtil.isNotBlank(item.getOrderId()) && StrUtil.isNotBlank(reply)
+                && !reply.contains("下注失败") && !reply.contains("正在确认明细") && !reply.contains("提交中")
+                && !reply.contains("点击退码") && !reply.contains("已退码")
+                && !Set.of("退码处理中", "退码待确认", "退码失败").contains(value(item.getStatus(), ""))) {
+            reply += "\n点击退码";
+        }
+        return reply;
     }
 
     private String normalizeCheckMarks(String text) {
@@ -2458,8 +2484,6 @@ public class LotteryServiceImpl implements LotteryService {
         boolean nicknameCanMatchRobot = StrUtil.isNotBlank(nickname)
                 && StrUtil.containsIgnoreCase("机器人", nickname);
         LambdaQueryWrapper<MessageDO> query = new LambdaQueryWrapper<MessageDO>()
-                .and(wrapper -> wrapper.isNull(MessageDO::getCommandType)
-                        .or().notIn(MessageDO::getCommandType, DRAW_RESULT_COMMANDS))
                 .like(StrUtil.isNotBlank(period), MessageDO::getPeriod, period)
                 .and(StrUtil.isNotBlank(content), wrapper -> wrapper.like(MessageDO::getContent, content)
                         .or().like(MessageDO::getReply, content))
@@ -2467,10 +2491,8 @@ public class LotteryServiceImpl implements LotteryService {
                 .orderByDesc(MessageDO::getCreateTime)
                 .orderByDesc(MessageDO::getId);
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (MessageDO message : messageMapper.selectList(query)) {
-            if (DRAW_RESULT_COMMANDS.contains(StrUtil.blankToDefault(message.getCommandType(), ""))) {
-                continue;
-            }
+        List<MessageDO> messages = messageMapper.selectList(query);
+        for (MessageDO message : messages) {
             for (Map<String, Object> row : messageDisplayRows(message)) {
                 if (StrUtil.isNotBlank(content)
                         && !StrUtil.containsIgnoreCase(String.valueOf(row.get("content")), content)) {
@@ -2488,7 +2510,18 @@ public class LotteryServiceImpl implements LotteryService {
         long requestedStart = (long) (reqVO.getPageNo() - 1) * pageSize;
         int fromIndex = (int) Math.min(requestedStart, rows.size());
         int toIndex = Math.min(fromIndex + pageSize, rows.size());
-        return new PageResult<>(new ArrayList<>(rows.subList(fromIndex, toIndex)), (long) rows.size());
+        List<Map<String, Object>> pageRows = new ArrayList<>(rows.subList(fromIndex, toIndex));
+        // Encode/backfill only this page's images, preserving saved numbers and official draw times.
+        Set<String> pageIds = pageRows.stream().map(row -> String.valueOf(row.get("id"))).collect(Collectors.toSet());
+        for (MessageDO message : messages) {
+            if (DRAW_RESULT_COMMANDS.contains(value(message.getCommandType(), ""))
+                    && pageIds.contains("robot-" + message.getId())) {
+                ensureRoomDrawImages(message.getUserId(), List.of(message));
+                pageRows.stream().filter(row -> Objects.equals(row.get("id"), "robot-" + message.getId()))
+                        .forEach(row -> row.put("drawImage", messageDrawImage(message)));
+            }
+        }
+        return new PageResult<>(pageRows, (long) rows.size());
     }
 
     @Override
@@ -3018,8 +3051,7 @@ public class LotteryServiceImpl implements LotteryService {
                                                Map<String, Integer> avatarByMemberName) {
         Map<String, Object> result = messageMap(item);
         if (COMMAND_DRAW_RESULT.equals(item.getCommandType()) && StrUtil.isNotBlank(item.getDrawImage())) {
-            result.put("drawImage", "data:image/svg+xml;base64," + Base64.getEncoder().encodeToString(
-                    item.getDrawImage().getBytes(StandardCharsets.UTF_8)));
+            result.put("drawImage", messageDrawImage(item));
         }
         boolean own = Objects.equals(item.getMemberId(), member.getId())
                 || item.getMemberId() == null && Objects.equals(item.getMember(), member.getName());
@@ -3028,20 +3060,10 @@ public class LotteryServiceImpl implements LotteryService {
         boolean sharedPeriodSummary = COMMAND_PERIOD_SUMMARY.equals(item.getCommandType());
         boolean sharedDrawResult = COMMAND_DRAW_RESULT.equals(item.getCommandType());
         String sharedReply = sharedPayoutSummary || sharedSettlement || sharedPeriodSummary || sharedDrawResult
-                ? item.getReply() : "";
-        String playerReply = roomDisplayText(normalizeCheckMarks(value(item.getReply(), "")));
+                ? roomRobotReply(item) : "";
+        String playerReply = roomRobotReply(item);
         if (playerReply.contains("盘口") || playerReply.contains("外盘")) {
             playerReply = "";
-        }
-        if ("BET".equals(item.getCommandType()) && "已退码".equals(item.getStatus())) {
-            playerReply = robotReplyTemplate.cancelSucceeded(playerReply);
-        }
-        if ("BET".equals(item.getCommandType()) && StrUtil.isNotBlank(item.getOrderId())
-                && StrUtil.isNotBlank(playerReply) && !playerReply.contains("下注失败")
-                && !playerReply.contains("正在确认明细") && !playerReply.contains("提交中")
-                && !playerReply.contains("点击退码") && !playerReply.contains("已退码")
-                && !Set.of("退码处理中", "退码待确认", "退码失败").contains(item.getStatus())) {
-            playerReply += "\n点击退码";
         }
         result.put("own", own);
         Integer memberAvatar = StrUtil.isNotBlank(item.getMemberId()) ? avatarByMemberId.get(item.getMemberId())
@@ -3355,15 +3377,29 @@ public class LotteryServiceImpl implements LotteryService {
 
     private void ensureRoomDrawImages(Long userId, List<MessageDO> messages) {
         for (MessageDO message : messages) {
-            if (!COMMAND_DRAW_RESULT.equals(message.getCommandType()) || StrUtil.isNotBlank(message.getDrawImage())) {
+            if (!COMMAND_DRAW_RESULT.equals(message.getCommandType()) || userId == null) {
                 continue;
             }
-            String image = drawHistoryImage(userId, message.getPeriod());
-            if (image.isBlank()) continue;
-            DataPermissionUtils.executeIgnore(() -> messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>()
-                    .eq(MessageDO::getId, message.getId()).eq(MessageDO::getUserId, userId)
-                    .isNull(MessageDO::getDrawImage).set(MessageDO::getDrawImage, image)));
-            message.setDrawImage(image);
+            String originalImage = message.getDrawImage();
+            String image = StrUtil.isBlank(originalImage) ? drawHistoryImage(userId, message.getPeriod())
+                    : LotteryDrawHistoryImageRenderer.completeSnapshot(originalImage);
+            if (StrUtil.isNotBlank(image) && !Objects.equals(originalImage, image)) {
+                DataPermissionUtils.executeIgnore(() -> messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>()
+                        .eq(MessageDO::getId, message.getId()).eq(MessageDO::getUserId, userId)
+                        .isNull(originalImage == null, MessageDO::getDrawImage)
+                        .eq(originalImage != null, MessageDO::getDrawImage, originalImage)
+                        .set(MessageDO::getDrawImage, image)));
+                message.setDrawImage(image);
+            }
+            String reply = roomRobotReply(message);
+            if (!Objects.equals(message.getReply(), reply)) {
+                DataPermissionUtils.executeIgnore(() -> messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>()
+                        .eq(MessageDO::getId, message.getId()).eq(MessageDO::getUserId, userId)
+                        .isNull(message.getReply() == null, MessageDO::getReply)
+                        .eq(message.getReply() != null, MessageDO::getReply, message.getReply())
+                        .set(MessageDO::getReply, reply)));
+                message.setReply(reply);
+            }
         }
     }
 
@@ -3396,9 +3432,7 @@ public class LotteryServiceImpl implements LotteryService {
         message.setError("");
         message.setCommandType(COMMAND_DRAW_RESULT);
         message.setMessageType(TYPE_PLAYER);
-        message.setReply("^^--| " + periodSuffix(draw.getPeriod()) + "期开奖结果-"
-                + String.join("|", result.result().chars().mapToObj(value -> String.valueOf((char) value)).toList())
-                + "|" + result.dragonTiger());
+        message.setReply(robotReplyTemplate.drawResult(draw.getPeriod(), normalizedResult));
         message.setDrawImage(drawHistoryImage(userId, draw.getPeriod()));
         message.setProcessedAt(LocalDateTime.now());
         message.setCreateTime(draw.getSettledAt() == null ? LocalDateTime.now() : draw.getSettledAt());

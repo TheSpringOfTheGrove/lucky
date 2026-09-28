@@ -6,6 +6,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -52,6 +53,9 @@ public class AuthPermissionInfoRespVO {
 
         @Schema(description = "用户邮箱", example = "lucky5@iocoder.cn")
         private String email;
+
+        @Schema(description = "当前账号到期时间", example = "时间戳格式")
+        private LocalDateTime expireTime;
 
     }
 

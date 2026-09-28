@@ -28,6 +28,13 @@ public class LotteryRobotReplyTemplate {
         return "@" + memberName + "\n已结束";
     }
 
+    public String drawResult(String period, String numbers) {
+        LotteryBettingService.DrawResult draw = bettingService.deriveDraw(numbers);
+        return "^^--| " + periodSuffix(period) + "期开奖结果-"
+                + String.join("|", draw.digits().stream().map(String::valueOf).toList())
+                + "|" + draw.dragonTiger();
+    }
+
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
         String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
                 .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())

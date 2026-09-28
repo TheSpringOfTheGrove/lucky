@@ -85,6 +85,10 @@ public class AdminUserDO extends TenantBaseDO {
      */
     private Integer status;
     /**
+     * 后台账号到期时间；与租户期限、OAuth 令牌有效期独立。
+     */
+    private LocalDateTime expireTime;
+    /**
      * 最后登录IP
      */
     private String loginIp;

@@ -12,6 +12,8 @@ export interface LotteryMessageRow {
   content: string
   time: string
   kind: 'member' | 'robot'
+  commandType?: string
+  drawImage?: string
 }
 
 export interface LotteryMessagePageParams {

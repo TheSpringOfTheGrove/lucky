@@ -14,6 +14,7 @@ export interface UserVO {
   avatar: string
   loginIp: string
   status: number
+  expireTime: number
   remark: string
   loginDate: Date
   createTime: Date
