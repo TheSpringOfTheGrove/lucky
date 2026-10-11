@@ -4,6 +4,7 @@ import { cloneDeep } from 'lodash-es'
 import remainingRouter from '@/router/modules/remaining'
 import { flatMultiLevelRoutes, generateRoute } from '@/utils/routerHelper'
 import { CACHE_KEY, useCache } from '@/hooks/web/useCache'
+import { useUserStoreWithOut } from '@/store/modules/user'
 
 const { wsCache } = useCache()
 
@@ -44,6 +45,11 @@ export const usePermissionStore = defineStore('permission', {
         if (roleRouters) {
           res = roleRouters as AppCustomRouteRecordRaw[]
         }
+        const roles = useUserStoreWithOut().getRoles
+        const agentOnly = roles.includes('lottery_agent') && !roles.includes('super_admin')
+        if (agentOnly) {
+          res = res.filter((route) => route.path !== '/lucky5/dashboard')
+        }
         const routerMap: AppRouteRecordRaw[] = generateRoute(res)
         // 动态路由，404一定要放到最后面
         // preschooler：vue-router@4以后已支持静态404路由，此处可不再追加
@@ -60,7 +66,9 @@ export const usePermissionStore = defineStore('permission', {
           }
         ])
         // 渲染菜单的所有路由
-        this.routers = cloneDeep(remainingRouter).concat(routerMap)
+        this.routers = cloneDeep(agentOnly
+          ? remainingRouter.filter((route) => route.name !== 'Home')
+          : remainingRouter).concat(routerMap)
         resolve()
       })
     },

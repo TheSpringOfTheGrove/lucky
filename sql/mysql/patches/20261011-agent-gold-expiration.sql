@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS `system_gold_ledger` (
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_system_gold_operation` (`tenant_id`,`operation_key`),
-  KEY `idx_system_gold_target` (`tenant_id`,`target_user_id`,`create_time`)
+  KEY `idx_system_gold_target` (`tenant_id`,`target_user_id`,`create_time`),
+  KEY `idx_system_gold_stats` (`tenant_id`,`operation_type`,`source_user_id`,`create_time`,`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='后台代理金币不可变流水';
 
 INSERT INTO `system_role` (`name`,`code`,`sort`,`data_scope`,`data_scope_dept_ids`,`status`,`type`,

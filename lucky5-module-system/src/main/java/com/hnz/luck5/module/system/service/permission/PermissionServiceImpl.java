@@ -12,6 +12,7 @@ import com.hnz.luck5.module.system.dal.dataobject.permission.MenuDO;
 import com.hnz.luck5.module.system.dal.dataobject.permission.RoleDO;
 import com.hnz.luck5.module.system.dal.dataobject.permission.RoleMenuDO;
 import com.hnz.luck5.module.system.dal.dataobject.permission.UserRoleDO;
+import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.dal.mysql.permission.RoleMenuMapper;
 import com.hnz.luck5.module.system.dal.mysql.permission.UserRoleMapper;
 import com.hnz.luck5.module.system.dal.redis.RedisKeyConstants;
@@ -35,6 +36,8 @@ import java.util.function.Supplier;
 
 import static com.hnz.luck5.framework.common.util.collection.CollectionUtils.convertSet;
 import static com.hnz.luck5.framework.common.util.json.JsonUtils.toJsonString;
+import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_GOLD_ROLE_MISMATCH;
 
 /**
  * 权限 Service 实现类
@@ -206,6 +209,15 @@ public class PermissionServiceImpl implements PermissionService {
     @DSTransactional // 多数据源，使用 @DSTransactional 保证本地事务，以及数据源的切换
     @CacheEvict(value = RedisKeyConstants.USER_ROLE_ID_LIST, key = "#userId")
     public void assignUserRole(Long userId, Set<Long> roleIds) {
+        // 金币余额和期限由账号类型决定，单独改角色会造成“显示有金币但无法分配”。
+        AdminUserDO user = userService.getUser(userId);
+        if (user != null) {
+            boolean agentRole = roleService.getRoleList(CollUtil.emptyIfNull(roleIds)).stream()
+                    .anyMatch(role -> "lottery_agent".equals(role.getCode()));
+            if (agentRole != "AGENT".equals(user.getAccountType())) {
+                throw exception(USER_GOLD_ROLE_MISMATCH);
+            }
+        }
         // 获得角色拥有角色编号
         Set<Long> dbRoleIds = convertSet(userRoleMapper.selectListByUserId(userId),
                 UserRoleDO::getRoleId);

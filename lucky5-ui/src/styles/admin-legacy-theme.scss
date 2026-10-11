@@ -91,17 +91,20 @@ body.lucky-admin-theme .el-button > span > .el-icon:has(> .legacy-icon-glyph):on
 }
 
 body.lucky-admin-theme .dashboard-settings-card__item .el-checkbox__inner {
+  position: relative;
   border: 1px solid #d2d6de;
   background: #fff;
 }
 
+body.lucky-admin-theme .dashboard-settings-card__item .is-checked .el-checkbox__inner {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8l3.5 3.5L13 4.5' fill='none' stroke='%230073b7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 14px 14px;
+}
+
 body.lucky-admin-theme .dashboard-settings-card__item .is-checked .el-checkbox__inner::after {
-  top: 1px;
-  left: 5px;
-  width: 4px;
-  height: 9px;
-  border-color: #0073b7;
-  border-width: 3px;
+  display: none;
 }
 
 body.lucky-admin-theme .lucky-admin-tool-header {

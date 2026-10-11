@@ -23,6 +23,7 @@ import com.hnz.luck5.module.lottery.controller.app.vo.LotteryRoomReqVO;
 import com.hnz.luck5.module.lottery.dal.dataobject.*;
 import com.hnz.luck5.module.lottery.dal.mysql.*;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
+import com.hnz.luck5.module.system.service.user.AdminGoldService;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
 import jakarta.annotation.Resource;
 import org.slf4j.Logger;
@@ -164,6 +165,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryMarketOrderStateService marketOrderStateService;
     @Resource private Wa55MarketOrderClient marketOrderClient;
     @Resource private SecurityFrameworkService securityFrameworkService;
+    @Resource private AdminGoldService adminGoldService;
     @Resource private AdminUserService adminUserService;
     @Resource private ApplicationEventPublisher eventPublisher;
 
@@ -347,6 +349,7 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public Map<String, Object> initializeOwner(Long userId) {
+        adminGoldService.assertManageableUser(userId);
         AdminUserDO user = adminUserService.getUser(userId);
         if (user == null) {
             throw exception(RECORD_NOT_FOUND);
@@ -362,6 +365,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> initializeAutoProxyData(Long userId) {
+        adminGoldService.assertManageableUser(userId);
         AdminUserDO user = adminUserService.getUser(userId);
         if (user == null) {
             throw exception(RECORD_NOT_FOUND);

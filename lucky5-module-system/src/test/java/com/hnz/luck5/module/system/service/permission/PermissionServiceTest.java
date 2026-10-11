@@ -266,6 +266,37 @@ public class PermissionServiceTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testAssignUserRole_cannotTurnOwnerIntoAgent() {
+        Long userId = 226L;
+        Set<Long> roleIds = Set.of(300L);
+        when(userService.getUser(userId)).thenReturn(new AdminUserDO().setAccountType("OWNER"));
+        when(roleService.getRoleList(roleIds)).thenReturn(List.of(new RoleDO().setCode("lottery_agent")));
+
+        assertThrows(RuntimeException.class, () -> permissionService.assignUserRole(userId, roleIds));
+        assertTrue(userRoleMapper.selectListByUserId(userId).isEmpty());
+    }
+
+    @Test
+    public void testAssignUserRole_cannotTurnOrdinaryUserIntoAgent() {
+        Long userId = 228L;
+        Set<Long> roleIds = Set.of(300L);
+        when(userService.getUser(userId)).thenReturn(new AdminUserDO());
+        when(roleService.getRoleList(roleIds)).thenReturn(List.of(new RoleDO().setCode("lottery_agent")));
+
+        assertThrows(RuntimeException.class, () -> permissionService.assignUserRole(userId, roleIds));
+        assertTrue(userRoleMapper.selectListByUserId(userId).isEmpty());
+    }
+
+    @Test
+    public void testAssignUserRole_cannotRemoveAgentRole() {
+        Long userId = 227L;
+        when(userService.getUser(userId)).thenReturn(new AdminUserDO().setAccountType("AGENT"));
+
+        assertThrows(RuntimeException.class, () -> permissionService.assignUserRole(userId, Set.of()));
+        assertTrue(userRoleMapper.selectListByUserId(userId).isEmpty());
+    }
+
+    @Test
     public void testProcessUserDeleted() {
         // 准备参数
         Long userId = randomLongId();

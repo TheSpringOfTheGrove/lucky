@@ -46,6 +46,9 @@ public class AdminGoldServiceImpl implements AdminGoldService {
             return;
         }
         long before = balance(agent);
+        if (amount < 0 && before < -amount) {
+            throw exception(USER_GOLD_INSUFFICIENT);
+        }
         long after = Math.addExact(before, amount);
         userMapper.updateById(new AdminUserDO().setId(agentUserId).setGoldBalance(after));
         GoldLedgerDO ledger = new GoldLedgerDO();
@@ -68,22 +71,41 @@ public class AdminGoldServiceImpl implements AdminGoldService {
         AdminUserDO agent = admin ? null : lockedUser(operatorId);
         AdminUserDO owner = lockedUser(ownerUserId);
         if (!"OWNER".equals(owner.getAccountType()) ||
-                !Objects.equals(owner.getParentAgentUserId(), operatorId)) {
+                (!admin && !Objects.equals(owner.getParentAgentUserId(), operatorId))) {
             throw exception(USER_GOLD_ACCESS_DENIED);
         }
         if (alreadyApplied(operationKey, OWNER_ALLOCATION, admin ? null : operatorId, ownerUserId, amount)) {
             return;
         }
         long before = agent == null ? 0 : balance(agent);
-        if (agent != null && before < amount) {
+        if (amount > 0 && agent != null && before < amount) {
             throw exception(USER_GOLD_INSUFFICIENT);
         }
         LocalDateTime oldExpiry = owner.getExpireTime();
         LocalDateTime now = LocalDateTime.now();
-        LocalDateTime nextExpiry = (oldExpiry != null && oldExpiry.isAfter(now) ? oldExpiry : now)
-                .plusDays(amount);
+        LocalDateTime nextExpiry;
+        if (amount > 0) {
+            nextExpiry = (oldExpiry != null && oldExpiry.isAfter(now) ? oldExpiry : now).plusDays(amount);
+        } else {
+            long deduction = -amount;
+            long remainingSeconds = oldExpiry == null ? 0 : Duration.between(now, oldExpiry).getSeconds();
+            long remainingGold = remainingSeconds <= 0 ? 0 : (remainingSeconds + 86399) / 86400;
+            if (remainingGold < deduction || (agent != null &&
+                    ledgerMapper.sumOwnerAllocation(TenantContextHolder.getRequiredTenantId(), operatorId,
+                            ownerUserId) < deduction) || (admin &&
+                    !Objects.equals(owner.getParentAgentUserId(), operatorId) &&
+                    ledgerMapper.sumAdminOwnerAllocation(TenantContextHolder.getRequiredTenantId(),
+                            ownerUserId) < deduction)) {
+                throw exception(USER_GOLD_OWNER_INSUFFICIENT);
+            }
+            nextExpiry = oldExpiry.minusDays(deduction);
+            if (nextExpiry.isBefore(now)) {
+                nextExpiry = now;
+            }
+        }
         if (agent != null) {
-            userMapper.updateById(new AdminUserDO().setId(operatorId).setGoldBalance(before - amount));
+            userMapper.updateById(new AdminUserDO().setId(operatorId)
+                    .setGoldBalance(Math.subtractExact(before, amount)));
         }
         userMapper.updateById(new AdminUserDO().setId(ownerUserId).setExpireTime(nextExpiry));
         GoldLedgerDO ledger = new GoldLedgerDO();
@@ -91,7 +113,7 @@ public class AdminGoldServiceImpl implements AdminGoldService {
         ledgerMapper.insert(ledger.setOperationKey(operationKey).setOperationType(OWNER_ALLOCATION)
                 .setSourceUserId(agent == null ? null : operatorId).setTargetUserId(ownerUserId)
                 .setAmount(amount).setAgentBalanceBefore(agent == null ? null : before)
-                .setAgentBalanceAfter(agent == null ? null : before - amount)
+                .setAgentBalanceAfter(agent == null ? null : Math.subtractExact(before, amount))
                 .setTargetExpireBefore(oldExpiry).setTargetExpireAfter(nextExpiry)
                 .setOperatorUserId(operatorId));
     }
@@ -124,6 +146,19 @@ public class AdminGoldServiceImpl implements AdminGoldService {
         }
     }
 
+    @Override
+    public void assertManageableUser(Long userId) {
+        Long operatorId = requireOperator();
+        if (isAdmin(operatorId)) {
+            return;
+        }
+        AdminUserDO owner = userMapper.selectById(userId);
+        if (!isAgent(operatorId) || owner == null || !"OWNER".equals(owner.getAccountType()) ||
+                !Objects.equals(owner.getParentAgentUserId(), operatorId)) {
+            throw exception(USER_GOLD_ACCESS_DENIED);
+        }
+    }
+
     private AdminUserDO lockedUser(Long userId) {
         AdminUserDO user = userMapper.selectForUpdate(TenantContextHolder.getRequiredTenantId(), userId);
         if (user == null) {
@@ -146,7 +181,7 @@ public class AdminGoldServiceImpl implements AdminGoldService {
     }
 
     private void validateAmountAndKey(long amount, String key) {
-        if (amount <= 0 || amount > MAX_DAYS_PER_OPERATION) {
+        if (amount == 0 || amount < -MAX_DAYS_PER_OPERATION || amount > MAX_DAYS_PER_OPERATION) {
             throw exception(USER_GOLD_AMOUNT_INVALID);
         }
         if (key == null || key.isBlank() || key.length() > 100) {

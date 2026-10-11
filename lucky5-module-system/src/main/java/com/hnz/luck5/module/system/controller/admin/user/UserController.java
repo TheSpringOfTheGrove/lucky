@@ -76,7 +76,7 @@ public class UserController {
     @Operation(summary = "修改用户")
     @PreAuthorize("@ss.hasPermission('system:user:update')")
     public CommonResult<Boolean> updateUser(@Valid @RequestBody UserSaveReqVO reqVO) {
-        goldService.assertVisible(reqVO.getId());
+        goldService.assertManageableUser(reqVO.getId());
         userService.updateUser(reqVO);
         return success(true);
     }
@@ -86,7 +86,7 @@ public class UserController {
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
     @PreAuthorize("@ss.hasPermission('system:user:delete')")
     public CommonResult<Boolean> deleteUser(@RequestParam("id") Long id) {
-        goldService.assertVisible(id);
+        goldService.assertManageableUser(id);
         userService.deleteUser(id);
         return success(true);
     }
@@ -96,7 +96,7 @@ public class UserController {
     @Operation(summary = "批量删除用户")
     @PreAuthorize("@ss.hasPermission('system:user:delete')")
     public CommonResult<Boolean> deleteUserList(@RequestParam("ids") List<Long> ids) {
-        ids.forEach(goldService::assertVisible);
+        ids.forEach(goldService::assertManageableUser);
         userService.deleteUserList(ids);
         return success(true);
     }
@@ -105,7 +105,7 @@ public class UserController {
     @Operation(summary = "重置用户密码")
     @PreAuthorize("@ss.hasPermission('system:user:update-password')")
     public CommonResult<Boolean> updateUserPassword(@Valid @RequestBody UserUpdatePasswordReqVO reqVO) {
-        goldService.assertVisible(reqVO.getId());
+        goldService.assertManageableUser(reqVO.getId());
         userService.updateUserPassword(reqVO.getId(), reqVO.getPassword());
         return success(true);
     }
@@ -114,7 +114,7 @@ public class UserController {
     @Operation(summary = "修改用户状态")
     @PreAuthorize("@ss.hasPermission('system:user:update')")
     public CommonResult<Boolean> updateUserStatus(@Valid @RequestBody UserUpdateStatusReqVO reqVO) {
-        goldService.assertVisible(reqVO.getId());
+        goldService.assertManageableUser(reqVO.getId());
         userService.updateUserStatus(reqVO.getId(), reqVO.getStatus());
         return success(true);
     }
@@ -207,7 +207,7 @@ public class UserController {
     }
 
     @PostMapping("/gold/grant-agent")
-    @Operation(summary = "系统管理员给代理充值金币")
+    @Operation(summary = "系统管理员增加或减少代理金币")
     @PreAuthorize("@ss.hasRole('super_admin')")
     public CommonResult<Boolean> grantAgentGold(@Valid @RequestBody UserGoldChangeReqVO reqVO) {
         goldService.grantToAgent(reqVO.getUserId(), reqVO.getAmount(), reqVO.getOperationKey());
@@ -215,7 +215,7 @@ public class UserController {
     }
 
     @PostMapping("/gold/allocate-owner")
-    @Operation(summary = "从代理金币为直属老板续期")
+    @Operation(summary = "代理为直属老板、超级管理员为任意老板增加或减少使用天数")
     @PreAuthorize("@ss.hasAnyRoles('super_admin','lottery_agent')")
     public CommonResult<Boolean> allocateOwnerGold(@Valid @RequestBody UserGoldChangeReqVO reqVO) {
         goldService.allocateToOwner(reqVO.getUserId(), reqVO.getAmount(), reqVO.getOperationKey());

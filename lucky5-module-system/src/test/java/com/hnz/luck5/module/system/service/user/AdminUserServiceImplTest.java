@@ -118,10 +118,26 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         when(passwordEncoder.encode(anyString())).thenReturn("hash");
         when(permissionService.hasAnyRoles(1L, "super_admin")).thenReturn(true);
         when(permissionService.hasAnyRoles(2L, "lottery_agent")).thenReturn(true);
-        when(roleService.getRoleList()).thenReturn(List.of(new RoleDO().setId(88L)
-                .setCode("lottery_agent").setStatus(CommonStatusEnum.ENABLE.getStatus())));
+        when(roleService.getRoleList()).thenReturn(List.of(
+                new RoleDO().setId(88L).setCode("lottery_agent").setStatus(CommonStatusEnum.ENABLE.getStatus()),
+                new RoleDO().setId(89L).setCode("super_admin").setStatus(CommonStatusEnum.ENABLE.getStatus())));
 
         loginAs(1L);
+        UserSaveReqVO adminReq = randomPojo(UserSaveReqVO.class, o -> {
+            o.setId(null);
+            o.setAccountType("ADMIN");
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+            o.setDeptId(null);
+            o.setPostIds(null);
+        });
+        Long adminId = userService.createUser(adminReq);
+        AdminUserDO newAdmin = userMapper.selectById(adminId);
+        assertEquals("ADMIN", newAdmin.getAccountType());
+        assertNull(newAdmin.getParentAgentUserId());
+        assertEquals(LocalDateTime.of(2099, 12, 31, 23, 59, 59), newAdmin.getExpireTime());
+        verify(permissionService).assignUserRole(adminId, asSet(89L));
+        verify(adminUserProducer, never()).sendUserCreatedMessage(eq(1L), eq(adminId), anyString());
+
         UserSaveReqVO agentReq = randomPojo(UserSaveReqVO.class, o -> {
             o.setId(null);
             o.setAccountType("AGENT");
@@ -161,6 +177,8 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
             o.setDeptId(null);
             o.setPostIds(null);
         });
+        assertServiceException(() -> userService.createUser(forbiddenAgent), USER_GOLD_ACCESS_DENIED);
+        forbiddenAgent.setAccountType("ADMIN");
         assertServiceException(() -> userService.createUser(forbiddenAgent), USER_GOLD_ACCESS_DENIED);
     }
 
@@ -453,6 +471,39 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         assertEquals(1, pageResult.getTotal());
         assertEquals(1, pageResult.getList().size());
         assertPojoEquals(dbUser, pageResult.getList().get(0));
+    }
+
+    @Test
+    public void testGetUserPage_byRole() {
+        AdminUserDO matchingUser = randomAdminUserDO();
+        AdminUserDO otherUser = randomAdminUserDO();
+        userMapper.insert(matchingUser);
+        userMapper.insert(otherUser);
+        UserPageReqVO reqVO = new UserPageReqVO();
+        reqVO.setRoleId(88L);
+        when(permissionService.getUserRoleIdListByRoleId(singleton(88L)))
+                .thenReturn(asSet(matchingUser.getId()));
+
+        PageResult<AdminUserDO> pageResult = userService.getUserPage(reqVO);
+        assertEquals(1, pageResult.getTotal());
+        assertEquals(matchingUser.getId(), pageResult.getList().get(0).getId());
+    }
+
+    @Test
+    public void testGetUserPage_agentOnlySeesDirectOwners() {
+        TenantContextHolder.setTenantId(1L);
+        AdminUserDO agent = randomAdminUserDO(o -> o.setAccountType("AGENT"));
+        userMapper.insert(agent);
+        loginAs(agent.getId());
+        when(permissionService.hasAnyRoles(agent.getId(), "lottery_agent")).thenReturn(true);
+        AdminUserDO directOwner = randomAdminUserDO(o -> o.setParentAgentUserId(agent.getId()).setAccountType("OWNER"));
+        AdminUserDO otherOwner = randomAdminUserDO(o -> o.setParentAgentUserId(agent.getId() + 1).setAccountType("OWNER"));
+        userMapper.insert(directOwner);
+        userMapper.insert(otherOwner);
+
+        PageResult<AdminUserDO> pageResult = userService.getUserPage(new UserPageReqVO());
+        assertEquals(1, pageResult.getTotal());
+        assertEquals(directOwner.getId(), pageResult.getList().get(0).getId());
     }
 
     /**

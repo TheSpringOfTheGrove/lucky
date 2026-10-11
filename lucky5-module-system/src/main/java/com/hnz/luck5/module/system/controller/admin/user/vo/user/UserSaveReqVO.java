@@ -69,7 +69,7 @@ public class UserSaveReqVO {
     @DiffLogField(name = "到期时间")
     private LocalDateTime expireTime;
 
-    @Schema(description = "Lucky5 账号类型：AGENT 或 OWNER；不传默认为老板")
+    @Schema(description = "Lucky5 账号类型：ADMIN、AGENT 或 OWNER；不传默认为老板")
     private String accountType;
 
     // ========== 仅【创建】时，需要传递的字段 ==========

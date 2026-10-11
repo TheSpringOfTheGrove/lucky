@@ -445,22 +445,26 @@ body.lucky-admin-theme .dashboard-breadcrumb {
       line-height: 25.714px;
     }
     .luck-layout .dashboard-settings-card__content {
-      display: block;
+      display: flex;
+      flex-wrap: wrap;
+      align-content: flex-start;
+      gap: 4px 6px;
       padding: 5px 10px;
       line-height: 25.714px;
     }
     .luck-layout .dashboard-settings-card__item {
-      display: inline-block;
-      margin-right: 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       line-height: 20px;
-      vertical-align: middle;
       white-space: nowrap;
     }
     .luck-layout .dashboard-settings-card__item .el-checkbox {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      flex: none;
       height: 18px;
-      margin-right: 4px;
-      vertical-align: middle;
+      margin: 0;
     }
     .luck-layout .dashboard-settings-card__item .el-checkbox__inner {
       width: 18px;

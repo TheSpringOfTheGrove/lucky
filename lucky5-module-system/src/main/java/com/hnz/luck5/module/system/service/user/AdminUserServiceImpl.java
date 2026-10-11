@@ -125,12 +125,12 @@ public class AdminUserServiceImpl implements AdminUserService {
         if (managedCreation) {
             boolean admin = permissionService.hasAnyRoles(operator.getId(), "super_admin");
             boolean agent = permissionService.hasAnyRoles(operator.getId(), "lottery_agent");
-            if ((!admin && !agent) || (!"OWNER".equals(accountType) && !"AGENT".equals(accountType)) ||
-                    (agent && "AGENT".equals(accountType))) {
+            if ((!"OWNER".equals(accountType) && !"AGENT".equals(accountType) && !"ADMIN".equals(accountType)) ||
+                    (!admin && (!agent || !"OWNER".equals(accountType)))) {
                 throw exception(USER_GOLD_ACCESS_DENIED);
             }
             user.setAccountType(accountType);
-            user.setParentAgentUserId(operator.getId());
+            user.setParentAgentUserId("ADMIN".equals(accountType) ? null : operator.getId());
             user.setGoldBalance(0L);
             // 新老板无金币时立即到期；代理余额为零仍可登录等待充值。
             user.setExpireTime("OWNER".equals(accountType) ? LocalDateTime.now() :
@@ -150,12 +150,13 @@ public class AdminUserServiceImpl implements AdminUserService {
 
         // 2.3 通知业务模块初始化该账号的独立数据
         Long tenantId = TenantContextHolder.getTenantId();
-        if ("AGENT".equals(accountType)) {
-            RoleDO agentRole = roleService.getRoleList().stream()
-                    .filter(role -> "lottery_agent".equals(role.getCode()) &&
+        if ("AGENT".equals(accountType) || "ADMIN".equals(accountType)) {
+            String roleCode = "ADMIN".equals(accountType) ? "super_admin" : "lottery_agent";
+            RoleDO assignedRole = roleService.getRoleList().stream()
+                    .filter(role -> roleCode.equals(role.getCode()) &&
                             CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()))
                     .findFirst().orElseThrow(() -> exception(USER_GOLD_TARGET_INVALID));
-            permissionService.assignUserRole(user.getId(), Set.of(agentRole.getId()));
+            permissionService.assignUserRole(user.getId(), Set.of(assignedRole.getId()));
         } else if (tenantId != null) {
             adminUserProducer.sendUserCreatedMessage(tenantId, user.getId(), user.getUsername());
         }

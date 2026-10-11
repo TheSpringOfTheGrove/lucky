@@ -23,6 +23,8 @@ import java.util.List;
 
 import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertServiceException;
 import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_GOLD_INSUFFICIENT;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_GOLD_ACCESS_DENIED;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_GOLD_OWNER_INSUFFICIENT;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
@@ -54,7 +56,7 @@ class AdminGoldServiceImplTest extends BaseDbUnitTest {
         login(2L);
         assertServiceException(() -> goldService.allocateToOwner(3L, 1, "zero-balance"),
                 USER_GOLD_INSUFFICIENT);
-        assertEquals(0, ledgerMapper.selectCount());
+        assertNull(ledgerMapper.selectByOperationKey("zero-balance"));
         assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
     }
 
@@ -69,10 +71,76 @@ class AdminGoldServiceImplTest extends BaseDbUnitTest {
         goldService.allocateToOwner(3L, 2, "allocate-2");
         goldService.allocateToOwner(3L, 2, "allocate-2");
         assertEquals(1L, userMapper.selectById(2L).getGoldBalance());
-        assertEquals(2, ledgerMapper.selectCount());
+        assertNotNull(ledgerMapper.selectByOperationKey("grant-3"));
+        assertNotNull(ledgerMapper.selectByOperationKey("allocate-2"));
         LocalDateTime expiry = userMapper.selectById(3L).getExpireTime();
         assertTrue(expiry.isAfter(LocalDateTime.now().plusHours(47)));
         assertTrue(expiry.isBefore(LocalDateTime.now().plusHours(49)));
+    }
+
+    @Test
+    void adminCanRechargeAgentOwnerWithoutSpendingAgentGold() {
+        login(1L);
+        goldService.allocateToOwner(3L, 2, "admin-owner-recharge");
+        goldService.allocateToOwner(3L, 2, "admin-owner-recharge");
+
+        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+        assertTrue(userMapper.selectById(3L).getExpireTime().isAfter(LocalDateTime.now().plusHours(47)));
+        assertNull(ledgerMapper.selectByOperationKey("admin-owner-recharge").getSourceUserId());
+
+        goldService.allocateToOwner(3L, -1, "admin-owner-reduce");
+        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+        assertServiceException(() -> goldService.allocateToOwner(3L, -2, "admin-owner-overreduce"),
+                USER_GOLD_OWNER_INSUFFICIENT);
+    }
+
+    @Test
+    void adminCannotTakeBackDaysFundedOnlyByAgent() {
+        login(1L);
+        goldService.grantToAgent(2L, 1, "grant-agent-only");
+        login(2L);
+        goldService.allocateToOwner(3L, 1, "agent-owner-only");
+
+        login(1L);
+        assertServiceException(() -> goldService.allocateToOwner(3L, -1, "admin-take-agent-days"),
+                USER_GOLD_OWNER_INSUFFICIENT);
+        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+    }
+
+    @Test
+    void decreaseOwnerGoldRefundsAgentAndIsIdempotent() {
+        login(1L);
+        goldService.grantToAgent(2L, 3, "grant-for-refund");
+        login(2L);
+        goldService.allocateToOwner(3L, 2, "allocate-for-refund");
+        LocalDateTime expiry = userMapper.selectById(3L).getExpireTime();
+
+        goldService.allocateToOwner(3L, -1, "refund-one");
+        goldService.allocateToOwner(3L, -1, "refund-one");
+        assertEquals(2L, userMapper.selectById(2L).getGoldBalance());
+        assertEquals(expiry.minusDays(1), userMapper.selectById(3L).getExpireTime());
+        assertEquals(-1L, ledgerMapper.selectByOperationKey("refund-one").getAmount());
+        assertServiceException(() -> goldService.allocateToOwner(3L, -2, "refund-too-many"),
+                USER_GOLD_OWNER_INSUFFICIENT);
+    }
+
+    @Test
+    void agentCannotRefundDaysWithoutTheirAllocation() {
+        userMapper.updateById(new AdminUserDO().setId(3L).setExpireTime(LocalDateTime.now().plusDays(2)));
+        login(2L);
+        assertServiceException(() -> goldService.allocateToOwner(3L, -1, "refund-unallocated-days"),
+                USER_GOLD_OWNER_INSUFFICIENT);
+        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+    }
+
+    @Test
+    void adminCanReduceAgentBalanceOnlyWhenSufficient() {
+        login(1L);
+        goldService.grantToAgent(2L, 3, "grant-before-deduction");
+        goldService.grantToAgent(2L, -2, "deduct-two");
+        assertEquals(1L, userMapper.selectById(2L).getGoldBalance());
+        assertServiceException(() -> goldService.grantToAgent(2L, -2, "deduct-too-many"),
+                USER_GOLD_INSUFFICIENT);
     }
 
     @Test
@@ -82,6 +150,17 @@ class AdminGoldServiceImplTest extends BaseDbUnitTest {
                 .getExpression("system_users", null).toString();
         assertTrue(condition.contains("id = 2"));
         assertTrue(condition.contains("parent_agent_user_id = 2"));
+    }
+
+    @Test
+    void agentCanManageOnlyDirectOwner() {
+        insertUser(4L, "OWNER", 1L, LocalDateTime.now());
+        login(2L);
+        assertDoesNotThrow(() -> goldService.assertManageableUser(3L));
+        assertServiceException(() -> goldService.assertManageableUser(2L), USER_GOLD_ACCESS_DENIED);
+        assertServiceException(() -> goldService.assertManageableUser(4L), USER_GOLD_ACCESS_DENIED);
+        login(1L);
+        assertDoesNotThrow(() -> goldService.assertManageableUser(2L));
     }
 
     private void insertUser(Long id, String accountType, Long parentId, LocalDateTime expiry) {

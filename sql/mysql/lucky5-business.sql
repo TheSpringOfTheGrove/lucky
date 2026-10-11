@@ -828,6 +828,7 @@ INSERT INTO `system_menu` (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`p
 (7130,'吃码额度设定','lottery:chima-config:manage',2,140,0,'/lucky5/chima-config','fa:cog','lottery/chimaConfig/index','LotteryChimaConfig',0,b'1',b'1',b'1','1','1',b'0'),
 (7140,'吃码盈亏','lottery:chima-record:manage',2,150,0,'/lucky5/chima-records','fa:balance-scale','lottery/chimaRecord/index','LotteryChimaRecord',0,b'1',b'1',b'1','1','1',b'0'),
 (7150,'消息记录','lottery:message:manage',2,160,0,'/lucky5/messages','fa:wrench','lottery/messages/index','LotteryMessages',0,b'1',b'1',b'1','1','1',b'0'),
+(7180,'代理统计','system:agent-statistics:query',2,880,0,'/system/agent-statistics','fa:bar-chart','system/agentStatistics/index','SystemAgentStatistics',0,b'1',b'1',b'1','1','1',b'0'),
 (7190,'快捷指令','lottery:quick-command:manage',2,890,0,'/lucky5/quick-command','fa:bolt','lottery/quickCommand/index','LotteryQuickCommand',0,b'1',b'1',b'1','1','1',b'0')
 ON DUPLICATE KEY UPDATE `name`=VALUES(`name`),`permission`=VALUES(`permission`),`type`=VALUES(`type`),`sort`=VALUES(`sort`),
 `parent_id`=VALUES(`parent_id`),`path`=VALUES(`path`),`icon`=VALUES(`icon`),`component`=VALUES(`component`),
@@ -840,7 +841,7 @@ DROP TEMPORARY TABLE IF EXISTS `lucky5_retained_menu`;
 CREATE TEMPORARY TABLE `lucky5_retained_menu` (`id` bigint NOT NULL PRIMARY KEY);
 INSERT IGNORE INTO `lucky5_retained_menu`
 WITH RECURSIVE `retained` (`id`) AS (
-  SELECT `id` FROM `system_menu` WHERE `id` IN (1,2,7000,7010,7020,7025,7030,7040,7050,7060,7070,7080,7090,7100,7110,7120,7130,7140,7150,7190)
+  SELECT `id` FROM `system_menu` WHERE `id` IN (1,2,7000,7010,7020,7025,7030,7040,7050,7060,7070,7080,7090,7100,7110,7120,7130,7140,7150,7180,7190)
   UNION DISTINCT
   SELECT m.`id` FROM `system_menu` m JOIN `retained` p ON m.`parent_id`=p.`id`
 )
@@ -875,7 +876,13 @@ WHERE `tenant_id`=1 AND `code`='crm_admin' AND `deleted`=b'0';
 INSERT INTO `system_role_menu` (`role_id`,`menu_id`,`creator`,`updater`,`tenant_id`)
 SELECT r.id,m.id,'1','1',r.tenant_id FROM system_role r JOIN system_menu m ON m.id BETWEEN 7000 AND 7190
 WHERE r.deleted=b'0' AND r.code IN ('super_admin','tenant_admin','crm_admin')
+AND (m.id<>7180 OR r.code='super_admin')
 AND NOT EXISTS (SELECT 1 FROM system_role_menu rm WHERE rm.role_id=r.id AND rm.menu_id=m.id AND rm.deleted=b'0');
+
+INSERT INTO `system_role_menu` (`role_id`,`menu_id`,`creator`,`updater`,`tenant_id`)
+SELECT r.id,7180,'1','1',r.tenant_id FROM `system_role` r JOIN `system_menu` m ON m.id=7180
+WHERE r.code='lottery_agent' AND r.deleted=b'0' AND m.deleted=b'0'
+AND NOT EXISTS (SELECT 1 FROM `system_role_menu` rm WHERE rm.role_id=r.id AND rm.menu_id=7180 AND rm.deleted=b'0');
 
 SET SESSION group_concat_max_len=1000000;
 UPDATE `system_tenant_package` SET `menu_ids`=(SELECT CONCAT('[',GROUP_CONCAT(id ORDER BY id),']') FROM system_menu WHERE deleted=b'0')

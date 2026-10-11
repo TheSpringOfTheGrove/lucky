@@ -36,14 +36,14 @@ public class LotteryController {
 
     @PostMapping("/owners/{userId}/initialize")
     @Operation(summary = "手动初始化老板账号基础配置")
-    @PreAuthorize("@ss.hasRole('super_admin')")
+    @PreAuthorize("@ss.hasAnyRoles('super_admin','lottery_agent')")
     public CommonResult<Map<String, Object>> initializeOwner(@PathVariable Long userId) {
         return success(lotteryService.initializeOwner(userId));
     }
 
     @PostMapping("/owners/{userId}/auto-proxy-data")
     @Operation(summary = "补齐老板账号的自动托与预设订单数据")
-    @PreAuthorize("@ss.hasRole('super_admin')")
+    @PreAuthorize("@ss.hasAnyRoles('super_admin','lottery_agent')")
     public CommonResult<Map<String, Object>> initializeAutoProxyData(@PathVariable Long userId) {
         return success(lotteryService.initializeAutoProxyData(userId));
     }

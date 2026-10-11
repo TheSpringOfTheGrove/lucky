@@ -1,12 +1,6 @@
 <template>
   <el-row :gutter="20">
-    <!-- 左侧部门树 -->
-    <el-col :span="4" :xs="24">
-      <ContentWrap class="h-1/1">
-        <DeptTreeSelect @node-click="handleDeptNodeClick" />
-      </ContentWrap>
-    </el-col>
-    <el-col :span="20" :xs="24">
+    <el-col :span="24">
       <!-- 搜索 -->
       <ContentWrap>
         <el-form
@@ -33,6 +27,21 @@
               @keyup.enter="handleQuery"
               class="!w-240px"
             />
+          </el-form-item>
+          <el-form-item v-if="isAdminAccount" label="角色" prop="roleId">
+            <el-select
+              v-model="queryParams.roleId"
+              placeholder="请选择角色"
+              clearable
+              class="!w-240px"
+            >
+              <el-option
+                v-for="role in roleList"
+                :key="role.id"
+                :label="role.name"
+                :value="role.id"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item label="状态" prop="status">
             <el-select
@@ -99,6 +108,9 @@
           </el-form-item>
         </el-form>
       </ContentWrap>
+      <div v-if="isAgentAccount" class="mb-15px pl-10px text-14px">
+        当前可用金币：<strong>{{ agentAvailableGold ?? '加载中' }}</strong>
+      </div>
       <ContentWrap>
         <el-table v-loading="loading" :data="list" @selection-change="handleRowCheckboxChange">
           <el-table-column type="selection" width="55" />
@@ -162,6 +174,7 @@
                   <Icon icon="ep:edit" />修改
                 </el-button>
                 <el-dropdown
+                  trigger="click"
                   @command="(command) => handleCommand(command, scope.row)"
                   v-hasPermi="[
                     'system:user:delete',
@@ -178,12 +191,13 @@
                         v-if="
                           (scope.row.accountType === 'AGENT' && checkRole(['super_admin'])) ||
                           (scope.row.accountType === 'OWNER' &&
-                            scope.row.parentAgentUserId === userStore.getUser.id &&
-                            checkRole(['super_admin', 'lottery_agent']))
+                            (checkRole(['super_admin']) ||
+                              (scope.row.parentAgentUserId === userStore.getUser.id &&
+                                checkRole(['lottery_agent']))))
                         "
                       >
                         <Icon icon="ep:coin" />{{
-                          scope.row.accountType === 'AGENT' ? '充值金币' : '分配金币'
+                          scope.row.accountType === 'AGENT' || isAdminAccount ? '充值金币' : '分配金币'
                         }}
                       </el-dropdown-item>
                       <el-dropdown-item
@@ -200,19 +214,19 @@
                       </el-dropdown-item>
                       <el-dropdown-item
                         command="handleRole"
-                        v-if="checkPermi(['system:permission:assign-user-role'])"
+                        v-if="isAdminAccount && checkPermi(['system:permission:assign-user-role'])"
                       >
                         <Icon icon="ep:circle-check" />分配角色
                       </el-dropdown-item>
                       <el-dropdown-item
                         command="handleLotteryInitialize"
-                        v-if="checkRole(['super_admin']) && scope.row.id !== userStore.getUser.id"
+                        v-if="canInitializeUser(scope.row)"
                       >
                         <Icon icon="ep:setting" />初始化老板配置
                       </el-dropdown-item>
                       <el-dropdown-item
                         command="handleAutoProxyData"
-                        v-if="checkRole(['super_admin']) && scope.row.id !== userStore.getUser.id"
+                        v-if="canInitializeUser(scope.row)"
                         :disabled="autoProxyInitializing"
                       >
                         <Icon icon="ep:user-filled" />自动托数据
@@ -236,6 +250,26 @@
 
   <!-- 添加或修改用户对话框 -->
   <UserForm ref="formRef" @success="handleUserSaved" />
+  <el-dialog v-model="goldDialogVisible" :title="goldTarget?.accountType === 'AGENT' ? '代理金币' : isAdminAccount ? '老板金币' : '分配金币'" width="420px" class="max-w-[calc(100vw-24px)]">
+    <div class="mb-12px">账号：{{ goldTarget?.username }}</div>
+    <div class="mb-12px">当前金币：{{ goldTarget?.goldBalance ?? 0 }}</div>
+    <el-form label-width="72px">
+      <el-form-item label="操作">
+        <el-radio-group v-model="goldDirection">
+          <el-radio value="increase">增加</el-radio>
+          <el-radio value="decrease">减少</el-radio>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item label="金币数量">
+        <el-input v-model.trim="goldAmount" inputmode="numeric" placeholder="请输入正整数" />
+      </el-form-item>
+    </el-form>
+    <div class="text-12px text-#909399">1 金币 = 24 小时；减少老板金币会缩短期限。代理收回自己分配的金币时返还代理余额；管理员直接充值不改变代理余额。</div>
+    <template #footer>
+      <el-button @click="goldDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="goldSubmitting" @click="submitGold">确认</el-button>
+    </template>
+  </el-dialog>
   <!-- 用户导入对话框 -->
   <UserImportForm ref="importFormRef" @success="getList" />
   <!-- 分配角色 -->
@@ -248,29 +282,44 @@ import { dateFormatter } from '@/utils/formatTime'
 import download from '@/utils/download'
 import { CommonStatusEnum } from '@/utils/constants'
 import * as UserApi from '@/api/system/user'
+import * as RoleApi from '@/api/system/role'
+import * as AgentStatisticsApi from '@/api/system/agentStatistics'
 import { initializeLotteryAutoProxyDataApi, initializeLotteryOwnerApi } from '@/api/lottery'
 import { useUserStore } from '@/store/modules/user'
 import UserForm from './UserForm.vue'
 import UserImportForm from './UserImportForm.vue'
 import UserAssignRoleForm from './UserAssignRoleForm.vue'
-import DeptTreeSelect from '@/views/system/dept/components/DeptTreeSelect.vue'
 
 defineOptions({ name: 'SystemUser' })
 
 const message = useMessage() // 消息弹窗
 const { t } = useI18n() // 国际化
 const userStore = useUserStore()
+const isAdminAccount = computed(() => userStore.getRoles.includes('super_admin'))
+const isAgentAccount = computed(() => userStore.getRoles.includes('lottery_agent') && !isAdminAccount.value)
+const canInitializeUser = (row: UserApi.UserVO) =>
+  (isAdminAccount.value && row.id !== userStore.getUser.id) ||
+  (isAgentAccount.value &&
+    row.accountType === 'OWNER' &&
+    row.parentAgentUserId === userStore.getUser.id)
+const agentAvailableGold = ref<number | null>(null)
+const refreshAgentGold = async () => {
+  if (isAgentAccount.value) {
+    agentAvailableGold.value = (await AgentStatisticsApi.getSummary()).availableGold
+  }
+}
 
 const loading = ref(true) // 列表的加载中
 const total = ref(0) // 列表的总页数
 const list = ref([]) // 列表的数
+const roleList = ref<RoleApi.RoleVO[]>([])
 const queryParams = reactive({
   pageNo: 1,
   pageSize: 10,
   username: undefined,
   mobile: undefined,
+  roleId: undefined as number | undefined,
   status: undefined,
-  deptId: undefined as number | undefined,
   createTime: []
 })
 const queryFormRef = ref() // 搜索的表单
@@ -282,6 +331,7 @@ const getList = async () => {
     const data = await UserApi.getUserPage(queryParams)
     list.value = data.list
     total.value = data.total
+    await refreshAgentGold()
   } finally {
     loading.value = false
   }
@@ -297,12 +347,6 @@ const handleQuery = () => {
 const resetQuery = () => {
   queryFormRef.value?.resetFields()
   handleQuery()
-}
-
-/** 处理部门被点击 */
-const handleDeptNodeClick = async (deptId: number | undefined) => {
-  queryParams.deptId = deptId
-  await getList()
 }
 
 /** 添加/修改操作 */
@@ -376,26 +420,46 @@ const handleCommand = (command: string, row: UserApi.UserVO) => {
   }
 }
 
-const handleGold = async (row: UserApi.UserVO) => {
+const goldDialogVisible = ref(false)
+const goldTarget = ref<UserApi.UserVO | null>(null)
+const goldDirection = ref<'increase' | 'decrease'>('increase')
+const goldAmount = ref('')
+const goldSubmitting = ref(false)
+const goldPendingOperation = ref<{ amount: number; key: string } | null>(null)
+const handleGold = (row: UserApi.UserVO) => {
+  goldTarget.value = row
+  goldDirection.value = 'increase'
+  goldAmount.value = ''
+  goldPendingOperation.value = null
+  goldDialogVisible.value = true
+}
+
+const submitGold = async () => {
+  const row = goldTarget.value
+  if (!row || goldSubmitting.value) return
+  if (!/^[1-9]\d*$/.test(goldAmount.value) || !Number.isSafeInteger(Number(goldAmount.value)) || Number(goldAmount.value) > 36500) {
+    message.error('请输入 1 至 36500 的整数金币数')
+    return
+  }
+  const amount = Number(goldAmount.value) * (goldDirection.value === 'increase' ? 1 : -1)
+  if (!goldPendingOperation.value || goldPendingOperation.value.amount !== amount) {
+    goldPendingOperation.value = { amount, key: crypto.randomUUID() }
+  }
+  goldSubmitting.value = true
   try {
-    const { value } = await message.prompt(
-      `请输入为“${row.username}”${row.accountType === 'AGENT' ? '充值' : '分配'}的金币数（1 金币 = 24 小时）`,
-      '金币'
-    )
-    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) {
-      message.error('请输入正整数金币数')
-      return
-    }
-    const amount = Number(value)
-    const operationKey = crypto.randomUUID()
     if (row.accountType === 'AGENT') {
-      await UserApi.grantAgentGold(row.id, amount, operationKey)
+      await UserApi.grantAgentGold(row.id, amount, goldPendingOperation.value.key)
     } else {
-      await UserApi.allocateOwnerGold(row.id, amount, operationKey)
+      await UserApi.allocateOwnerGold(row.id, amount, goldPendingOperation.value.key)
     }
     message.success('金币操作成功')
+    goldDialogVisible.value = false
     await getList()
-  } catch {}
+  } catch {
+    // 请求失败或结果不确定时保留操作号，重试由服务端幂等处理。
+  } finally {
+    goldSubmitting.value = false
+  }
 }
 
 /** 删除按钮操作 */
@@ -489,5 +553,29 @@ const handleAutoProxyData = async (row: UserApi.UserVO) => {
 /** 初始化 */
 onMounted(() => {
   getList()
+  if (isAdminAccount.value) {
+    RoleApi.getSimpleRoleList().then((roles) => {
+      const ownerRole =
+        roles.find((role) => role.code === 'crm_admin') ??
+        roles.find((role) => role.code === 'tenant_admin')
+      roleList.value = roles
+        .filter(
+          (role) =>
+            ['super_admin', 'lottery_agent'].includes(role.code) || role.id === ownerRole?.id
+        )
+        .map((role) => ({
+          ...role,
+          name:
+            role.id === ownerRole?.id
+              ? '老板账号'
+              : role.code === 'lottery_agent'
+                ? '代理账号'
+                : '超级管理员'
+        }))
+    })
+  }
+})
+onActivated(() => {
+  if (isAgentAccount.value && agentAvailableGold.value !== null) void refreshAgentGold()
 })
 </script>

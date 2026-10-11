@@ -32,6 +32,10 @@ const isPublicRoomPath = (path: string) =>
   path.startsWith('/g/') ||
   path.startsWith('/p/')
 
+const agentHomeRedirect = (path: string, roles: string[]) =>
+  (path === '/' || path === '/index') &&
+  roles.includes('lottery_agent') && !roles.includes('super_admin')
+
 // 路由加载前
 router.beforeEach(async (to, from, next) => {
   start()
@@ -70,9 +74,15 @@ router.beforeEach(async (to, from, next) => {
           to.fullPath === redirect
             ? { ...to, replace: true }
             : { ...redirectLocation, replace: true }
-        next(nextData)
+        next(agentHomeRedirect(nextData.path, userStore.getRoles)
+          ? { path: '/system/agent-statistics', replace: true }
+          : nextData)
       } else {
-        next()
+        if (agentHomeRedirect(to.path, userStore.getRoles)) {
+          next({ path: '/system/agent-statistics', replace: true })
+        } else {
+          next()
+        }
       }
     }
   } else {

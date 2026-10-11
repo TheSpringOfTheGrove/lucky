@@ -201,6 +201,29 @@ public class AdminAuthServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
+    public void testLogin_zeroGoldAgent() {
+        authService.setCaptchaEnable(false);
+        AuthLoginReqVO request = new AuthLoginReqVO();
+        request.setUsername("zeroGoldAgent");
+        request.setPassword("correct");
+        AdminUserDO agent = new AdminUserDO().setId(2L).setUsername(request.getUsername())
+                .setPassword("encoded").setStatus(CommonStatusEnum.ENABLE.getStatus())
+                .setAccountType("AGENT").setGoldBalance(0L)
+                .setExpireTime(LocalDateTime.of(2099, 12, 31, 23, 59, 59));
+        when(userService.getUserByUsername(request.getUsername())).thenReturn(agent);
+        when(userService.isPasswordMatch(request.getPassword(), agent.getPassword())).thenReturn(true);
+        OAuth2AccessTokenDO token = randomPojo(OAuth2AccessTokenDO.class, o -> o.setUserId(agent.getId())
+                .setUserType(UserTypeEnum.ADMIN.getValue()));
+        when(oauth2TokenService.createAccessToken(eq(agent.getId()), eq(UserTypeEnum.ADMIN.getValue()),
+                eq("default"), isNull())).thenReturn(token);
+
+        assertPojoEquals(token, authService.login(request));
+        verify(loginLogService).createLoginLog(argThat(log ->
+                log.getUserId().equals(agent.getId()) &&
+                        log.getResult().equals(LoginResultEnum.SUCCESS.getResult())));
+    }
+
+    @Test
     public void testSmsLogin_expired() {
         AdminUserDO user = new AdminUserDO().setId(1L).setUsername("expiretest")
                 .setExpireTime(LocalDateTime.now().minusSeconds(1));
