@@ -38,6 +38,7 @@ import static com.hnz.luck5.framework.common.util.collection.CollectionUtils.con
 import static com.hnz.luck5.framework.common.util.json.JsonUtils.toJsonString;
 import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_GOLD_ROLE_MISMATCH;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_AGENT_OWNER_ROLE_FIXED;
 import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_SUPER_ADMIN_ASSIGN_FORBIDDEN;
 
 /**
@@ -217,6 +218,22 @@ public class PermissionServiceImpl implements PermissionService {
                     .anyMatch(role -> "lottery_agent".equals(role.getCode()));
             if (agentRole != "AGENT".equals(user.getAccountType())) {
                 throw exception(USER_GOLD_ROLE_MISMATCH);
+            }
+            if ("OWNER".equals(user.getAccountType()) && user.getParentAgentUserId() != null) {
+                AdminUserDO parent = userService.getUser(user.getParentAgentUserId());
+                if (parent != null && "AGENT".equals(parent.getAccountType())) {
+                    List<RoleDO> availableRoles = roleService.getRoleList();
+                    RoleDO ownerRole = availableRoles.stream()
+                            .filter(role -> CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()))
+                            .filter(role -> "crm_admin".equals(role.getCode()))
+                            .findFirst().orElseGet(() -> availableRoles.stream()
+                                    .filter(role -> CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()))
+                                    .filter(role -> "tenant_admin".equals(role.getCode()))
+                                    .findFirst().orElse(null));
+                    if (ownerRole == null || !Set.of(ownerRole.getId()).equals(CollUtil.emptyIfNull(roleIds))) {
+                        throw exception(USER_AGENT_OWNER_ROLE_FIXED);
+                    }
+                }
             }
         }
         // 获得角色拥有角色编号

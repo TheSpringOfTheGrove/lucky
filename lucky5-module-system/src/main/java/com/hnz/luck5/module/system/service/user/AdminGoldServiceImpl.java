@@ -67,14 +67,22 @@ public class AdminGoldServiceImpl implements AdminGoldService {
             throw exception(USER_GOLD_ACCESS_DENIED);
         }
         validateAmountAndKey(amount, operationKey);
-        // 所有代理分配都先锁来源、再锁目标，防止并发透支。
-        AdminUserDO agent = admin ? null : lockedUser(operatorId);
+        // admin 代代理操作其直属老板时，金币仍从该代理余额出入。
+        // 先读取不可通过资料修改的归属，再按来源、目标的顺序加锁，避免并发透支和死锁。
+        Long agentId = admin ? findOwnerAgentId(ownerUserId) : operatorId;
+        AdminUserDO agent = agentId == null ? null : lockedUser(agentId);
         AdminUserDO owner = lockedUser(ownerUserId);
         if (!"OWNER".equals(owner.getAccountType()) ||
                 (!admin && !Objects.equals(owner.getParentAgentUserId(), operatorId))) {
             throw exception(USER_GOLD_ACCESS_DENIED);
         }
-        if (alreadyApplied(operationKey, OWNER_ALLOCATION, admin ? null : operatorId, ownerUserId, amount)) {
+        if (admin && (agent != null && (!Objects.equals(owner.getParentAgentUserId(), agentId) ||
+                !"AGENT".equals(agent.getAccountType()) || !isAgent(agentId)) ||
+                agent == null && owner.getParentAgentUserId() != null &&
+                        !isAdmin(owner.getParentAgentUserId()))) {
+            throw exception(USER_GOLD_ACCESS_DENIED);
+        }
+        if (alreadyAppliedOwner(operationKey, admin, operatorId, agentId, ownerUserId, amount)) {
             return;
         }
         long before = agent == null ? 0 : balance(agent);
@@ -84,18 +92,22 @@ public class AdminGoldServiceImpl implements AdminGoldService {
         LocalDateTime oldExpiry = owner.getExpireTime();
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime nextExpiry;
+        boolean refundLegacyAdminAllocation = false;
         if (amount > 0) {
             nextExpiry = (oldExpiry != null && oldExpiry.isAfter(now) ? oldExpiry : now).plusDays(amount);
         } else {
             long deduction = -amount;
             long remainingSeconds = oldExpiry == null ? 0 : Duration.between(now, oldExpiry).getSeconds();
             long remainingGold = remainingSeconds <= 0 ? 0 : (remainingSeconds + 86399) / 86400;
-            if (remainingGold < deduction || (agent != null &&
-                    ledgerMapper.sumOwnerAllocation(TenantContextHolder.getRequiredTenantId(), operatorId,
-                            ownerUserId) < deduction) || (admin &&
-                    !Objects.equals(owner.getParentAgentUserId(), operatorId) &&
-                    ledgerMapper.sumAdminOwnerAllocation(TenantContextHolder.getRequiredTenantId(),
-                            ownerUserId) < deduction)) {
+            long agentAllocated = agent == null ? 0 : ledgerMapper.sumOwnerAllocation(
+                    TenantContextHolder.getRequiredTenantId(), agentId, ownerUserId);
+            long adminAllocated = admin ? ledgerMapper.sumAdminOwnerAllocation(
+                    TenantContextHolder.getRequiredTenantId(), ownerUserId) : 0;
+            refundLegacyAdminAllocation = admin && agent != null && agentAllocated < deduction &&
+                    adminAllocated >= deduction;
+            if (remainingGold < deduction || (agent != null && agentAllocated < deduction &&
+                    !refundLegacyAdminAllocation) || (agent == null && admin &&
+                    !Objects.equals(owner.getParentAgentUserId(), operatorId) && adminAllocated < deduction)) {
                 throw exception(USER_GOLD_OWNER_INSUFFICIENT);
             }
             nextExpiry = oldExpiry.minusDays(deduction);
@@ -103,17 +115,19 @@ public class AdminGoldServiceImpl implements AdminGoldService {
                 nextExpiry = now;
             }
         }
-        if (agent != null) {
-            userMapper.updateById(new AdminUserDO().setId(operatorId)
+        if (agent != null && !refundLegacyAdminAllocation) {
+            userMapper.updateById(new AdminUserDO().setId(agentId)
                     .setGoldBalance(Math.subtractExact(before, amount)));
         }
         userMapper.updateById(new AdminUserDO().setId(ownerUserId).setExpireTime(nextExpiry));
         GoldLedgerDO ledger = new GoldLedgerDO();
         ledger.setTenantId(TenantContextHolder.getRequiredTenantId());
         ledgerMapper.insert(ledger.setOperationKey(operationKey).setOperationType(OWNER_ALLOCATION)
-                .setSourceUserId(agent == null ? null : operatorId).setTargetUserId(ownerUserId)
-                .setAmount(amount).setAgentBalanceBefore(agent == null ? null : before)
-                .setAgentBalanceAfter(agent == null ? null : Math.subtractExact(before, amount))
+                .setSourceUserId(agent == null || refundLegacyAdminAllocation ? null : agentId)
+                .setTargetUserId(ownerUserId)
+                .setAmount(amount).setAgentBalanceBefore(agent == null || refundLegacyAdminAllocation ? null : before)
+                .setAgentBalanceAfter(agent == null || refundLegacyAdminAllocation ? null :
+                        Math.subtractExact(before, amount))
                 .setTargetExpireBefore(oldExpiry).setTargetExpireAfter(nextExpiry)
                 .setOperatorUserId(operatorId));
     }
@@ -165,6 +179,40 @@ public class AdminGoldServiceImpl implements AdminGoldService {
             throw exception(USER_NOT_EXISTS);
         }
         return user;
+    }
+
+    private Long findOwnerAgentId(Long ownerUserId) {
+        AdminUserDO owner = userMapper.selectById(ownerUserId);
+        if (owner == null) {
+            throw exception(USER_NOT_EXISTS);
+        }
+        Long parentId = owner.getParentAgentUserId();
+        if (parentId == null) {
+            return null;
+        }
+        AdminUserDO parent = userMapper.selectById(parentId);
+        if (parent == null) {
+            throw exception(USER_GOLD_ACCESS_DENIED);
+        }
+        return "AGENT".equals(parent.getAccountType()) ? parentId : null;
+    }
+
+    private boolean alreadyAppliedOwner(String key, boolean admin, Long operatorId, Long agentId,
+                                        Long ownerUserId, long amount) {
+        GoldLedgerDO previous = ledgerMapper.selectByOperationKey(key);
+        if (previous == null) {
+            return false;
+        }
+        // 旧版本 admin 为代理老板直充的流水没有来源；重试旧操作不能再次延长期限。
+        if (!OWNER_ALLOCATION.equals(previous.getOperationType()) ||
+                !Objects.equals(ownerUserId, previous.getTargetUserId()) ||
+                !Objects.equals(amount, previous.getAmount()) ||
+                !Objects.equals(operatorId, previous.getOperatorUserId()) ||
+                !(Objects.equals(agentId, previous.getSourceUserId()) ||
+                        admin && previous.getSourceUserId() == null)) {
+            throw exception(USER_GOLD_OPERATION_CONFLICT);
+        }
+        return true;
     }
 
     private boolean alreadyApplied(String key, String type, Long sourceId, Long targetId, long amount) {

@@ -38,4 +38,10 @@ public class UserPageReqVO extends PageParam {
     @Schema(description = "角色编号", example = "1024")
     private Long roleId;
 
+    @Schema(description = "用户管理视图：MANAGEMENT 为代理和管理员，DIRECT_OWNERS 为指定账号的直属老板")
+    private String view;
+
+    @Schema(description = "DIRECT_OWNERS 视图所属的代理或管理员用户编号")
+    private Long parentUserId;
+
 }

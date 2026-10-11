@@ -32,6 +32,7 @@ import static com.hnz.luck5.framework.common.util.collection.SetUtils.asSet;
 import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertServiceException;
 import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertPojoEquals;
 import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_SUPER_ADMIN_ASSIGN_FORBIDDEN;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_AGENT_OWNER_ROLE_FIXED;
 import static com.hnz.luck5.framework.test.core.util.RandomUtils.randomLongId;
 import static com.hnz.luck5.framework.test.core.util.RandomUtils.randomPojo;
 import static java.util.Collections.singleton;
@@ -319,6 +320,37 @@ public class PermissionServiceTest extends BaseDbUnitTest {
 
         assertThrows(RuntimeException.class, () -> permissionService.assignUserRole(userId, Set.of()));
         assertTrue(userRoleMapper.selectListByUserId(userId).isEmpty());
+    }
+
+    @Test
+    public void testAssignUserRole_agentOwnerCannotReceiveOtherRole() {
+        Long userId = 229L;
+        when(userService.getUser(userId)).thenReturn(new AdminUserDO().setAccountType("OWNER")
+                .setParentAgentUserId(227L));
+        when(userService.getUser(227L)).thenReturn(new AdminUserDO().setAccountType("AGENT"));
+        when(roleService.getRoleList(Set.of(300L))).thenReturn(List.of(new RoleDO().setId(300L)
+                .setCode("ordinary")));
+        when(roleService.getRoleList()).thenReturn(List.of(new RoleDO().setId(400L)
+                .setCode("crm_admin").setStatus(CommonStatusEnum.ENABLE.getStatus())));
+
+        assertServiceException(() -> permissionService.assignUserRole(userId, Set.of(300L)),
+                USER_AGENT_OWNER_ROLE_FIXED);
+        assertTrue(userRoleMapper.selectListByUserId(userId).isEmpty());
+    }
+
+    @Test
+    public void testAssignUserRole_agentOwnerCanReceiveCanonicalOwnerRole() {
+        Long userId = 229L;
+        RoleDO ownerRole = new RoleDO().setId(400L).setCode("crm_admin")
+                .setStatus(CommonStatusEnum.ENABLE.getStatus());
+        when(userService.getUser(userId)).thenReturn(new AdminUserDO().setAccountType("OWNER")
+                .setParentAgentUserId(227L));
+        when(userService.getUser(227L)).thenReturn(new AdminUserDO().setAccountType("AGENT"));
+        when(roleService.getRoleList(Set.of(400L))).thenReturn(List.of(ownerRole));
+        when(roleService.getRoleList()).thenReturn(List.of(ownerRole));
+
+        permissionService.assignUserRole(userId, Set.of(400L));
+        assertEquals(Set.of(400L), permissionService.getUserRoleIdListByUserId(userId));
     }
 
     @Test

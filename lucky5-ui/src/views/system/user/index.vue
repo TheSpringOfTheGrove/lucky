@@ -100,7 +100,7 @@
               type="danger"
               plain
               :disabled="checkedIds.length === 0"
-              @click="handleDeleteBatch"
+              @click="() => handleDeleteBatch()"
               v-hasPermi="['system:user:delete']"
             >
               <Icon icon="ep:delete" />批量删除
@@ -112,132 +112,22 @@
         当前可用金币：<strong>{{ agentAvailableGold ?? '加载中' }}</strong>
       </div>
       <ContentWrap>
-        <el-table v-loading="loading" :data="list" @selection-change="handleRowCheckboxChange">
-          <el-table-column type="selection" width="55" />
-          <el-table-column label="用户编号" align="center" key="id" prop="id" />
-          <el-table-column
-            label="登录账号"
-            align="center"
-            prop="username"
-            :show-overflow-tooltip="true"
-          />
-          <el-table-column
-            label="用户昵称"
-            align="center"
-            prop="nickname"
-            :show-overflow-tooltip="true"
-          />
-          <el-table-column label="角色" align="center" min-width="120">
-            <template #default="scope">
-              {{ scope.row.roleNames?.join('、') || '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="金额" align="left" min-width="90">
-            <template #default="scope">
-              {{ scope.row.accountType === 'ADMIN' ? '无限' : (scope.row.goldBalance ?? 0) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" key="status">
-            <template #default="scope">
-              <el-switch
-                v-model="scope.row.status"
-                :active-value="0"
-                :inactive-value="1"
-                @change="handleStatusChange(scope.row)"
-                :disabled="!checkPermi(['system:user:update'])"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column
-            label="到期时间"
-            align="left"
-            prop="expireTime"
-            :formatter="dateFormatter"
-            width="180"
-          />
-          <el-table-column
-            label="创建时间"
-            align="center"
-            prop="createTime"
-            :formatter="dateFormatter"
-            width="180"
-          />
-          <el-table-column label="操作" align="center" width="160">
-            <template #default="scope">
-              <div class="flex items-center justify-center">
-                <el-button
-                  type="primary"
-                  link
-                  @click="openForm('update', scope.row.id)"
-                  v-hasPermi="['system:user:update']"
-                >
-                  <Icon icon="ep:edit" />修改
-                </el-button>
-                <el-dropdown
-                  trigger="click"
-                  @command="(command) => handleCommand(command, scope.row)"
-                  v-hasPermi="[
-                    'system:user:delete',
-                    'system:user:update-password',
-                    'system:permission:assign-user-role',
-                    'system:user:create'
-                  ]"
-                >
-                  <el-button type="primary" link><Icon icon="ep:d-arrow-right" /> 更多</el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item
-                        command="handleGold"
-                        v-if="
-                          (scope.row.accountType === 'AGENT' && checkRole(['super_admin'])) ||
-                          (scope.row.accountType === 'OWNER' &&
-                            (checkRole(['super_admin']) ||
-                              (scope.row.parentAgentUserId === userStore.getUser.id &&
-                                checkRole(['lottery_agent']))))
-                        "
-                      >
-                        <Icon icon="ep:coin" />{{
-                          scope.row.accountType === 'AGENT' || isAdminAccount ? '充值金币' : '分配金币'
-                        }}
-                      </el-dropdown-item>
-                      <el-dropdown-item
-                        command="handleDelete"
-                        v-if="checkPermi(['system:user:delete'])"
-                      >
-                        <Icon icon="ep:delete" />删除
-                      </el-dropdown-item>
-                      <el-dropdown-item
-                        command="handleResetPwd"
-                        v-if="checkPermi(['system:user:update-password'])"
-                      >
-                        <Icon icon="ep:key" />重置密码
-                      </el-dropdown-item>
-                      <el-dropdown-item
-                        command="handleRole"
-                        v-if="isAdminAccount && checkPermi(['system:permission:assign-user-role'])"
-                      >
-                        <Icon icon="ep:circle-check" />分配角色
-                      </el-dropdown-item>
-                      <el-dropdown-item
-                        command="handleLotteryInitialize"
-                        v-if="canInitializeUser(scope.row)"
-                      >
-                        <Icon icon="ep:setting" />初始化老板配置
-                      </el-dropdown-item>
-                      <el-dropdown-item
-                        command="handleAutoProxyData"
-                        v-if="canInitializeUser(scope.row)"
-                        :disabled="autoProxyInitializing"
-                      >
-                        <Icon icon="ep:user-filled" />自动托数据
-                      </el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </div>
-            </template>
-          </el-table-column>
-        </el-table>
+        <UserTable
+          :rows="list"
+          :loading="loading"
+          :show-owner-count="isAdminAccount"
+          :show-role="true"
+          :show-dates="!isAdminAccount"
+          :is-admin-account="isAdminAccount"
+          :is-agent-account="isAgentAccount"
+          :current-user-id="userStore.getUser.id"
+          :auto-proxy-initializing="autoProxyInitializing"
+          @selection-change="handleRowCheckboxChange"
+          @status-change="handleStatusChange"
+          @update="(id) => openForm('update', id)"
+          @command="handleCommand"
+          @show-owners="openOwnerDialog"
+        />
         <Pagination
           :total="total"
           v-model:page="queryParams.pageNo"
@@ -264,7 +154,7 @@
         <el-input v-model.trim="goldAmount" inputmode="numeric" placeholder="请输入正整数" />
       </el-form-item>
     </el-form>
-    <div class="text-12px text-#909399">1 金币 = 24 小时；减少老板金币会缩短期限。代理收回自己分配的金币时返还代理余额；管理员直接充值不改变代理余额。</div>
+    <div class="text-12px text-#909399">1 金币 = 24 小时；代理名下老板由代理余额支付，管理员代操作也会校验并扣减代理金币。减少时返还原出资代理；管理员直属老板仍可直接充值。</div>
     <template #footer>
       <el-button @click="goldDialogVisible = false">取消</el-button>
       <el-button type="primary" :loading="goldSubmitting" @click="submitGold">确认</el-button>
@@ -273,12 +163,80 @@
   <!-- 用户导入对话框 -->
   <UserImportForm ref="importFormRef" @success="getList" />
   <!-- 分配角色 -->
-  <UserAssignRoleForm ref="assignRoleFormRef" @success="getList" />
+  <UserAssignRoleForm ref="assignRoleFormRef" @success="refreshLists" />
+  <el-dialog
+    v-model="ownerDialogVisible"
+    :title="`${ownerParent?.username || ''} 的老板账号`"
+    :width="isMobile ? '100%' : '90%'"
+    :fullscreen="isMobile"
+    append-to-body
+  >
+    <el-form ref="ownerQueryFormRef" :model="ownerQuery" :inline="true" class="mb-12px">
+      <el-form-item label="用户账号" prop="username">
+        <el-input v-model="ownerQuery.username" clearable placeholder="请输入用户账号" @keyup.enter="searchOwners" />
+      </el-form-item>
+      <el-form-item label="手机号码" prop="mobile">
+        <el-input v-model="ownerQuery.mobile" clearable placeholder="请输入手机号码" @keyup.enter="searchOwners" />
+      </el-form-item>
+      <el-form-item label="状态" prop="status">
+        <el-select v-model="ownerQuery.status" clearable placeholder="请选择用户状态" class="!w-160px">
+          <el-option v-for="dict in getIntDictOptions(DICT_TYPE.COMMON_STATUS)" :key="dict.value" :label="dict.label" :value="dict.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="创建时间" prop="createTime">
+        <el-date-picker
+          v-model="ownerQuery.createTime"
+          type="datetimerange"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+        />
+      </el-form-item>
+      <el-form-item>
+        <el-button @click="searchOwners"><Icon icon="ep:search" />搜索</el-button>
+        <el-button @click="resetOwnerQuery"><Icon icon="ep:refresh" />重置</el-button>
+        <el-button type="primary" plain @click="openOwnerCreate" v-hasPermi="['system:user:create']">
+          <Icon icon="ep:plus" />新增老板
+        </el-button>
+        <el-button type="success" plain :loading="exportLoading" @click="handleOwnerExport" v-hasPermi="['system:user:export']">
+          <Icon icon="ep:download" />导出
+        </el-button>
+        <el-button
+          type="danger"
+          plain
+          :disabled="checkedOwnerIds.length === 0"
+          @click="() => handleDeleteBatch(checkedOwnerIds)"
+          v-hasPermi="['system:user:delete']"
+        >
+          <Icon icon="ep:delete" />批量删除
+        </el-button>
+      </el-form-item>
+    </el-form>
+    <UserTable
+      :rows="ownerList"
+      :loading="ownerLoading"
+      :show-owner-count="false"
+      :show-role="false"
+      :show-dates="true"
+      :is-admin-account="isAdminAccount"
+      :is-agent-account="isAgentAccount"
+      :current-user-id="userStore.getUser.id"
+      :auto-proxy-initializing="autoProxyInitializing"
+      @selection-change="handleOwnerRowCheckboxChange"
+      @status-change="handleStatusChange"
+      @update="(id) => openForm('update', id)"
+      @command="handleCommand"
+    />
+    <Pagination
+      :total="ownerTotal"
+      v-model:page="ownerQuery.pageNo"
+      v-model:limit="ownerQuery.pageSize"
+      @pagination="getOwnerList"
+    />
+  </el-dialog>
 </template>
 <script lang="ts" setup>
 import { DICT_TYPE, getIntDictOptions } from '@/utils/dict'
-import { checkPermi, checkRole } from '@/utils/permission'
-import { dateFormatter } from '@/utils/formatTime'
 import download from '@/utils/download'
 import { CommonStatusEnum } from '@/utils/constants'
 import * as UserApi from '@/api/system/user'
@@ -289,6 +247,8 @@ import { useUserStore } from '@/store/modules/user'
 import UserForm from './UserForm.vue'
 import UserImportForm from './UserImportForm.vue'
 import UserAssignRoleForm from './UserAssignRoleForm.vue'
+import UserTable from './UserTable.vue'
+import { useMediaQuery } from '@vueuse/core'
 
 defineOptions({ name: 'SystemUser' })
 
@@ -297,11 +257,7 @@ const { t } = useI18n() // 国际化
 const userStore = useUserStore()
 const isAdminAccount = computed(() => userStore.getRoles.includes('super_admin'))
 const isAgentAccount = computed(() => userStore.getRoles.includes('lottery_agent') && !isAdminAccount.value)
-const canInitializeUser = (row: UserApi.UserVO) =>
-  (isAdminAccount.value && row.id !== userStore.getUser.id) ||
-  (isAgentAccount.value &&
-    row.accountType === 'OWNER' &&
-    row.parentAgentUserId === userStore.getUser.id)
+const isMobile = useMediaQuery('(max-width: 768px)')
 const agentAvailableGold = ref<number | null>(null)
 const refreshAgentGold = async () => {
   if (isAgentAccount.value) {
@@ -311,7 +267,7 @@ const refreshAgentGold = async () => {
 
 const loading = ref(true) // 列表的加载中
 const total = ref(0) // 列表的总页数
-const list = ref([]) // 列表的数
+const list = ref<UserApi.UserVO[]>([]) // 列表的数
 const roleList = ref<RoleApi.RoleVO[]>([])
 const queryParams = reactive({
   pageNo: 1,
@@ -323,18 +279,80 @@ const queryParams = reactive({
   createTime: []
 })
 const queryFormRef = ref() // 搜索的表单
+const ownerDialogVisible = ref(false)
+const ownerParent = ref<UserApi.UserVO | null>(null)
+const ownerList = ref<UserApi.UserVO[]>([])
+const ownerLoading = ref(false)
+const ownerTotal = ref(0)
+const ownerQuery = reactive({
+  pageNo: 1,
+  pageSize: 10,
+  username: '',
+  mobile: '',
+  status: undefined as number | undefined,
+  createTime: [] as string[]
+})
+const ownerQueryFormRef = ref()
 
 /** 查询列表 */
 const getList = async () => {
   loading.value = true
   try {
-    const data = await UserApi.getUserPage(queryParams)
+    const data = await UserApi.getUserPage(
+      isAdminAccount.value ? { ...queryParams, view: 'MANAGEMENT' } : queryParams
+    )
     list.value = data.list
     total.value = data.total
     await refreshAgentGold()
   } finally {
     loading.value = false
   }
+}
+
+/** 搜索按钮操作 */
+const getOwnerList = async () => {
+  if (!ownerParent.value) return
+  ownerLoading.value = true
+  try {
+    const data = await UserApi.getUserPage({
+      ...ownerQuery,
+      view: 'DIRECT_OWNERS',
+      parentUserId: ownerParent.value.id
+    })
+    ownerList.value = data.list
+    ownerTotal.value = data.total
+  } finally {
+    ownerLoading.value = false
+  }
+}
+
+const refreshLists = async () => {
+  await getList()
+  if (ownerDialogVisible.value) await getOwnerList()
+}
+
+const openOwnerDialog = (row: UserApi.UserVO) => {
+  ownerParent.value = row
+  Object.assign(ownerQuery, {
+    pageNo: 1,
+    pageSize: 10,
+    username: '',
+    mobile: '',
+    status: undefined,
+    createTime: []
+  })
+  ownerDialogVisible.value = true
+  void getOwnerList()
+}
+
+const searchOwners = () => {
+  ownerQuery.pageNo = 1
+  void getOwnerList()
+}
+
+const resetOwnerQuery = () => {
+  ownerQueryFormRef.value?.resetFields()
+  searchOwners()
 }
 
 /** 搜索按钮操作 */
@@ -352,7 +370,18 @@ const resetQuery = () => {
 /** 添加/修改操作 */
 const formRef = ref()
 const openForm = (type: string, id?: number) => {
-  formRef.value.open(type, id)
+  formRef.value.open(type, id, type === 'create' && isAdminAccount.value
+    ? { accountType: 'AGENT' }
+    : undefined)
+}
+
+const openOwnerCreate = () => {
+  if (!ownerParent.value) return
+  formRef.value.open('create', undefined, {
+    accountType: 'OWNER',
+    parentAgentUserId: ownerParent.value.id,
+    parentName: ownerParent.value.username
+  })
 }
 
 /** 用户导入 */
@@ -370,7 +399,7 @@ const handleStatusChange = async (row: UserApi.UserVO) => {
     // 发起修改状态
     await UserApi.updateUserStatus(row.id, row.status)
     // 刷新列表
-    await getList()
+    await refreshLists()
   } catch {
     // 取消后，进行恢复按钮
     row.status =
@@ -386,7 +415,9 @@ const handleExport = async () => {
     await message.exportConfirm()
     // 发起导出
     exportLoading.value = true
-    const data = await UserApi.exportUser(queryParams)
+    const data = await UserApi.exportUser(
+      isAdminAccount.value ? { ...queryParams, view: 'MANAGEMENT' } : queryParams
+    )
     download.excel(data, '用户数据.xls')
   } catch {
   } finally {
@@ -434,6 +465,23 @@ const handleGold = (row: UserApi.UserVO) => {
   goldDialogVisible.value = true
 }
 
+const handleOwnerExport = async () => {
+  if (!ownerParent.value) return
+  try {
+    await message.exportConfirm()
+    exportLoading.value = true
+    const data = await UserApi.exportUser({
+      ...ownerQuery,
+      view: 'DIRECT_OWNERS',
+      parentUserId: ownerParent.value.id
+    })
+    download.excel(data, `${ownerParent.value.username}-老板账号.xls`)
+  } catch {
+  } finally {
+    exportLoading.value = false
+  }
+}
+
 const submitGold = async () => {
   const row = goldTarget.value
   if (!row || goldSubmitting.value) return
@@ -454,7 +502,7 @@ const submitGold = async () => {
     }
     message.success('金币操作成功')
     goldDialogVisible.value = false
-    await getList()
+    await refreshLists()
   } catch {
     // 请求失败或结果不确定时保留操作号，重试由服务端幂等处理。
   } finally {
@@ -471,26 +519,31 @@ const handleDelete = async (id: number) => {
     await UserApi.deleteUser(id)
     message.success(t('common.delSuccess'))
     // 刷新列表
-    await getList()
+    await refreshLists()
   } catch {}
 }
 
 /** 批量删除按钮操作 */
 const checkedIds = ref<number[]>([])
+const checkedOwnerIds = ref<number[]>([])
 const handleRowCheckboxChange = (rows: UserApi.UserVO[]) => {
   checkedIds.value = rows.map((row) => row.id)
 }
+const handleOwnerRowCheckboxChange = (rows: UserApi.UserVO[]) => {
+  checkedOwnerIds.value = rows.map((row) => row.id)
+}
 
-const handleDeleteBatch = async () => {
+const handleDeleteBatch = async (ids = checkedIds.value) => {
   try {
     // 删除的二次确认
     await message.delConfirm()
     // 发起批量删除
-    await UserApi.deleteUserList(checkedIds.value)
+    await UserApi.deleteUserList(ids)
     checkedIds.value = []
+    checkedOwnerIds.value = []
     message.success(t('common.delSuccess'))
     // 刷新列表
-    await getList()
+    await refreshLists()
   } catch {}
 }
 
@@ -517,7 +570,7 @@ const handleRole = (row: UserApi.UserVO) => {
 
 /** 列表与顶部当前账号期限都重新读取服务端，不能保留旧期限。 */
 const handleUserSaved = async () => {
-  await getList()
+  await refreshLists()
   await userStore.setUserInfoAction()
 }
 
@@ -543,7 +596,7 @@ const handleAutoProxyData = async (row: UserApi.UserVO) => {
     autoProxyInitializing.value = true
     const result = await initializeLotteryAutoProxyDataApi(row.id)
     message.success(`已新增 ${result.botsCreated} 个自动托、${result.presetsCreated} 条预设订单`)
-    await getList()
+    await refreshLists()
   } catch {
   } finally {
     autoProxyInitializing.value = false
@@ -555,22 +608,11 @@ onMounted(() => {
   getList()
   if (isAdminAccount.value) {
     RoleApi.getSimpleRoleList().then((roles) => {
-      const ownerRole =
-        roles.find((role) => role.code === 'crm_admin') ??
-        roles.find((role) => role.code === 'tenant_admin')
       roleList.value = roles
-        .filter(
-          (role) =>
-            ['super_admin', 'lottery_agent'].includes(role.code) || role.id === ownerRole?.id
-        )
+        .filter((role) => ['super_admin', 'lottery_agent'].includes(role.code))
         .map((role) => ({
           ...role,
-          name:
-            role.id === ownerRole?.id
-              ? '老板账号'
-              : role.code === 'lottery_agent'
-                ? '代理账号'
-                : '超级管理员'
+          name: role.code === 'lottery_agent' ? '代理账号' : '超级管理员'
         }))
     })
   }

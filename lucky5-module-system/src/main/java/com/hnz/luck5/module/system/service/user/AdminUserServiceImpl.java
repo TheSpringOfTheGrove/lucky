@@ -23,6 +23,7 @@ import com.hnz.luck5.module.system.controller.admin.user.vo.user.UserPageReqVO;
 import com.hnz.luck5.module.system.controller.admin.user.vo.user.UserSaveReqVO;
 import com.hnz.luck5.module.system.dal.dataobject.dept.DeptDO;
 import com.hnz.luck5.module.system.dal.dataobject.dept.UserPostDO;
+import com.hnz.luck5.module.system.dal.dataobject.user.UserOwnerCountDO;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.dal.mysql.dept.UserPostMapper;
 import com.hnz.luck5.module.system.dal.mysql.user.AdminUserMapper;
@@ -132,8 +133,15 @@ public class AdminUserServiceImpl implements AdminUserService {
                     (!admin && (!agent || !"OWNER".equals(accountType)))) {
                 throw exception(USER_GOLD_ACCESS_DENIED);
             }
+            Long parentUserId = operator.getId();
+            if (createReqVO.getParentAgentUserId() != null) {
+                if (!admin || !"OWNER".equals(accountType)) {
+                    throw exception(USER_GOLD_ACCESS_DENIED);
+                }
+                parentUserId = validateOwnerParent(createReqVO.getParentAgentUserId(), true).getId();
+            }
             user.setAccountType(accountType);
-            user.setParentAgentUserId(operator.getId());
+            user.setParentAgentUserId(parentUserId);
             user.setGoldBalance(0L);
             // 新老板无金币时立即到期；代理余额为零仍可登录等待充值。
             user.setExpireTime("OWNER".equals(accountType) ? LocalDateTime.now() :
@@ -209,6 +217,7 @@ public class AdminUserServiceImpl implements AdminUserService {
             updateObj.setExpireTime(null);
         }
         updateObj.setAccountType(null);
+        updateObj.setParentAgentUserId(null);
         userMapper.updateById(updateObj);
         // 2.2 更新岗位
         updateUserPost(updateReqVO, updateObj);
@@ -369,9 +378,50 @@ public class AdminUserServiceImpl implements AdminUserService {
 
         // 分页查询
         Long operatorId = SecurityFrameworkUtils.getLoginUserId();
+        if (reqVO.getView() != null) {
+            if (operatorId == null || !permissionService.hasAnyRoles(operatorId, "super_admin")) {
+                throw exception(USER_GOLD_ACCESS_DENIED);
+            }
+            if ("MANAGEMENT".equals(reqVO.getView())) {
+                return userMapper.selectManagementPage(reqVO, getDeptCondition(reqVO.getDeptId()), userIds);
+            }
+            if ("DIRECT_OWNERS".equals(reqVO.getView()) && reqVO.getParentUserId() != null) {
+                AdminUserDO parent = validateOwnerParent(reqVO.getParentUserId(), false);
+                return userMapper.selectDirectOwnerPage(reqVO, parent.getId());
+            }
+            throw exception(USER_GOLD_ACCESS_DENIED);
+        }
         Long agentId = operatorId != null && permissionService.hasAnyRoles(operatorId, "lottery_agent") &&
                 !permissionService.hasAnyRoles(operatorId, "super_admin") ? operatorId : null;
         return userMapper.selectPage(reqVO, getDeptCondition(reqVO.getDeptId()), userIds, agentId);
+    }
+
+    @Override
+    public Map<Long, Long> getOwnerCounts(Collection<Long> parentUserIds) {
+        if (CollUtil.isEmpty(parentUserIds)) {
+            return Collections.emptyMap();
+        }
+        Map<Long, Long> counts = new HashMap<>();
+        for (UserOwnerCountDO row : userMapper.selectOwnerCounts(
+                TenantContextHolder.getRequiredTenantId(), parentUserIds)) {
+            counts.put(row.getParentUserId(), row.getOwnerCount());
+        }
+        return counts;
+    }
+
+    private AdminUserDO validateOwnerParent(Long parentUserId, boolean requireEnabled) {
+        AdminUserDO parent = userMapper.selectById(parentUserId);
+        if (parent == null || !Objects.equals(parent.getTenantId(), TenantContextHolder.getRequiredTenantId()) ||
+                (requireEnabled && !CommonStatusEnum.ENABLE.getStatus().equals(parent.getStatus()))) {
+            throw exception(USER_GOLD_ACCESS_DENIED);
+        }
+        boolean superAdmin = permissionService.hasAnyRoles(parentUserId, "super_admin");
+        boolean agent = "AGENT".equals(parent.getAccountType()) &&
+                permissionService.hasAnyRoles(parentUserId, "lottery_agent");
+        if (!superAdmin && !agent) {
+            throw exception(USER_GOLD_ACCESS_DENIED);
+        }
+        return parent;
     }
 
     @Override

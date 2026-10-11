@@ -5,6 +5,7 @@ import com.hnz.luck5.framework.security.core.LoginUser;
 import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import com.hnz.luck5.framework.test.core.ut.BaseDbUnitTest;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
+import com.hnz.luck5.module.system.dal.dataobject.user.GoldLedgerDO;
 import com.hnz.luck5.module.system.dal.mysql.user.AdminUserMapper;
 import com.hnz.luck5.module.system.dal.mysql.user.GoldLedgerMapper;
 import com.hnz.luck5.module.system.framework.datapermission.rule.AgentUserDataPermissionRule;
@@ -41,6 +42,7 @@ class AdminGoldServiceImplTest extends BaseDbUnitTest {
         TenantContextHolder.setTenantId(1L);
         when(permissionService.hasAnyRoles(1L, "super_admin")).thenReturn(true);
         when(permissionService.hasAnyRoles(2L, "lottery_agent")).thenReturn(true);
+        insertUser(1L, "ADMIN", null, LocalDateTime.of(2099, 12, 31, 23, 59, 59));
         insertUser(2L, "AGENT", null, LocalDateTime.of(2099, 12, 31, 23, 59, 59));
         insertUser(3L, "OWNER", 2L, LocalDateTime.now().minusSeconds(1));
     }
@@ -79,32 +81,69 @@ class AdminGoldServiceImplTest extends BaseDbUnitTest {
     }
 
     @Test
-    void adminCanRechargeAgentOwnerWithoutSpendingAgentGold() {
+    void adminCannotRechargeAgentOwnerWithoutAgentGold() {
         login(1L);
+        assertServiceException(() -> goldService.allocateToOwner(3L, 1, "admin-agent-no-gold"),
+                USER_GOLD_INSUFFICIENT);
+        assertNull(ledgerMapper.selectByOperationKey("admin-agent-no-gold"));
+        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+    }
+
+    @Test
+    void adminRechargeAgentOwnerSpendsAndRefundsAgentGold() {
+        login(1L);
+        goldService.grantToAgent(2L, 3, "admin-grant-for-owner");
         goldService.allocateToOwner(3L, 2, "admin-owner-recharge");
         goldService.allocateToOwner(3L, 2, "admin-owner-recharge");
 
-        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+        assertEquals(1L, userMapper.selectById(2L).getGoldBalance());
         assertTrue(userMapper.selectById(3L).getExpireTime().isAfter(LocalDateTime.now().plusHours(47)));
-        assertNull(ledgerMapper.selectByOperationKey("admin-owner-recharge").getSourceUserId());
+        assertEquals(2L, ledgerMapper.selectByOperationKey("admin-owner-recharge").getSourceUserId());
+        assertEquals(1L, ledgerMapper.selectByOperationKey("admin-owner-recharge").getOperatorUserId());
 
         goldService.allocateToOwner(3L, -1, "admin-owner-reduce");
-        assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+        goldService.allocateToOwner(3L, -1, "admin-owner-reduce");
+        assertEquals(2L, userMapper.selectById(2L).getGoldBalance());
         assertServiceException(() -> goldService.allocateToOwner(3L, -2, "admin-owner-overreduce"),
                 USER_GOLD_OWNER_INSUFFICIENT);
     }
 
     @Test
-    void adminCannotTakeBackDaysFundedOnlyByAgent() {
+    void adminRefundsDaysFundedByAgent() {
         login(1L);
         goldService.grantToAgent(2L, 1, "grant-agent-only");
         login(2L);
         goldService.allocateToOwner(3L, 1, "agent-owner-only");
 
         login(1L);
-        assertServiceException(() -> goldService.allocateToOwner(3L, -1, "admin-take-agent-days"),
-                USER_GOLD_OWNER_INSUFFICIENT);
+        goldService.allocateToOwner(3L, -1, "admin-take-agent-days");
+        assertEquals(1L, userMapper.selectById(2L).getGoldBalance());
+        assertEquals(2L, ledgerMapper.selectByOperationKey("admin-take-agent-days").getSourceUserId());
+    }
+
+    @Test
+    void adminCanFundOwnOwnerWithoutAgentGold() {
+        insertUser(4L, "OWNER", 1L, LocalDateTime.now().minusSeconds(1));
+        login(1L);
+        goldService.allocateToOwner(4L, 2, "admin-direct-owner");
+        assertNull(ledgerMapper.selectByOperationKey("admin-direct-owner").getSourceUserId());
+        assertTrue(userMapper.selectById(4L).getExpireTime().isAfter(LocalDateTime.now().plusHours(47)));
+    }
+
+    @Test
+    void adminCanReduceLegacyDirectGrantWithoutCreditingAgent() {
+        userMapper.updateById(new AdminUserDO().setId(3L).setExpireTime(LocalDateTime.now().plusDays(2)));
+        GoldLedgerDO oldGrant = new GoldLedgerDO().setOperationKey("old-admin-recharge")
+                .setOperationType("OWNER_ALLOCATION").setTargetUserId(3L).setAmount(2L)
+                .setOperatorUserId(1L);
+        oldGrant.setTenantId(1L);
+        ledgerMapper.insert(oldGrant);
+
+        login(1L);
+        goldService.allocateToOwner(3L, 2, "old-admin-recharge");
+        goldService.allocateToOwner(3L, -1, "old-admin-reduce");
         assertEquals(0L, userMapper.selectById(2L).getGoldBalance());
+        assertNull(ledgerMapper.selectByOperationKey("old-admin-reduce").getSourceUserId());
     }
 
     @Test

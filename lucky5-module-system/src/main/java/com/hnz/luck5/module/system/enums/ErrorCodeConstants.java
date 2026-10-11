@@ -55,6 +55,7 @@ public interface ErrorCodeConstants {
     ErrorCode USER_GOLD_ROLE_MISMATCH = new ErrorCode(1_002_003_017, "代理和老板身份不能通过分配角色切换，请新建对应类型的账号");
     ErrorCode USER_GOLD_OWNER_INSUFFICIENT = new ErrorCode(1_002_003_018, "老板剩余可用金币或可退回的代理金币不足");
     ErrorCode USER_SUPER_ADMIN_ASSIGN_FORBIDDEN = new ErrorCode(1_002_003_019, "不允许新增超级管理员账号或为其他用户分配超级管理员角色");
+    ErrorCode USER_AGENT_OWNER_ROLE_FIXED = new ErrorCode(1_002_003_020, "代理名下的账号只能使用老板角色");
 
     // ========== 部门模块 1-002-004-000 ==========
     ErrorCode DEPT_NAME_DUPLICATE = new ErrorCode(1_002_004_000, "已经存在该名字的部门");

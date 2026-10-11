@@ -18,9 +18,20 @@ export interface UserVO {
   accountType?: 'ADMIN' | 'AGENT' | 'OWNER'
   parentAgentUserId?: number
   goldBalance?: number | null
+  ownerCount?: number
   remark: string
   loginDate: Date
   createTime: Date
+}
+
+export interface UserPageQuery extends PageParam {
+  username?: string
+  mobile?: string
+  roleId?: number
+  status?: number
+  createTime?: string[]
+  view?: string
+  parentUserId?: number
 }
 
 // 获取用户精简信息列表
@@ -42,7 +53,7 @@ export const getSimpleUserListByNickname = (nickname: string) => {
 }
 
 // 查询用户管理列表
-export const getUserPage = (params: PageParam) => {
+export const getUserPage = (params: UserPageQuery) => {
   return request.get({ url: '/system/user/page', params })
 }
 

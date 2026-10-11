@@ -126,6 +126,9 @@ public interface AdminUserService {
      */
     PageResult<AdminUserDO> getUserPage(UserPageReqVO reqVO);
 
+    /** 当前页代理和管理员名下的直属老板数量。 */
+    Map<Long, Long> getOwnerCounts(Collection<Long> parentUserIds);
+
     /**
      * 通过用户 ID 查询用户
      *

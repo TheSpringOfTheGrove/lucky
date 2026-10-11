@@ -78,6 +78,9 @@ public class UserRespVO{
     @Schema(description = "剩余金币；超级管理员返回 null，前端显示无限")
     private Long goldBalance;
 
+    @Schema(description = "直属老板账号数量，仅管理员主列表返回")
+    private Long ownerCount;
+
     @Schema(description = "最后登录 IP", requiredMode = Schema.RequiredMode.REQUIRED, example = "192.168.1.1")
     @ExcelProperty("最后登录IP")
     private String loginIp;

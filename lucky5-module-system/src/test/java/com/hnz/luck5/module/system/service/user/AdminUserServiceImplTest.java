@@ -24,6 +24,9 @@ import com.hnz.luck5.module.system.dal.dataobject.dept.UserPostDO;
 import com.hnz.luck5.module.system.dal.dataobject.tenant.TenantDO;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import com.hnz.luck5.module.system.dal.dataobject.permission.RoleDO;
+import com.hnz.luck5.module.system.dal.dataobject.permission.UserRoleDO;
+import com.hnz.luck5.module.system.dal.mysql.permission.RoleMapper;
+import com.hnz.luck5.module.system.dal.mysql.permission.UserRoleMapper;
 import com.hnz.luck5.module.system.dal.mysql.dept.UserPostMapper;
 import com.hnz.luck5.module.system.dal.mysql.user.AdminUserMapper;
 import com.hnz.luck5.module.system.enums.common.SexEnum;
@@ -78,6 +81,10 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
     private AdminUserMapper userMapper;
     @Resource
     private UserPostMapper userPostMapper;
+    @Resource
+    private RoleMapper roleMapper;
+    @Resource
+    private UserRoleMapper userRoleMapper;
 
     @MockitoBean
     private DeptService deptService;
@@ -135,6 +142,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         UserSaveReqVO agentReq = randomPojo(UserSaveReqVO.class, o -> {
             o.setId(null);
             o.setAccountType("AGENT");
+            o.setParentAgentUserId(null);
             o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
             o.setDeptId(null);
             o.setPostIds(null);
@@ -152,6 +160,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         UserSaveReqVO ownerReq = randomPojo(UserSaveReqVO.class, o -> {
             o.setId(null);
             o.setAccountType("OWNER");
+            o.setParentAgentUserId(null);
             o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
             o.setDeptId(null);
             o.setPostIds(null);
@@ -218,7 +227,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         Long userId = userService.createUser(reqVO);
         // 断言
         AdminUserDO user = userMapper.selectById(userId);
-        assertPojoEquals(reqVO, user, "password", "id", "accountType");
+        assertPojoEquals(reqVO, user, "password", "id", "accountType", "parentAgentUserId");
         assertNull(user.getAccountType());
         assertEquals("lucky5yuanma", user.getPassword());
         assertEquals(CommonStatusEnum.ENABLE.getStatus(), user.getStatus());
@@ -277,7 +286,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         userService.updateUser(reqVO);
         // 断言
         AdminUserDO user = userMapper.selectById(reqVO.getId());
-        assertPojoEquals(reqVO, user, "password");
+        assertPojoEquals(reqVO, user, "password", "parentAgentUserId");
         // 断言关联岗位
         List<UserPostDO> userPosts = userPostMapper.selectListByUserId(user.getId());
         assertEquals(2L, userPosts.get(0).getPostId());
@@ -481,6 +490,87 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         PageResult<AdminUserDO> pageResult = userService.getUserPage(reqVO);
         assertEquals(1, pageResult.getTotal());
         assertEquals(matchingUser.getId(), pageResult.getList().get(0).getId());
+    }
+
+    @Test
+    public void testManagementPageAndDirectOwnersUseRoleAndParent() {
+        TenantContextHolder.setTenantId(1L);
+        insertUserForManagementTest(91001L, "ADMIN", null);
+        insertUserForManagementTest(91002L, "AGENT", 91001L);
+        insertUserForManagementTest(91003L, "OWNER", 91002L);
+        insertUserForManagementTest(91004L, "OWNER", 91001L);
+        insertUserForManagementTest(91005L, "OWNER", 91002L);
+        insertRoleForManagementTest(91011L, 91001L, "super_admin");
+        insertRoleForManagementTest(91012L, 91002L, "lottery_agent");
+        loginAs(91001L);
+        when(permissionService.hasAnyRoles(91001L, "super_admin")).thenReturn(true);
+        when(permissionService.hasAnyRoles(91002L, "lottery_agent")).thenReturn(true);
+
+        UserPageReqVO management = new UserPageReqVO();
+        management.setView("MANAGEMENT");
+        PageResult<AdminUserDO> managementPage = userService.getUserPage(management);
+        assertEquals(2, managementPage.getTotal());
+        assertEquals(asSet(91001L, 91002L),
+                CollectionUtils.convertSet(managementPage.getList(), AdminUserDO::getId));
+        assertEquals(2L, userService.getOwnerCounts(asSet(91001L, 91002L)).get(91002L));
+        assertEquals(1L, userService.getOwnerCounts(asSet(91001L, 91002L)).get(91001L));
+
+        UserPageReqVO owners = new UserPageReqVO();
+        owners.setView("DIRECT_OWNERS");
+        owners.setParentUserId(91002L);
+        PageResult<AdminUserDO> ownerPage = userService.getUserPage(owners);
+        assertEquals(2, ownerPage.getTotal());
+        assertEquals(asSet(91003L, 91005L), CollectionUtils.convertSet(ownerPage.getList(), AdminUserDO::getId));
+
+        owners.setParentUserId(91003L);
+        assertServiceException(() -> userService.getUserPage(owners), USER_GOLD_ACCESS_DENIED);
+        loginAs(91002L);
+        assertServiceException(() -> userService.getUserPage(management), USER_GOLD_ACCESS_DENIED);
+    }
+
+    @Test
+    public void testAdminCreatesOwnerForSelectedAgentWithoutAllowingReassignment() {
+        TenantContextHolder.setTenantId(1L);
+        insertUserForManagementTest(92001L, "ADMIN", null);
+        insertUserForManagementTest(92002L, "AGENT", 92001L);
+        loginAs(92001L);
+        when(permissionService.hasAnyRoles(92001L, "super_admin")).thenReturn(true);
+        when(permissionService.hasAnyRoles(92002L, "lottery_agent")).thenReturn(true);
+        when(passwordEncoder.encode(anyString())).thenReturn("hash");
+
+        UserSaveReqVO ownerReq = new UserSaveReqVO().setUsername("selectedowner")
+                .setNickname("selected owner").setPassword("password")
+                .setAccountType("OWNER").setParentAgentUserId(92002L);
+        Long ownerId = userService.createUser(ownerReq);
+        assertEquals(92002L, userMapper.selectById(ownerId).getParentAgentUserId());
+        verify(adminUserProducer).sendUserCreatedMessage(1L, ownerId, "selectedowner");
+
+        UserSaveReqVO update = new UserSaveReqVO().setId(ownerId).setUsername("selectedowner")
+                .setNickname("changed").setParentAgentUserId(92001L);
+        userService.updateUser(update);
+        assertEquals(92002L, userMapper.selectById(ownerId).getParentAgentUserId());
+
+        loginAs(92002L);
+        UserSaveReqVO forged = new UserSaveReqVO().setUsername("forgedowner")
+                .setNickname("forged owner").setPassword("password")
+                .setAccountType("OWNER").setParentAgentUserId(92001L);
+        assertServiceException(() -> userService.createUser(forged), USER_GOLD_ACCESS_DENIED);
+    }
+
+    private void insertUserForManagementTest(Long id, String accountType, Long parentId) {
+        AdminUserDO user = new AdminUserDO().setId(id).setUsername("mgmt" + id)
+                .setNickname("mgmt" + id).setPassword("hash").setStatus(0)
+                .setAccountType(accountType).setParentAgentUserId(parentId);
+        user.setTenantId(1L);
+        userMapper.insert(user);
+    }
+
+    private void insertRoleForManagementTest(Long roleId, Long userId, String code) {
+        RoleDO role = new RoleDO().setId(roleId).setName(code + roleId).setCode(code)
+                .setSort(1).setDataScope(1).setStatus(0).setType(1);
+        role.setTenantId(1L);
+        roleMapper.insert(role);
+        userRoleMapper.insert(new UserRoleDO().setUserId(userId).setRoleId(roleId));
     }
 
     @Test

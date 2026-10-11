@@ -152,6 +152,11 @@ public class UserController {
         for (int index = 0; index < users.size(); index++) {
             users.get(index).setGoldBalance(goldService.displayBalance(pageResult.getList().get(index)));
         }
+        if ("MANAGEMENT".equals(pageReqVO.getView())) {
+            Map<Long, Long> ownerCounts = userService.getOwnerCounts(
+                    convertSet(pageResult.getList(), AdminUserDO::getId));
+            users.forEach(user -> user.setOwnerCount(ownerCounts.getOrDefault(user.getId(), 0L)));
+        }
         return success(new PageResult<>(users, pageResult.getTotal()));
     }
 

@@ -58,9 +58,9 @@
       <el-row>
         <el-col :span="24">
           <el-form-item label="角色" prop="accountType" v-if="formType === 'create'">
-            <el-select v-model="formData.accountType" class="!w-full">
+            <el-select v-model="formData.accountType" class="!w-full" :disabled="forcedOwner">
               <el-option label="老板账号" value="OWNER" />
-              <el-option v-if="isAdminAccount" label="代理账号" value="AGENT" />
+              <el-option v-if="isAdminAccount && !forcedOwner" label="代理账号" value="AGENT" />
             </el-select>
           </el-form-item>
           <el-form-item
@@ -112,6 +112,7 @@ const dialogVisible = ref(false) // 弹窗的是否展示
 const dialogTitle = ref('') // 弹窗的标题
 const formLoading = ref(false) // 表单的加载中：1）修改时的数据加载；2）提交的按钮禁用
 const formType = ref('') // 表单的类型：create - 新增；update - 修改
+const forcedOwner = ref(false)
 const formData = ref({
   nickname: '',
   deptId: '',
@@ -125,7 +126,8 @@ const formData = ref({
   remark: '',
   status: CommonStatusEnum.ENABLE,
   expireTime: new Date('2099-12-31T23:59:59+08:00').getTime(),
-  accountType: 'OWNER'
+  accountType: 'OWNER',
+  parentAgentUserId: undefined as number | undefined
 })
 const formRules = reactive<FormRules>({
   username: [{ required: true, message: '用户账号不能为空', trigger: 'blur' }],
@@ -150,11 +152,22 @@ const formRules = reactive<FormRules>({
 const formRef = ref() // 表单 Ref
 
 /** 打开弹窗 */
-const open = async (type: string, id?: number) => {
+const open = async (
+  type: string,
+  id?: number,
+  options?: { accountType: 'OWNER' | 'AGENT'; parentAgentUserId?: number; parentName?: string }
+) => {
   dialogVisible.value = true
-  dialogTitle.value = t('action.' + type)
+  dialogTitle.value = options?.parentName
+    ? `新增老板账号（归属：${options.parentName}）`
+    : t('action.' + type)
   formType.value = type
   resetForm()
+  if (type === 'create' && options) {
+    formData.value.accountType = options.accountType
+    formData.value.parentAgentUserId = options.parentAgentUserId
+    forcedOwner.value = options.parentAgentUserId !== undefined
+  }
   // 修改时，设置数据
   if (id) {
     formLoading.value = true
@@ -195,6 +208,7 @@ const submitForm = async () => {
 
 /** 重置表单 */
 const resetForm = () => {
+  forcedOwner.value = false
   formData.value = {
     nickname: '',
     deptId: '',
@@ -208,7 +222,8 @@ const resetForm = () => {
     remark: '',
     status: CommonStatusEnum.ENABLE,
     expireTime: new Date('2099-12-31T23:59:59+08:00').getTime(),
-    accountType: 'OWNER'
+    accountType: 'OWNER',
+    parentAgentUserId: undefined
   }
   formRef.value?.resetFields()
 }

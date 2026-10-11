@@ -72,6 +72,9 @@ public class UserSaveReqVO {
     @Schema(description = "Lucky5 账号类型：ADMIN、AGENT 或 OWNER；不传默认为老板")
     private String accountType;
 
+    @Schema(description = "创建老板时的归属用户编号；仅超级管理员可指定同租户代理或自己")
+    private Long parentAgentUserId;
+
     // ========== 仅【创建】时，需要传递的字段 ==========
 
     @Schema(description = "密码", requiredMode = Schema.RequiredMode.REQUIRED, example = "123456")
