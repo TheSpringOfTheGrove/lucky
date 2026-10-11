@@ -167,8 +167,8 @@
   <el-dialog
     v-model="ownerDialogVisible"
     :title="`${ownerParent?.username || ''} 的老板账号`"
-    :width="isMobile ? '100%' : '90%'"
-    :fullscreen="isMobile"
+    width="90%"
+    class="lucky-dialog"
     append-to-body
   >
     <el-form ref="ownerQueryFormRef" :model="ownerQuery" :inline="true" class="mb-12px">
@@ -248,7 +248,6 @@ import UserForm from './UserForm.vue'
 import UserImportForm from './UserImportForm.vue'
 import UserAssignRoleForm from './UserAssignRoleForm.vue'
 import UserTable from './UserTable.vue'
-import { useMediaQuery } from '@vueuse/core'
 
 defineOptions({ name: 'SystemUser' })
 
@@ -257,7 +256,6 @@ const { t } = useI18n() // 国际化
 const userStore = useUserStore()
 const isAdminAccount = computed(() => userStore.getRoles.includes('super_admin'))
 const isAgentAccount = computed(() => userStore.getRoles.includes('lottery_agent') && !isAdminAccount.value)
-const isMobile = useMediaQuery('(max-width: 768px)')
 const agentAvailableGold = ref<number | null>(null)
 const refreshAgentGold = async () => {
   if (isAgentAccount.value) {
