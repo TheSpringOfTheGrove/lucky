@@ -47,6 +47,11 @@ public interface ErrorCodeConstants {
     ErrorCode USER_IMPORT_INIT_PASSWORD = new ErrorCode(1_002_003_009, "初始密码不能为空");
     ErrorCode USER_MOBILE_NOT_EXISTS = new ErrorCode(1_002_003_010, "该手机号尚未注册");
     ErrorCode USER_REGISTER_DISABLED = new ErrorCode(1_002_003_011, "注册功能已关闭");
+    ErrorCode USER_GOLD_ACCESS_DENIED = new ErrorCode(1_002_003_012, "无权操作该账号");
+    ErrorCode USER_GOLD_INSUFFICIENT = new ErrorCode(1_002_003_013, "代理金币不足，无法给老板分配");
+    ErrorCode USER_GOLD_TARGET_INVALID = new ErrorCode(1_002_003_014, "金币操作的目标账号类型不正确");
+    ErrorCode USER_GOLD_AMOUNT_INVALID = new ErrorCode(1_002_003_015, "金币数量必须大于零");
+    ErrorCode USER_GOLD_OPERATION_CONFLICT = new ErrorCode(1_002_003_016, "金币操作号已用于其它操作");
 
     // ========== 部门模块 1-002-004-000 ==========
     ErrorCode DEPT_NAME_DUPLICATE = new ErrorCode(1_002_004_000, "已经存在该名字的部门");

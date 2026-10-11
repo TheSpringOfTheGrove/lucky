@@ -120,6 +120,11 @@
               {{ scope.row.roleNames?.join('、') || '-' }}
             </template>
           </el-table-column>
+          <el-table-column label="金额" align="left" min-width="90">
+            <template #default="scope">
+              {{ scope.row.accountType === 'ADMIN' ? '无限' : (scope.row.goldBalance ?? 0) }}
+            </template>
+          </el-table-column>
           <el-table-column label="状态" key="status">
             <template #default="scope">
               <el-switch
@@ -161,12 +166,26 @@
                   v-hasPermi="[
                     'system:user:delete',
                     'system:user:update-password',
-                    'system:permission:assign-user-role'
+                    'system:permission:assign-user-role',
+                    'system:user:create'
                   ]"
                 >
                   <el-button type="primary" link><Icon icon="ep:d-arrow-right" /> 更多</el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
+                      <el-dropdown-item
+                        command="handleGold"
+                        v-if="
+                          (scope.row.accountType === 'AGENT' && checkRole(['super_admin'])) ||
+                          (scope.row.accountType === 'OWNER' &&
+                            scope.row.parentAgentUserId === userStore.getUser.id &&
+                            checkRole(['super_admin', 'lottery_agent']))
+                        "
+                      >
+                        <Icon icon="ep:coin" />{{
+                          scope.row.accountType === 'AGENT' ? '充值金币' : '分配金币'
+                        }}
+                      </el-dropdown-item>
                       <el-dropdown-item
                         command="handleDelete"
                         v-if="checkPermi(['system:user:delete'])"
@@ -334,6 +353,9 @@ const handleExport = async () => {
 /** 操作分发 */
 const handleCommand = (command: string, row: UserApi.UserVO) => {
   switch (command) {
+    case 'handleGold':
+      handleGold(row)
+      break
     case 'handleDelete':
       handleDelete(row.id)
       break
@@ -352,6 +374,28 @@ const handleCommand = (command: string, row: UserApi.UserVO) => {
     default:
       break
   }
+}
+
+const handleGold = async (row: UserApi.UserVO) => {
+  try {
+    const { value } = await message.prompt(
+      `请输入为“${row.username}”${row.accountType === 'AGENT' ? '充值' : '分配'}的金币数（1 金币 = 24 小时）`,
+      '金币'
+    )
+    if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      message.error('请输入正整数金币数')
+      return
+    }
+    const amount = Number(value)
+    const operationKey = crypto.randomUUID()
+    if (row.accountType === 'AGENT') {
+      await UserApi.grantAgentGold(row.id, amount, operationKey)
+    } else {
+      await UserApi.allocateOwnerGold(row.id, amount, operationKey)
+    }
+    message.success('金币操作成功')
+    await getList()
+  } catch {}
 }
 
 /** 删除按钮操作 */

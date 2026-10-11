@@ -88,6 +88,12 @@ public class AdminUserDO extends TenantBaseDO {
      * 后台账号到期时间；与租户期限、OAuth 令牌有效期独立。
      */
     private LocalDateTime expireTime;
+    /** Lucky5 后台身份：ADMIN、AGENT、OWNER；其它系统用户可为空。 */
+    private String accountType;
+    /** 老板所属代理；直属总代理时为当前租户的超级管理员用户 ID。 */
+    private Long parentAgentUserId;
+    /** 代理尚未分配的金币。老板的剩余金币由到期时间换算，不使用此字段。 */
+    private Long goldBalance;
     /**
      * 最后登录IP
      */

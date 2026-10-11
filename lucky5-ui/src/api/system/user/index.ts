@@ -15,6 +15,9 @@ export interface UserVO {
   loginIp: string
   status: number
   expireTime: number
+  accountType?: 'ADMIN' | 'AGENT' | 'OWNER'
+  parentAgentUserId?: number
+  goldBalance?: number | null
   remark: string
   loginDate: Date
   createTime: Date
@@ -99,4 +102,18 @@ export const updateUserStatus = (id: number, status: number) => {
     status
   }
   return request.put({ url: '/system/user/update-status', data: data })
+}
+
+export const grantAgentGold = (userId: number, amount: number, operationKey: string) => {
+  return request.post({
+    url: '/system/user/gold/grant-agent',
+    data: { userId, amount, operationKey }
+  })
+}
+
+export const allocateOwnerGold = (userId: number, amount: number, operationKey: string) => {
+  return request.post({
+    url: '/system/user/gold/allocate-owner',
+    data: { userId, amount, operationKey }
+  })
 }

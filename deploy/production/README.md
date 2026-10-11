@@ -4,10 +4,10 @@ Run the existing `/opt/lucky5` Compose stack; do not replace `.env`, credentials
 
 1. Test/build locally, commit and push the source.
 2. Tag the verified images `lucky5-server:release-<commit>` and `lucky5-ui:release-<commit>`.
-3. Send an archive containing `images.tar`, the two deployment scripts, the four `20260928-*.sql` patches and `SHA256SUMS` to `/tmp/lucky5-release-<commit>`; verify the archive checksum before extracting it.
+3. Send an archive containing `images.tar`, the two deployment scripts, the four `20260928-*.sql` patches, `20261011-agent-gold-expiration.sql` and `SHA256SUMS` to `/tmp/lucky5-release-<commit>`; verify the archive checksum before extracting it.
 4. Run `sh deploy-images.sh <commit> /tmp/lucky5-release-<commit>`.
 
-The script saves the images actually running, backs up the database privately under `/opt/lucky5/backups`, applies only additive/idempotent patches, checks actual running image IDs and service readiness, and rolls back the applications on failure. It never restores a database automatically or removes Docker volumes.
+The script saves the images actually running and backs up the database privately under `/opt/lucky5/backups` before applying idempotent patches. The `20261011` patch deliberately replaces each legacy boss account's expiry with its first cutover time plus 30 days; rehearse and schedule that migration before production rollout. The script checks running image IDs and service readiness and rolls back the applications on failure. It never restores a database automatically or removes Docker volumes.
 
 ## Optional, destructive runtime-history maintenance
 

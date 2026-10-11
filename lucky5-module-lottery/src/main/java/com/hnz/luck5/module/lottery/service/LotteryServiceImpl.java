@@ -172,7 +172,7 @@ public class LotteryServiceImpl implements LotteryService {
         Long loginUserId = SecurityFrameworkUtils.getLoginUserId();
         if (loginUserId != null && !securityFrameworkService.hasRole("super_admin")) {
             AdminUserDO loginUser = adminUserService.getUser(loginUserId);
-            if (loginUser != null) {
+            if (loginUser != null && !"AGENT".equals(loginUser.getAccountType())) {
                 ownerInitializationService.initializeAutomatically(TenantContextHolder.getRequiredTenantId(),
                         loginUserId, loginUser.getUsername());
             }

@@ -31,6 +31,10 @@ import com.hnz.luck5.module.system.service.dept.DeptService;
 import com.hnz.luck5.module.system.service.dept.PostService;
 import com.hnz.luck5.module.system.service.oauth2.OAuth2TokenService;
 import com.hnz.luck5.module.system.service.permission.PermissionService;
+import com.hnz.luck5.module.system.service.permission.RoleService;
+import com.hnz.luck5.module.system.dal.dataobject.permission.RoleDO;
+import com.hnz.luck5.framework.security.core.LoginUser;
+import com.hnz.luck5.framework.security.core.util.SecurityFrameworkUtils;
 import com.hnz.luck5.module.system.service.tenant.TenantService;
 import com.google.common.annotations.VisibleForTesting;
 import com.mzt.logapi.context.LogRecordContext;
@@ -76,6 +80,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Resource
     private PermissionService permissionService;
     @Resource
+    private RoleService roleService;
+    @Resource
     private PasswordEncoder passwordEncoder;
     @Resource
     @Lazy // 延迟，避免循环依赖报错
@@ -112,6 +118,29 @@ public class AdminUserServiceImpl implements AdminUserService {
         AdminUserDO user = BeanUtils.toBean(createReqVO, AdminUserDO.class);
         user.setStatus(CommonStatusEnum.ENABLE.getStatus()); // 默认开启
         user.setPassword(encodePassword(createReqVO.getPassword())); // 加密密码
+        LoginUser operator = SecurityFrameworkUtils.getLoginUser();
+        boolean managedCreation = operator != null &&
+                Objects.equals(operator.getTenantId(), TenantContextHolder.getTenantId());
+        String accountType = managedCreation ? Objects.toString(createReqVO.getAccountType(), "OWNER") : null;
+        if (managedCreation) {
+            boolean admin = permissionService.hasAnyRoles(operator.getId(), "super_admin");
+            boolean agent = permissionService.hasAnyRoles(operator.getId(), "lottery_agent");
+            if ((!admin && !agent) || (!"OWNER".equals(accountType) && !"AGENT".equals(accountType)) ||
+                    (agent && "AGENT".equals(accountType))) {
+                throw exception(USER_GOLD_ACCESS_DENIED);
+            }
+            user.setAccountType(accountType);
+            user.setParentAgentUserId(operator.getId());
+            user.setGoldBalance(0L);
+            // 新老板无金币时立即到期；代理余额为零仍可登录等待充值。
+            user.setExpireTime("OWNER".equals(accountType) ? LocalDateTime.now() :
+                    LocalDateTime.of(2099, 12, 31, 23, 59, 59));
+        } else {
+            // 非当前租户后台操作不可凭请求体伪造代理/老板身份。
+            user.setAccountType(null);
+            user.setParentAgentUserId(null);
+            user.setGoldBalance(0L);
+        }
         userMapper.insert(user);
         // 2.2 插入关联岗位
         if (CollectionUtil.isNotEmpty(user.getPostIds())) {
@@ -121,7 +150,13 @@ public class AdminUserServiceImpl implements AdminUserService {
 
         // 2.3 通知业务模块初始化该账号的独立数据
         Long tenantId = TenantContextHolder.getTenantId();
-        if (tenantId != null) {
+        if ("AGENT".equals(accountType)) {
+            RoleDO agentRole = roleService.getRoleList().stream()
+                    .filter(role -> "lottery_agent".equals(role.getCode()) &&
+                            CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()))
+                    .findFirst().orElseThrow(() -> exception(USER_GOLD_TARGET_INVALID));
+            permissionService.assignUserRole(user.getId(), Set.of(agentRole.getId()));
+        } else if (tenantId != null) {
             adminUserProducer.sendUserCreatedMessage(tenantId, user.getId(), user.getUsername());
         }
 
@@ -166,6 +201,11 @@ public class AdminUserServiceImpl implements AdminUserService {
 
         // 2.1 更新用户
         AdminUserDO updateObj = BeanUtils.toBean(updateReqVO, AdminUserDO.class);
+        // 付费老板的期限只能由金币分配延长，普通资料编辑不能绕开金币账本。
+        if ("OWNER".equals(oldUser.getAccountType())) {
+            updateObj.setExpireTime(null);
+        }
+        updateObj.setAccountType(null);
         userMapper.updateById(updateObj);
         // 2.2 更新岗位
         updateUserPost(updateReqVO, updateObj);
@@ -325,7 +365,10 @@ public class AdminUserServiceImpl implements AdminUserService {
         }
 
         // 分页查询
-        return userMapper.selectPage(reqVO, getDeptCondition(reqVO.getDeptId()), userIds);
+        Long operatorId = SecurityFrameworkUtils.getLoginUserId();
+        Long agentId = operatorId != null && permissionService.hasAnyRoles(operatorId, "lottery_agent") &&
+                !permissionService.hasAnyRoles(operatorId, "super_admin") ? operatorId : null;
+        return userMapper.selectPage(reqVO, getDeptCondition(reqVO.getDeptId()), userIds, agentId);
     }
 
     @Override

@@ -17,6 +17,7 @@ services:
       - mysql-data:/var/lib/mysql
       - ./sql/mysql/ruoyi-vue-pro.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./sql/mysql/lucky5-business.sql:/docker-entrypoint-initdb.d/02-lucky5-business.sql:ro
+      - ./sql/mysql/patches/20261011-agent-gold-expiration.sql:/docker-entrypoint-initdb.d/03-agent-gold-expiration.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 10s

@@ -6,6 +6,8 @@ import com.hnz.luck5.framework.mybatis.core.query.LambdaQueryWrapperX;
 import com.hnz.luck5.module.system.controller.admin.user.vo.user.UserPageReqVO;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 
 import java.util.Collection;
 import java.util.List;
@@ -25,7 +27,8 @@ public interface AdminUserMapper extends BaseMapperX<AdminUserDO> {
         return selectOne(AdminUserDO::getMobile, mobile);
     }
 
-    default PageResult<AdminUserDO> selectPage(UserPageReqVO reqVO, Collection<Long> deptIds, Collection<Long> userIds) {
+    default PageResult<AdminUserDO> selectPage(UserPageReqVO reqVO, Collection<Long> deptIds, Collection<Long> userIds,
+                                               Long parentAgentUserId) {
         return selectPage(reqVO, new LambdaQueryWrapperX<AdminUserDO>()
                 .likeIfPresent(AdminUserDO::getUsername, reqVO.getUsername())
                 .likeIfPresent(AdminUserDO::getMobile, reqVO.getMobile())
@@ -33,8 +36,14 @@ public interface AdminUserMapper extends BaseMapperX<AdminUserDO> {
                 .betweenIfPresent(AdminUserDO::getCreateTime, reqVO.getCreateTime())
                 .inIfPresent(AdminUserDO::getDeptId, deptIds)
                 .inIfPresent(AdminUserDO::getId, userIds)
+                .and(parentAgentUserId != null, wrapper -> wrapper
+                        .eq(AdminUserDO::getId, parentAgentUserId)
+                        .or().eq(AdminUserDO::getParentAgentUserId, parentAgentUserId))
                 .orderByDesc(AdminUserDO::getId));
     }
+
+    @Select("SELECT * FROM system_users WHERE id = #{userId} AND tenant_id = #{tenantId} AND deleted = FALSE FOR UPDATE")
+    AdminUserDO selectForUpdate(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
 
     default List<AdminUserDO> selectListByNickname(String nickname) {
         return selectList(new LambdaQueryWrapperX<AdminUserDO>().like(AdminUserDO::getNickname, nickname));

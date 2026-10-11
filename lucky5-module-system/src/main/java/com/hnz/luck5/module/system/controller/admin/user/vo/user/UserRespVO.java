@@ -69,6 +69,15 @@ public class UserRespVO{
     @ExcelProperty("到期时间")
     private LocalDateTime expireTime;
 
+    @Schema(description = "Lucky5 账号类型：ADMIN、AGENT、OWNER")
+    private String accountType;
+
+    @Schema(description = "所属代理用户编号")
+    private Long parentAgentUserId;
+
+    @Schema(description = "剩余金币；超级管理员返回 null，前端显示无限")
+    private Long goldBalance;
+
     @Schema(description = "最后登录 IP", requiredMode = Schema.RequiredMode.REQUIRED, example = "192.168.1.1")
     @ExcelProperty("最后登录IP")
     private String loginIp;

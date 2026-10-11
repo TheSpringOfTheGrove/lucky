@@ -8,6 +8,7 @@ import com.hnz.luck5.framework.common.pojo.CommonResult;
 import com.hnz.luck5.framework.common.pojo.PageParam;
 import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.framework.excel.core.util.ExcelUtils;
+import com.hnz.luck5.framework.security.core.util.SecurityFrameworkUtils;
 import com.hnz.luck5.module.system.controller.admin.user.vo.user.*;
 import com.hnz.luck5.module.system.convert.user.UserConvert;
 import com.hnz.luck5.module.system.dal.dataobject.dept.DeptDO;
@@ -18,6 +19,7 @@ import com.hnz.luck5.module.system.service.dept.DeptService;
 import com.hnz.luck5.module.system.service.permission.PermissionService;
 import com.hnz.luck5.module.system.service.permission.RoleService;
 import com.hnz.luck5.module.system.service.user.AdminUserService;
+import com.hnz.luck5.module.system.service.user.AdminGoldService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.Parameters;
@@ -54,6 +56,8 @@ public class UserController {
     @Resource
     private AdminUserService userService;
     @Resource
+    private AdminGoldService goldService;
+    @Resource
     private DeptService deptService;
     @Resource
     private PermissionService permissionService;
@@ -72,6 +76,7 @@ public class UserController {
     @Operation(summary = "修改用户")
     @PreAuthorize("@ss.hasPermission('system:user:update')")
     public CommonResult<Boolean> updateUser(@Valid @RequestBody UserSaveReqVO reqVO) {
+        goldService.assertVisible(reqVO.getId());
         userService.updateUser(reqVO);
         return success(true);
     }
@@ -81,6 +86,7 @@ public class UserController {
     @Parameter(name = "id", description = "编号", required = true, example = "1024")
     @PreAuthorize("@ss.hasPermission('system:user:delete')")
     public CommonResult<Boolean> deleteUser(@RequestParam("id") Long id) {
+        goldService.assertVisible(id);
         userService.deleteUser(id);
         return success(true);
     }
@@ -90,6 +96,7 @@ public class UserController {
     @Operation(summary = "批量删除用户")
     @PreAuthorize("@ss.hasPermission('system:user:delete')")
     public CommonResult<Boolean> deleteUserList(@RequestParam("ids") List<Long> ids) {
+        ids.forEach(goldService::assertVisible);
         userService.deleteUserList(ids);
         return success(true);
     }
@@ -98,6 +105,7 @@ public class UserController {
     @Operation(summary = "重置用户密码")
     @PreAuthorize("@ss.hasPermission('system:user:update-password')")
     public CommonResult<Boolean> updateUserPassword(@Valid @RequestBody UserUpdatePasswordReqVO reqVO) {
+        goldService.assertVisible(reqVO.getId());
         userService.updateUserPassword(reqVO.getId(), reqVO.getPassword());
         return success(true);
     }
@@ -106,6 +114,7 @@ public class UserController {
     @Operation(summary = "修改用户状态")
     @PreAuthorize("@ss.hasPermission('system:user:update')")
     public CommonResult<Boolean> updateUserStatus(@Valid @RequestBody UserUpdateStatusReqVO reqVO) {
+        goldService.assertVisible(reqVO.getId());
         userService.updateUserStatus(reqVO.getId(), reqVO.getStatus());
         return success(true);
     }
@@ -140,6 +149,9 @@ public class UserController {
                 .sorted(roleComparator)
                 .map(RoleDO::getName)
                 .toList()));
+        for (int index = 0; index < users.size(); index++) {
+            users.get(index).setGoldBalance(goldService.displayBalance(pageResult.getList().get(index)));
+        }
         return success(new PageResult<>(users, pageResult.getTotal()));
     }
 
@@ -149,6 +161,7 @@ public class UserController {
     @PreAuthorize("@ss.hasPermission('system:user:query')")
     public CommonResult<List<UserRespVO>> getUserList(@RequestParam("ids") List<Long> ids) {
         List<AdminUserDO> list = userService.getUserList(ids);
+        ids.forEach(goldService::assertVisible);
         if (CollUtil.isEmpty(list)) {
             return success(Collections.emptyList());
         }
@@ -169,6 +182,7 @@ public class UserController {
             list = userService.getUserListByStatus(CommonStatusEnum.ENABLE.getStatus());
         }
 
+        list = filterAgentVisibleUsers(list);
         // 拼接数据
         Map<Long, DeptDO> deptMap = deptService.getDeptMap(
                 convertList(list, AdminUserDO::getDeptId));
@@ -181,12 +195,31 @@ public class UserController {
     @PreAuthorize("@ss.hasPermission('system:user:query')")
     public CommonResult<UserRespVO> getUser(@RequestParam("id") Long id) {
         AdminUserDO user = userService.getUser(id);
+        goldService.assertVisible(id);
         if (user == null) {
             return success(null);
         }
         // 拼接数据
         DeptDO dept = deptService.getDept(user.getDeptId());
-        return success(UserConvert.INSTANCE.convert(user, dept));
+        UserRespVO result = UserConvert.INSTANCE.convert(user, dept);
+        result.setGoldBalance(goldService.displayBalance(user));
+        return success(result);
+    }
+
+    @PostMapping("/gold/grant-agent")
+    @Operation(summary = "系统管理员给代理充值金币")
+    @PreAuthorize("@ss.hasRole('super_admin')")
+    public CommonResult<Boolean> grantAgentGold(@Valid @RequestBody UserGoldChangeReqVO reqVO) {
+        goldService.grantToAgent(reqVO.getUserId(), reqVO.getAmount(), reqVO.getOperationKey());
+        return success(true);
+    }
+
+    @PostMapping("/gold/allocate-owner")
+    @Operation(summary = "从代理金币为直属老板续期")
+    @PreAuthorize("@ss.hasAnyRoles('super_admin','lottery_agent')")
+    public CommonResult<Boolean> allocateOwnerGold(@Valid @RequestBody UserGoldChangeReqVO reqVO) {
+        goldService.allocateToOwner(reqVO.getUserId(), reqVO.getAmount(), reqVO.getOperationKey());
+        return success(true);
     }
 
     @GetMapping("/export-excel")
@@ -238,7 +271,7 @@ public class UserController {
     @Parameter(name = "id", description = "用户编号", required = true, example = "1024")
     public CommonResult<UserSimpleRespVO> getSimpleUser(@RequestParam("id") Long id) {
         AdminUserDO user = userService.getUser(id);
-        if (user == null) {
+        if (user == null || filterAgentVisibleUsers(Collections.singletonList(user)).isEmpty()) {
             return success(null);
         }
         // 拼接数据
@@ -257,8 +290,19 @@ public class UserController {
         }
         // 拼接数据
         List<AdminUserDO> list = userService.getUserListByNickname(nickname.trim());
+        list = filterAgentVisibleUsers(list);
         Map<Long, DeptDO> deptMap = deptService.getDeptMap(convertList(list, AdminUserDO::getDeptId));
         return success(UserConvert.INSTANCE.convertSimpleList(list, deptMap));
+    }
+
+    private List<AdminUserDO> filterAgentVisibleUsers(List<AdminUserDO> users) {
+        Long operatorId = SecurityFrameworkUtils.getLoginUserId();
+        if (operatorId == null || permissionService.hasAnyRoles(operatorId, "super_admin") ||
+                !permissionService.hasAnyRoles(operatorId, "lottery_agent")) {
+            return users;
+        }
+        return users.stream().filter(user -> Objects.equals(user.getId(), operatorId) ||
+                Objects.equals(user.getParentAgentUserId(), operatorId)).toList();
     }
 
 }

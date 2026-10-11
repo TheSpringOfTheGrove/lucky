@@ -2,6 +2,8 @@ package com.hnz.luck5.module.system.framework.datapermission.config;
 
 import com.hnz.luck5.module.system.dal.dataobject.dept.DeptDO;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
+import com.hnz.luck5.module.system.framework.datapermission.rule.AgentUserDataPermissionRule;
+import com.hnz.luck5.module.system.service.permission.PermissionService;
 import com.hnz.luck5.framework.datapermission.core.rule.dept.DeptDataPermissionRuleCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,6 +25,11 @@ public class DataPermissionConfiguration {
             // user
             rule.addUserColumn(AdminUserDO.class, "id");
         };
+    }
+
+    @Bean
+    public AgentUserDataPermissionRule agentUserDataPermissionRule(PermissionService permissionService) {
+        return new AgentUserDataPermissionRule(permissionService);
     }
 
 }

@@ -2,11 +2,13 @@ package com.hnz.luck5.module.system.service.user;
 
 import cn.hutool.core.util.RandomUtil;
 import com.hnz.luck5.framework.common.enums.CommonStatusEnum;
+import com.hnz.luck5.framework.common.enums.UserTypeEnum;
 import com.hnz.luck5.framework.common.exception.ServiceException;
 import com.hnz.luck5.framework.common.pojo.PageResult;
 import com.hnz.luck5.framework.common.util.collection.ArrayUtils;
 import com.hnz.luck5.framework.common.util.collection.CollectionUtils;
 import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
+import com.hnz.luck5.framework.security.core.LoginUser;
 import com.hnz.luck5.framework.test.core.ut.BaseDbUnitTest;
 import com.hnz.luck5.module.infra.api.config.ConfigApi;
 import com.hnz.luck5.module.infra.api.file.FileApi;
@@ -21,6 +23,7 @@ import com.hnz.luck5.module.system.dal.dataobject.dept.PostDO;
 import com.hnz.luck5.module.system.dal.dataobject.dept.UserPostDO;
 import com.hnz.luck5.module.system.dal.dataobject.tenant.TenantDO;
 import com.hnz.luck5.module.system.dal.dataobject.user.AdminUserDO;
+import com.hnz.luck5.module.system.dal.dataobject.permission.RoleDO;
 import com.hnz.luck5.module.system.dal.mysql.dept.UserPostMapper;
 import com.hnz.luck5.module.system.dal.mysql.user.AdminUserMapper;
 import com.hnz.luck5.module.system.enums.common.SexEnum;
@@ -29,6 +32,7 @@ import com.hnz.luck5.module.system.service.dept.DeptService;
 import com.hnz.luck5.module.system.service.dept.PostService;
 import com.hnz.luck5.module.system.service.oauth2.OAuth2TokenService;
 import com.hnz.luck5.module.system.service.permission.PermissionService;
+import com.hnz.luck5.module.system.service.permission.RoleService;
 import com.hnz.luck5.module.system.service.tenant.TenantService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.AfterEach;
@@ -36,6 +40,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
 import org.springframework.context.annotation.Import;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
@@ -80,6 +86,8 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
     @MockitoBean
     private PermissionService permissionService;
     @MockitoBean
+    private RoleService roleService;
+    @MockitoBean
     private PasswordEncoder passwordEncoder;
     @MockitoBean
     private TenantService tenantService;
@@ -101,6 +109,66 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
     @AfterEach
     public void after() {
         TenantContextHolder.clear();
+        SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    public void testCreateAgentAndAgentOwner() {
+        TenantContextHolder.setTenantId(1L);
+        when(passwordEncoder.encode(anyString())).thenReturn("hash");
+        when(permissionService.hasAnyRoles(1L, "super_admin")).thenReturn(true);
+        when(permissionService.hasAnyRoles(2L, "lottery_agent")).thenReturn(true);
+        when(roleService.getRoleList()).thenReturn(List.of(new RoleDO().setId(88L)
+                .setCode("lottery_agent").setStatus(CommonStatusEnum.ENABLE.getStatus())));
+
+        loginAs(1L);
+        UserSaveReqVO agentReq = randomPojo(UserSaveReqVO.class, o -> {
+            o.setId(null);
+            o.setAccountType("AGENT");
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+            o.setDeptId(null);
+            o.setPostIds(null);
+        });
+        Long agentId = userService.createUser(agentReq);
+        AdminUserDO agent = userMapper.selectById(agentId);
+        assertEquals("AGENT", agent.getAccountType());
+        assertEquals(1L, agent.getParentAgentUserId());
+        assertEquals(0L, agent.getGoldBalance());
+        assertEquals(LocalDateTime.of(2099, 12, 31, 23, 59, 59), agent.getExpireTime());
+        verify(permissionService).assignUserRole(agentId, asSet(88L));
+        verify(adminUserProducer, never()).sendUserCreatedMessage(eq(1L), eq(agentId), anyString());
+
+        loginAs(2L);
+        UserSaveReqVO ownerReq = randomPojo(UserSaveReqVO.class, o -> {
+            o.setId(null);
+            o.setAccountType("OWNER");
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+            o.setDeptId(null);
+            o.setPostIds(null);
+        });
+        Long ownerId = userService.createUser(ownerReq);
+        AdminUserDO owner = userMapper.selectById(ownerId);
+        assertEquals("OWNER", owner.getAccountType());
+        assertEquals(2L, owner.getParentAgentUserId());
+        assertEquals(0L, owner.getGoldBalance());
+        assertFalse(owner.getExpireTime().isAfter(LocalDateTime.now()));
+        verify(adminUserProducer).sendUserCreatedMessage(1L, ownerId, ownerReq.getUsername());
+
+        UserSaveReqVO forbiddenAgent = randomPojo(UserSaveReqVO.class, o -> {
+            o.setId(null);
+            o.setAccountType("AGENT");
+            o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
+            o.setDeptId(null);
+            o.setPostIds(null);
+        });
+        assertServiceException(() -> userService.createUser(forbiddenAgent), USER_GOLD_ACCESS_DENIED);
+    }
+
+    private void loginAs(Long userId) {
+        LoginUser loginUser = new LoginUser().setId(userId).setTenantId(1L)
+                .setUserType(UserTypeEnum.ADMIN.getValue());
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(loginUser, null, List.of()));
     }
 
     @Test
@@ -138,7 +206,8 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         Long userId = userService.createUser(reqVO);
         // 断言
         AdminUserDO user = userMapper.selectById(userId);
-        assertPojoEquals(reqVO, user, "password", "id");
+        assertPojoEquals(reqVO, user, "password", "id", "accountType");
+        assertNull(user.getAccountType());
         assertEquals("lucky5yuanma", user.getPassword());
         assertEquals(CommonStatusEnum.ENABLE.getStatus(), user.getStatus());
         // 断言关联岗位
@@ -176,6 +245,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
             o.setSex(RandomUtil.randomEle(SexEnum.values()).getSex());
             o.setMobile(randomString());
             o.setPostIds(asSet(2L, 3L));
+            o.setAccountType(dbUser.getAccountType());
         });
         // mock deptService 的方法
         DeptDO dept = randomPojo(DeptDO.class, o -> {
