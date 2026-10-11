@@ -38,6 +38,7 @@ import static com.hnz.luck5.framework.common.util.collection.CollectionUtils.con
 import static com.hnz.luck5.framework.common.util.json.JsonUtils.toJsonString;
 import static com.hnz.luck5.framework.common.exception.util.ServiceExceptionUtil.exception;
 import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_GOLD_ROLE_MISMATCH;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_SUPER_ADMIN_ASSIGN_FORBIDDEN;
 
 /**
  * 权限 Service 实现类
@@ -224,6 +225,9 @@ public class PermissionServiceImpl implements PermissionService {
         // 计算新增和删除的角色编号
         Set<Long> roleIdList = CollUtil.emptyIfNull(roleIds);
         Collection<Long> createRoleIds = CollUtil.subtract(roleIdList, dbRoleIds);
+        if (!createRoleIds.isEmpty() && roleService.hasAnySuperAdmin(createRoleIds)) {
+            throw exception(USER_SUPER_ADMIN_ASSIGN_FORBIDDEN);
+        }
         Collection<Long> deleteMenuIds = CollUtil.subtract(dbRoleIds, roleIdList);
         // 执行新增和删除。对于已经授权的角色，不用做任何处理
         if (!CollectionUtil.isEmpty(createRoleIds)) {

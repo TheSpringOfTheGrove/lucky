@@ -61,7 +61,6 @@
             <el-select v-model="formData.accountType" class="!w-full">
               <el-option label="老板账号" value="OWNER" />
               <el-option v-if="isAdminAccount" label="代理账号" value="AGENT" />
-              <el-option v-if="isAdminAccount" label="超级管理员" value="ADMIN" />
             </el-select>
           </el-form-item>
           <el-form-item

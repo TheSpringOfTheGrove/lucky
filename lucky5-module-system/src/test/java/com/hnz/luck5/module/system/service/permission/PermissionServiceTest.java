@@ -29,7 +29,9 @@ import java.util.Set;
 
 import static cn.hutool.core.collection.ListUtil.toList;
 import static com.hnz.luck5.framework.common.util.collection.SetUtils.asSet;
+import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertServiceException;
 import static com.hnz.luck5.framework.test.core.util.AssertUtils.assertPojoEquals;
+import static com.hnz.luck5.module.system.enums.ErrorCodeConstants.USER_SUPER_ADMIN_ASSIGN_FORBIDDEN;
 import static com.hnz.luck5.framework.test.core.util.RandomUtils.randomLongId;
 import static com.hnz.luck5.framework.test.core.util.RandomUtils.randomPojo;
 import static java.util.Collections.singleton;
@@ -263,6 +265,29 @@ public class PermissionServiceTest extends BaseDbUnitTest {
         assertEquals(200L, userRoleDOList.get(0).getRoleId());
         assertEquals(1L, userRoleDOList.get(1).getUserId());
         assertEquals(300L, userRoleDOList.get(1).getRoleId());
+    }
+
+    @Test
+    public void testAssignUserRole_cannotAddSuperAdmin() {
+        Long userId = 1L;
+        Set<Long> roleIds = asSet(100L, 200L);
+        userRoleMapper.insert(randomPojo(UserRoleDO.class).setUserId(userId).setRoleId(100L));
+        when(roleService.hasAnySuperAdmin(asSet(200L))).thenReturn(true);
+
+        assertServiceException(() -> permissionService.assignUserRole(userId, roleIds),
+                USER_SUPER_ADMIN_ASSIGN_FORBIDDEN);
+        assertEquals(asSet(100L), permissionService.getUserRoleIdListByUserId(userId));
+    }
+
+    @Test
+    public void testAssignUserRole_preservesExistingSuperAdmin() {
+        Long userId = 1L;
+        userRoleMapper.insert(randomPojo(UserRoleDO.class).setUserId(userId).setRoleId(100L));
+
+        permissionService.assignUserRole(userId, asSet(100L));
+
+        assertEquals(asSet(100L), permissionService.getUserRoleIdListByUserId(userId));
+        verify(roleService, never()).hasAnySuperAdmin(anyCollection());
     }
 
     @Test

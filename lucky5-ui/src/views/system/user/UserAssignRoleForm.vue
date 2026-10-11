@@ -35,7 +35,7 @@ const formData = ref({
   id: -1,
   nickname: '',
   username: '',
-  roleIds: []
+  roleIds: [] as number[]
 })
 const formRef = ref() // 表单 Ref
 const roleList = ref([] as RoleApi.RoleVO[]) // 角色的列表
@@ -56,7 +56,9 @@ const open = async (row: UserApi.UserVO) => {
     formLoading.value = false
   }
   // 获得角色列表
-  roleList.value = await RoleApi.getSimpleRoleList()
+  roleList.value = (await RoleApi.getSimpleRoleList()).filter(
+    (role) => role.code !== 'super_admin' || formData.value.roleIds.includes(role.id)
+  )
 }
 defineExpose({ open }) // 提供 open 方法，用于打开弹窗
 
@@ -89,7 +91,7 @@ const resetForm = () => {
     id: -1,
     nickname: '',
     username: '',
-    roleIds: []
+    roleIds: [] as number[]
   }
   formRef.value?.resetFields()
 }

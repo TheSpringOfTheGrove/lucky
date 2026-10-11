@@ -104,6 +104,9 @@ public class AdminUserServiceImpl implements AdminUserService {
     @LogRecord(type = SYSTEM_USER_TYPE, subType = SYSTEM_USER_CREATE_SUB_TYPE, bizNo = "{{#user.id}}",
             success = SYSTEM_USER_CREATE_SUCCESS)
     public Long createUser(UserSaveReqVO createReqVO) {
+        if ("ADMIN".equals(createReqVO.getAccountType())) {
+            throw exception(USER_SUPER_ADMIN_ASSIGN_FORBIDDEN);
+        }
         // 1.1 校验账户配合
         tenantService.handleTenantInfo(tenant -> {
             long count = userMapper.selectCount();
@@ -125,12 +128,12 @@ public class AdminUserServiceImpl implements AdminUserService {
         if (managedCreation) {
             boolean admin = permissionService.hasAnyRoles(operator.getId(), "super_admin");
             boolean agent = permissionService.hasAnyRoles(operator.getId(), "lottery_agent");
-            if ((!"OWNER".equals(accountType) && !"AGENT".equals(accountType) && !"ADMIN".equals(accountType)) ||
+            if ((!"OWNER".equals(accountType) && !"AGENT".equals(accountType)) ||
                     (!admin && (!agent || !"OWNER".equals(accountType)))) {
                 throw exception(USER_GOLD_ACCESS_DENIED);
             }
             user.setAccountType(accountType);
-            user.setParentAgentUserId("ADMIN".equals(accountType) ? null : operator.getId());
+            user.setParentAgentUserId(operator.getId());
             user.setGoldBalance(0L);
             // 新老板无金币时立即到期；代理余额为零仍可登录等待充值。
             user.setExpireTime("OWNER".equals(accountType) ? LocalDateTime.now() :
@@ -150,10 +153,9 @@ public class AdminUserServiceImpl implements AdminUserService {
 
         // 2.3 通知业务模块初始化该账号的独立数据
         Long tenantId = TenantContextHolder.getTenantId();
-        if ("AGENT".equals(accountType) || "ADMIN".equals(accountType)) {
-            String roleCode = "ADMIN".equals(accountType) ? "super_admin" : "lottery_agent";
+        if ("AGENT".equals(accountType)) {
             RoleDO assignedRole = roleService.getRoleList().stream()
-                    .filter(role -> roleCode.equals(role.getCode()) &&
+                    .filter(role -> "lottery_agent".equals(role.getCode()) &&
                             CommonStatusEnum.ENABLE.getStatus().equals(role.getStatus()))
                     .findFirst().orElseThrow(() -> exception(USER_GOLD_TARGET_INVALID));
             permissionService.assignUserRole(user.getId(), Set.of(assignedRole.getId()));

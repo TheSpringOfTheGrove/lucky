@@ -119,8 +119,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         when(permissionService.hasAnyRoles(1L, "super_admin")).thenReturn(true);
         when(permissionService.hasAnyRoles(2L, "lottery_agent")).thenReturn(true);
         when(roleService.getRoleList()).thenReturn(List.of(
-                new RoleDO().setId(88L).setCode("lottery_agent").setStatus(CommonStatusEnum.ENABLE.getStatus()),
-                new RoleDO().setId(89L).setCode("super_admin").setStatus(CommonStatusEnum.ENABLE.getStatus())));
+                new RoleDO().setId(88L).setCode("lottery_agent").setStatus(CommonStatusEnum.ENABLE.getStatus())));
 
         loginAs(1L);
         UserSaveReqVO adminReq = randomPojo(UserSaveReqVO.class, o -> {
@@ -130,13 +129,8 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
             o.setDeptId(null);
             o.setPostIds(null);
         });
-        Long adminId = userService.createUser(adminReq);
-        AdminUserDO newAdmin = userMapper.selectById(adminId);
-        assertEquals("ADMIN", newAdmin.getAccountType());
-        assertNull(newAdmin.getParentAgentUserId());
-        assertEquals(LocalDateTime.of(2099, 12, 31, 23, 59, 59), newAdmin.getExpireTime());
-        verify(permissionService).assignUserRole(adminId, asSet(89L));
-        verify(adminUserProducer, never()).sendUserCreatedMessage(eq(1L), eq(adminId), anyString());
+        assertServiceException(() -> userService.createUser(adminReq), USER_SUPER_ADMIN_ASSIGN_FORBIDDEN);
+        assertEquals(0, userMapper.selectCount());
 
         UserSaveReqVO agentReq = randomPojo(UserSaveReqVO.class, o -> {
             o.setId(null);
@@ -179,7 +173,7 @@ public class AdminUserServiceImplTest extends BaseDbUnitTest {
         });
         assertServiceException(() -> userService.createUser(forbiddenAgent), USER_GOLD_ACCESS_DENIED);
         forbiddenAgent.setAccountType("ADMIN");
-        assertServiceException(() -> userService.createUser(forbiddenAgent), USER_GOLD_ACCESS_DENIED);
+        assertServiceException(() -> userService.createUser(forbiddenAgent), USER_SUPER_ADMIN_ASSIGN_FORBIDDEN);
     }
 
     private void loginAs(Long userId) {
