@@ -74,6 +74,7 @@ public class LotteryOwnerInitializationService {
     private final OddMapper oddMapper;
     private final QuickCommandMapper quickCommandMapper;
     private final OwnerInitializationMapper ownerInitializationMapper;
+    private final LotteryAutoProxySeedService autoProxySeedService;
     private final RoleService roleService;
     private final PermissionService permissionService;
 
@@ -96,6 +97,9 @@ public class LotteryOwnerInitializationService {
                 CURRENT_SCHEMA_VERSION);
         if (inserted == 1) {
             initializeCurrentTenant(tenantId, userId, username);
+            if (!SUPER_ADMIN_USER_ID.equals(userId) && !permissionService.hasAnyRoles(userId, "super_admin")) {
+                autoProxySeedService.seedCurrentTenant(tenantId, userId);
+            }
             return true;
         }
         OwnerInitializationDO marker = findInitializationMarker(userId, false);

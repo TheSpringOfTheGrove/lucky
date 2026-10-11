@@ -40,7 +40,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,11 +59,25 @@ class LotteryOwnerInitializationServiceTest {
     @Mock private OddMapper oddMapper;
     @Mock private QuickCommandMapper quickCommandMapper;
     @Mock private OwnerInitializationMapper ownerInitializationMapper;
+    @Mock private LotteryAutoProxySeedService autoProxySeedService;
     @Mock private RoleService roleService;
     @Mock private PermissionService permissionService;
 
     @InjectMocks
     private LotteryOwnerInitializationService service;
+
+    @Test
+    void newOwnerSeedsBotsAndPresetsExactlyOnFirstAutomaticInitialization() {
+        Long ownerId = 207L;
+        LotteryOwnerInitializationService isolated = spy(service);
+        doNothing().when(isolated).initializeCurrentTenant(1L, ownerId, "new-owner");
+        when(ownerInitializationMapper.insertIfAbsent(1L, ownerId, "AUTO", ownerId, 3)).thenReturn(1, 0);
+
+        assertThat(isolated.initializeAutomaticallyCurrentTenant(1L, ownerId, "new-owner")).isTrue();
+        assertThat(isolated.initializeAutomaticallyCurrentTenant(1L, ownerId, "new-owner")).isFalse();
+
+        verify(autoProxySeedService).seedCurrentTenant(1L, ownerId);
+    }
 
     @Test
     void initializeCopiesSafeTemplatesAndKeepsPrivateFieldsEmpty() {
@@ -167,6 +183,7 @@ class LotteryOwnerInitializationServiceTest {
 
         verify(permissionService, never()).assignUserRole(any(), any());
         verify(lotteryConfigMapper, never()).insert(any(LotteryConfigDO.class));
+        verify(autoProxySeedService, never()).seedCurrentTenant(any(), any());
         verify(systemStateMapper, never()).insert(any(SystemStateDO.class));
         verify(marketConnectionMapper, never()).insert(any(MarketConnectionDO.class));
         verify(linkConfigMapper, never()).insert(any(LinkConfigDO.class));
@@ -226,6 +243,7 @@ class LotteryOwnerInitializationServiceTest {
         assertThat(marker.getSchemaVersion()).isEqualTo(3);
         assertThat(marker.getLastSource()).isEqualTo("REPAIR");
         verify(ownerInitializationMapper).updateById(marker);
+        verify(autoProxySeedService, never()).seedCurrentTenant(any(), any());
     }
 
     @Test

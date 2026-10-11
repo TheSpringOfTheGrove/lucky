@@ -91,7 +91,7 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String SHORT_LINK_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     private static final int SHORT_LINK_LENGTH = 9;
     /** Each value maps to one bundled player-avatar image in the public room UI. */
-    private static final int PLAYER_AVATAR_COUNT = 35;
+    private static final int PLAYER_AVATAR_COUNT = LotteryMemberAvatar.COUNT;
     private static final Duration MEMBER_HEARTBEAT_WRITE_INTERVAL = Duration.ofSeconds(15);
     private static final Duration MEMBER_ONLINE_TIMEOUT = Duration.ofSeconds(90);
     private static final Duration ROOM_CLIENT_TIME_TOLERANCE = Duration.ofMinutes(10);
@@ -154,6 +154,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryRebateCalculator rebateCalculator;
     @Resource private LotteryChimaCalculator chimaCalculator;
     @Resource private LotteryOwnerInitializationService ownerInitializationService;
+    @Resource private LotteryAutoProxySeedService autoProxySeedService;
     @Resource private LotteryDrawVerificationService drawVerificationService;
     @Resource private LotteryBalanceLedgerService balanceLedgerService;
     @Resource private MarketCredentialService marketCredentialService;
@@ -356,6 +357,21 @@ public class LotteryServiceImpl implements LotteryService {
         return map("userId", result.userId(), "username", user.getUsername(),
                 "initializationCount", result.initializationCount(), "source", result.source(),
                 "schemaVersion", result.schemaVersion());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> initializeAutoProxyData(Long userId) {
+        AdminUserDO user = adminUserService.getUser(userId);
+        if (user == null) {
+            throw exception(RECORD_NOT_FOUND);
+        }
+        LotteryAutoProxySeedService.SeedResult result = autoProxySeedService.seedManually(
+                TenantContextHolder.getRequiredTenantId(), userId);
+        log("-", "补齐自动托数据 " + userId + "：新增" + result.botsCreated()
+                + "个自动托、" + result.presetsCreated() + "条预设订单");
+        return map("userId", userId, "username", user.getUsername(), "botsCreated", result.botsCreated(),
+                "presetsCreated", result.presetsCreated(), "totalBots", result.totalBots());
     }
 
     private Map<String, Object> amountRecordMap(AmountRecordDO item) {
@@ -3894,22 +3910,11 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private int randomPlayerAvatar() {
-        return RandomUtil.randomInt(1, PLAYER_AVATAR_COUNT + 1);
+        return LotteryMemberAvatar.randomAvatar();
     }
 
     private String playerAvatarPath(int avatar) {
-        return switch (avatar) {
-            case 1 -> "player-avatars/avatar_1039.jpg";
-            case 2 -> "player-avatars/avatar_173.jpg";
-            case 3 -> "player-avatars/avatar_175.jpg";
-            case 4 -> "player-avatars/avatar_207.jpg";
-            case 5 -> "player-avatars/avatar_336.jpg";
-            case 6 -> "player-avatars/avatar_339.jpg";
-            case 7 -> "player-avatars/avatar_343.jpg";
-            case 8 -> "player-avatars/avatar_792.jpg";
-            case 9 -> "player-avatars/avatar_939.jpg";
-            default -> "player-avatars/avatar_" + Math.max(10, Math.min(PLAYER_AVATAR_COUNT, avatar)) + ".png";
-        };
+        return LotteryMemberAvatar.path(avatar);
     }
 
     private String detailId() {

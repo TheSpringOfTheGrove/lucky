@@ -191,6 +191,13 @@
                       >
                         <Icon icon="ep:setting" />初始化老板配置
                       </el-dropdown-item>
+                      <el-dropdown-item
+                        command="handleAutoProxyData"
+                        v-if="checkRole(['super_admin']) && scope.row.id !== userStore.getUser.id"
+                        :disabled="autoProxyInitializing"
+                      >
+                        <Icon icon="ep:user-filled" />自动托数据
+                      </el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
@@ -222,7 +229,7 @@ import { dateFormatter } from '@/utils/formatTime'
 import download from '@/utils/download'
 import { CommonStatusEnum } from '@/utils/constants'
 import * as UserApi from '@/api/system/user'
-import { initializeLotteryOwnerApi } from '@/api/lottery'
+import { initializeLotteryAutoProxyDataApi, initializeLotteryOwnerApi } from '@/api/lottery'
 import { useUserStore } from '@/store/modules/user'
 import UserForm from './UserForm.vue'
 import UserImportForm from './UserImportForm.vue'
@@ -339,6 +346,9 @@ const handleCommand = (command: string, row: UserApi.UserVO) => {
     case 'handleLotteryInitialize':
       handleLotteryInitialize(row)
       break
+    case 'handleAutoProxyData':
+      handleAutoProxyData(row)
+      break
     default:
       break
   }
@@ -412,6 +422,24 @@ const handleLotteryInitialize = async (row: UserApi.UserVO) => {
     const result = await initializeLotteryOwnerApi(row.id)
     message.success(`初始化完成，累计执行 ${result.initializationCount} 次`)
   } catch {}
+}
+
+/** 仅补齐老板名下的自动托及 admin 预设，不触碰其它老板配置。 */
+const autoProxyInitializing = ref(false)
+const handleAutoProxyData = async (row: UserApi.UserVO) => {
+  if (autoProxyInitializing.value) return
+  try {
+    await message.confirm(
+      `确认补齐“${row.username}”的自动托数据吗？将自动托补至 10 个，并复制当前 admin 缺失的预设订单；不会修改已有会员、余额和预设内容。`
+    )
+    autoProxyInitializing.value = true
+    const result = await initializeLotteryAutoProxyDataApi(row.id)
+    message.success(`已新增 ${result.botsCreated} 个自动托、${result.presetsCreated} 条预设订单`)
+    await getList()
+  } catch {
+  } finally {
+    autoProxyInitializing.value = false
+  }
 }
 
 /** 初始化 */

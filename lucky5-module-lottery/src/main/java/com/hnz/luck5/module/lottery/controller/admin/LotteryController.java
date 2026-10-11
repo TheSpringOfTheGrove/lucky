@@ -41,6 +41,13 @@ public class LotteryController {
         return success(lotteryService.initializeOwner(userId));
     }
 
+    @PostMapping("/owners/{userId}/auto-proxy-data")
+    @Operation(summary = "补齐老板账号的自动托与预设订单数据")
+    @PreAuthorize("@ss.hasRole('super_admin')")
+    public CommonResult<Map<String, Object>> initializeAutoProxyData(@PathVariable Long userId) {
+        return success(lotteryService.initializeAutoProxyData(userId));
+    }
+
     @PatchMapping("/switches/{key}")
     @PreAuthorize("@ss.hasPermission('lottery:dashboard:query')")
     public CommonResult<Boolean> setSwitch(@PathVariable String key, @Valid @RequestBody LotteryReqVO.BooleanValue reqVO) {

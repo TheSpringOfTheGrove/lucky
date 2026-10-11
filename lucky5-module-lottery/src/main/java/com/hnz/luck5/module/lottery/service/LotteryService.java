@@ -14,6 +14,8 @@ public interface LotteryService {
 
     Map<String, Object> initializeOwner(Long userId);
 
+    Map<String, Object> initializeAutoProxyData(Long userId);
+
     void setSwitch(String key, Boolean value);
 
     void setRoom(Boolean open);

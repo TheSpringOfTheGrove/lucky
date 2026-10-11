@@ -58,6 +58,11 @@ export const getLucky5Bootstrap = () =>
 export const initializeLotteryOwnerApi = (userId: number) =>
   request.post<Record<string, any>>({ url: `${base}/owners/${userId}/initialize` })
 
+export const initializeLotteryAutoProxyDataApi = (userId: number) =>
+  request.post<{ botsCreated: number; presetsCreated: number; totalBots: number }>({
+    url: `${base}/owners/${userId}/auto-proxy-data`
+  })
+
 export const setSwitchApi = (key: string, value: boolean) =>
   request.patch({ url: `${base}/switches/${key}`, data: { value } })
 
