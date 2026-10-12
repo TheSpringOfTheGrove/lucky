@@ -60,7 +60,10 @@ const error = ref('')
 const composer = ref('')
 const chatRef = ref<HTMLElement>()
 const composerRef = ref<HTMLTextAreaElement>()
+const composerFormRef = ref<HTMLFormElement>()
+const composerHeight = ref(49)
 const composerPanelRef = ref<HTMLElement>()
+let composerResizeObserver: ResizeObserver | undefined
 const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
@@ -999,7 +1002,20 @@ const handleRoomResize = () => {
   if (scratchLauncherTop.value !== null) {
     scratchLauncherTop.value = clampScratchLauncherTop(scratchLauncherTop.value)
   }
+  resizeComposer()
 }
+
+const resizeComposer = () => {
+  const textarea = composerRef.value
+  if (!textarea) return
+  textarea.style.height = 'auto'
+  textarea.style.height = `${textarea.scrollHeight}px`
+}
+
+watch(composer, async () => {
+  await nextTick()
+  resizeComposer()
+})
 
 const shouldShowBetSubmitting = (content: string) => {
   const normalized = content.trim()
@@ -1227,6 +1243,20 @@ onMounted(async () => {
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   await loadSession()
   await scrollToBottom()
+  await nextTick()
+  resizeComposer()
+  if (composerFormRef.value) {
+    composerResizeObserver = new ResizeObserver(() => {
+      const height = Math.ceil(composerFormRef.value?.getBoundingClientRect().height || 49)
+      if (height === composerHeight.value) return
+      const shouldFollow = autoFollowMessages.value
+      composerHeight.value = height
+      if (shouldFollow) {
+        void nextTick(() => chatRef.value?.scrollTo({ top: chatRef.value.scrollHeight }))
+      }
+    })
+    composerResizeObserver.observe(composerFormRef.value)
+  }
   composerRef.value?.focus()
   scheduleSessionRefresh()
   scheduleDrawStateRefresh()
@@ -1244,6 +1274,7 @@ onBeforeUnmount(() => {
   betReplyRequestSequence++
   sessionRequestSequence++
   if (betReplyTimer) window.clearTimeout(betReplyTimer)
+  composerResizeObserver?.disconnect()
   window.removeEventListener('resize', handleRoomResize)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('mousemove', moveScratchLauncherByMouse)
@@ -1255,7 +1286,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :class="['chat-room', bottomPanel ? `has-panel-${bottomPanel}` : '']">
+  <div class="chat-room" :style="{ '--composer-height': `${composerHeight}px` }">
     <div v-if="loading" class="room-state-page">
       <span class="room-loader"></span>
     </div>
@@ -1393,7 +1424,7 @@ onBeforeUnmount(() => {
         <span aria-hidden="true">▼</span>{{ unreadMessageKeys.length }}条新消息
       </button>
 
-      <form class="chat-composer" @submit.prevent="submitChat">
+      <form ref="composerFormRef" class="chat-composer" @submit.prevent="submitChat">
         <div class="composer-row">
           <button
             class="keyboard-toggle"
@@ -1879,14 +1910,14 @@ onBeforeUnmount(() => {
   padding: 8px 0 24px;
   overflow: hidden auto;
   box-sizing: border-box;
-  inset: calc(var(--room-overview-height) + env(safe-area-inset-top)) 0 49px;
+  inset: calc(var(--room-overview-height) + env(safe-area-inset-top)) 0 var(--composer-height);
   -webkit-overflow-scrolling: touch;
 }
 
 .new-message-tip {
   position: fixed;
   right: 30px;
-  bottom: calc(55px + env(safe-area-inset-bottom));
+  bottom: calc(var(--composer-height) + 6px);
   z-index: 7;
   min-height: 24px;
   padding: 0 8px 0 24px;
@@ -2143,7 +2174,7 @@ onBeforeUnmount(() => {
 
 .composer-row textarea {
   width: 100%;
-  max-height: 88px;
+  max-height: 194px;
   min-height: 32px;
   padding: 6px 8px;
   overflow-y: auto;
@@ -2168,21 +2199,8 @@ onBeforeUnmount(() => {
   -webkit-text-fill-color: #8a8f98 !important;
 }
 
-.has-panel-keyboard .chat-stream {
-  bottom: 239px;
-}
-
-.has-panel-commands .chat-stream {
-  bottom: 239px;
-}
-
 .cancel-status {
   color: #888;
-}
-
-.has-panel-keyboard .new-message-tip,
-.has-panel-commands .new-message-tip {
-  bottom: calc(245px + env(safe-area-inset-bottom));
 }
 
 .composer-row textarea:focus {
