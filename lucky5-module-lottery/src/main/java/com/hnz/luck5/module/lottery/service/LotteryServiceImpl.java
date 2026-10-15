@@ -106,6 +106,9 @@ public class LotteryServiceImpl implements LotteryService {
     private record CancelResult(String id, String status, BigDecimal refunded) {
     }
 
+    private record CurrentCancelResult(String period, int matched, int cancelled, int pending, int rejected) {
+    }
+
     private record CompactBet(String play, String selection, BigDecimal amount, BigDecimal odds,
                               Boolean won, BigDecimal payout) {
     }
@@ -148,6 +151,7 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private ChimaRecordMapper chimaRecordMapper;
     @Resource private LotteryBettingService bettingService;
     @Resource private LotteryRoomMessagePolicy roomMessagePolicy;
+    @Resource private LotteryPlayerFollowService playerFollowService;
     @Resource private LotteryRobotReplyTemplate robotReplyTemplate;
     @Resource private LotteryDrawHistoryImageRenderer drawHistoryImageRenderer;
     @Resource private LotteryPeriodSummaryService periodSummaryService;
@@ -689,18 +693,44 @@ public class LotteryServiceImpl implements LotteryService {
     public void setRoom(Boolean open) {
         if (Boolean.TRUE.equals(open)) {
             LotteryConfigDO config = requireConfig();
-            if (!Boolean.TRUE.equals(config.getBossMode())) requireRealMarketReady(config.getUserId(), config, true);
+            if (Boolean.TRUE.equals(config.getBossMode())) {
+                if (StrUtil.isBlank(config.getUpstreamUrl()) || StrUtil.isBlank(config.getUpstreamAccount())
+                        || StrUtil.isBlank(config.getMarketPasswordEncrypted())) {
+                    throw exception(BOSS_ROOM_LOGIN_REQUIRED);
+                }
+                // A stored connection status is insufficient: verify the current credentials with an authenticated,
+                // read-only account request every time the room is opened. This never submits a market order.
+                Map<String, Object> connection = marketSyncService.verifyCurrentConnection(
+                        TenantContextHolder.getRequiredTenantId(), config.getUserId());
+                if (!"已连接".equals(connection.get("status"))) throw exception(BOSS_ROOM_LOGIN_REQUIRED);
+            } else {
+                requireRealMarketReady(config.getUserId(), config, true);
+            }
         }
         SystemStateDO state = requireState();
+        boolean wasOpen = bool(state.getRoomOpen());
         state.setRoomOpen(open);
         systemStateMapper.updateById(state);
         log("-", Boolean.TRUE.equals(open) ? "开启房间" : "关闭房间");
+        if (Boolean.TRUE.equals(open) && !wasOpen && state.getUserId() != null) {
+            Long userId = state.getUserId();
+            IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                    new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                            .eq(IssueDO::getStatus, "OPEN").isNotNull(IssueDO::getOpenedAt)
+                            .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+            if (issue != null && !issueFreshnessPolicy.isStale(issue)
+                    && !issueFreshnessPolicy.isBettingClosed(issue)) {
+                eventPublisher.publishEvent(new LotteryRoomStartedEvent(
+                        TenantContextHolder.getRequiredTenantId(), userId, issue.getPeriod()));
+            }
+        }
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveConfig(LotteryReqVO.Config reqVO) {
         LotteryConfigDO config = requireConfig();
+        boolean modeChanged = !Objects.equals(config.getBossMode(), reqVO.getBossMode());
         String url = value(reqVO.getUrl(), "").trim();
         String account = value(reqVO.getAccount(), "").trim();
         boolean hasNewPassword = StrUtil.isNotBlank(reqVO.getPassword()) && !"********".equals(reqVO.getPassword());
@@ -717,6 +747,12 @@ public class LotteryServiceImpl implements LotteryService {
         config.setPlayType(reqVO.getPlayType());
         config.setUseProxy(reqVO.getUseProxy());
         lotteryConfigMapper.updateById(config);
+        if (credentialsChanged || modeChanged) {
+            // Previously opened rooms must pass the new credentials/mode guard before accepting another bet.
+            systemStateMapper.update(null, new LambdaUpdateWrapper<SystemStateDO>()
+                    .eq(SystemStateDO::getUserId, config.getUserId())
+                    .set(SystemStateDO::getRoomOpen, false));
+        }
         if (credentialsChanged) {
             marketConnectionMapper.update(null, new LambdaUpdateWrapper<MarketConnectionDO>()
                     .eq(MarketConnectionDO::getUserId, config.getUserId())
@@ -1635,6 +1671,11 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private BetResult placeBetInternal(LotteryReqVO.PlaceBet reqVO, String actor, String requestedOrderType) {
+        return placeBetInternal(reqVO, actor, requestedOrderType, null);
+    }
+
+    private BetResult placeBetInternal(LotteryReqVO.PlaceBet reqVO, String actor, String requestedOrderType,
+                                       String followId) {
         long placementStartedAt = System.nanoTime();
         MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
                 : findMemberByName(reqVO.getMemberName());
@@ -1712,7 +1753,11 @@ public class LotteryServiceImpl implements LotteryService {
                 .eq(MemberDO::getVersion, oldMemberVersion).ge(MemberDO::getBalance, total)
                 .set(MemberDO::getBalance, balance).set(MemberDO::getTotalBet, totalBet)
                 .set(MemberDO::getVersion, oldMemberVersion + 1));
-        if (memberUpdated != 1) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
+        if (memberUpdated != 1) {
+            MemberDO current = requireMember(member.getId(), member.getUserId());
+            if (money(current.getBalance()).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
+            throw exception(BET_STATE_CHANGED);
+        }
 
         OrderDO order = new OrderDO();
         order.setId(id());
@@ -1726,6 +1771,7 @@ public class LotteryServiceImpl implements LotteryService {
         order.setSource(TYPE_AUTO_PROXY.equals(orderType) ? "自动托"
                 : CHANNEL_WEB_PRIVATE.equals(channel) ? "私聊" : channel);
         order.setOrderType(orderType);
+        order.setFollowId(followId);
         order.setDeliveryMode(realMarketOrder ? "MARKET_ADAPTER" : "LOCAL_ONLY");
         order.setMarketStatus(realMarketOrder ? "PENDING" : "NOT_REQUIRED");
         order.setMarketOrderId("");
@@ -1784,16 +1830,6 @@ public class LotteryServiceImpl implements LotteryService {
         message.setCreateTime(roomMessageCreateTime(reqVO.getSentAt()));
         message.setUserId(member.getUserId());
         messageMapper.insert(message);
-        if ("跟".equals(order.getSource())) {
-            FollowOrderDO follow = new FollowOrderDO();
-            follow.setId(id());
-            follow.setSource(member.getName());
-            follow.setTarget(order.getContent());
-            follow.setRatio(BigDecimal.ONE);
-            follow.setEnabled(true);
-            follow.setUserId(member.getUserId());
-            followOrderMapper.insert(follow);
-        }
         if (!TYPE_AUTO_PROXY.equals(orderType)) {
             logAs(member.getUserId(), actor, member.getName(), "下注 " + total + "，期号 " + order.getPeriod());
         }
@@ -2170,6 +2206,23 @@ public class LotteryServiceImpl implements LotteryService {
         }
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void repairRecentSettledDrawMessagesForUser(Long userId) {
+        List<IssueDO> issues = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .eq(IssueDO::getStatus, "SETTLED").isNotNull(IssueDO::getOpenedAt)
+                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 10")));
+        if (issues.isEmpty()) return;
+        List<String> periods = issues.stream().map(IssueDO::getPeriod).toList();
+        List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(
+                new LambdaQueryWrapper<DrawDO>().eq(DrawDO::getUserId, userId)
+                        .in(DrawDO::getPeriod, periods).isNotNull(DrawDO::getSettledAt)));
+        for (DrawDO draw : draws) {
+            publishDrawResultMessage(userId, draw);
+        }
+    }
+
     private Map<String, Object> settlePeriodInternal(Long userId, String period, LotteryReqVO.Settle reqVO, String actor) {
         long settlementStartedAt = System.nanoTime();
         if (reqVO == null || StrUtil.isBlank(reqVO.getResult())) throw exception(BET_CONTENT_INVALID);
@@ -2205,10 +2258,10 @@ public class LotteryServiceImpl implements LotteryService {
                 oldDraw.setSettledAt(LocalDateTime.now());
                 drawMapper.updateById(oldDraw);
             }
+            IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                    new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                            .eq(IssueDO::getPeriod, period).last("LIMIT 1")));
             if ("system".equals(actor)) {
-                IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
-                        new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
-                                .eq(IssueDO::getPeriod, period).last("LIMIT 1")));
                 if (issue != null && !"SETTLED".equals(issue.getStatus())) {
                     transitionIssue(issue, "SETTLED", "自动结算幂等确认",
                             map("reason", reason, "result", normalizedResult));
@@ -2218,6 +2271,10 @@ public class LotteryServiceImpl implements LotteryService {
                     issueMapper.updateById(issue);
                 }
             }
+            if (shouldPublishSettlementArtifacts(actor, false, issue == null ? null : issue.getOpenedAt())) {
+                publishPayoutSummaryIfMissing(userId, period, List.of(), ZERO);
+            }
+            publishDrawResultMessage(userId, oldDraw);
             return map("period", period, "result", oldDraw.getResult(), "bigSmall", oldDraw.getBigSmall(),
                     "oddEven", oldDraw.getOddEven(), "dragonTiger", oldDraw.getDragonTiger(), "orders", 0,
                     "totalBet", ZERO, "totalPayout", ZERO, "alreadySettled", true);
@@ -2305,7 +2362,10 @@ public class LotteryServiceImpl implements LotteryService {
                     .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
                     .eq(OrderDO::getVersion, value(order.getVersion(), 1) - 1));
             if (settled != 1) throw exception(BET_STATE_CHANGED);
-            marketRoutingService.settle(userId, order.getId(), plan.items());
+            // Boss-mode orders never create route rows. Avoid one empty route lookup for every such order.
+            if (requiresRouteSettlement(order)) {
+                marketRoutingService.settle(userId, order.getId(), plan.items());
+            }
         }
         for (Map.Entry<String, List<SettlementOrderPlan>> entry : settlementPlansByMember.entrySet()) {
             MemberDO member = membersById.get(entry.getKey());
@@ -2386,7 +2446,9 @@ public class LotteryServiceImpl implements LotteryService {
         }
         List<String> groupSettlementReplies = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : winningLines.entrySet()) {
-            MemberDO member = requireMember(winningMemberIds.get(entry.getKey()), userId);
+            // These member objects were already owner-scoped, locked and updated in the same transaction.
+            MemberDO member = membersById.get(winningMemberIds.get(entry.getKey()));
+            if (member == null) throw exception(MEMBER_NOT_FOUND);
             BigDecimal payout = money(winningPayouts.get(entry.getKey()));
             BigDecimal afterBalance = money(member.getBalance());
             String settlementReply = robotReplyTemplate.settlement(entry.getKey(), entry.getValue(), payout,
@@ -2407,21 +2469,8 @@ public class LotteryServiceImpl implements LotteryService {
             messageMapper.insert(message);
         }
         if (shouldPublishSettlementArtifacts(actor, !orders.isEmpty(), issue.getOpenedAt())) {
-            MessageDO payoutSummary = new MessageDO();
-            payoutSummary.setChannel(CHANNEL_WEB_GROUP);
-            payoutSummary.setMemberId(null);
-            payoutSummary.setMember("");
-            payoutSummary.setPeriod(period);
-            payoutSummary.setContent("");
-            payoutSummary.setStatus("已结算");
-            payoutSummary.setExternalId("payout-summary:" + period);
-            payoutSummary.setCommandType(COMMAND_PAYOUT_SUMMARY);
-            payoutSummary.setMessageType(TYPE_PLAYER);
-            payoutSummary.setReply(roomDisplayText(robotReplyTemplate.payoutSummary(groupSettlementReplies,
-                    money(settlementTotals.roomPayout()))));
-            payoutSummary.setProcessedAt(LocalDateTime.now());
-            payoutSummary.setUserId(userId);
-            messageMapper.insert(payoutSummary);
+            publishPayoutSummaryIfMissing(userId, period, groupSettlementReplies,
+                    money(settlementTotals.roomPayout()));
             logAs(userId, actor, "-", "结算期号 " + period + "，真实订单 " + details.size() + " 笔，投额 "
                     + money(settlementTotals.realBet()) + "，派彩 " + money(settlementTotals.realPayout()) + "，原因 "
                     + StrUtil.blankToDefault(reason, "开奖API二次确认"));
@@ -2433,6 +2482,10 @@ public class LotteryServiceImpl implements LotteryService {
                 "alreadySettled", false);
         if (autoRebate) result.put("rebate", applyRebatesInternal(userId, actor));
         return result;
+    }
+
+    static boolean requiresRouteSettlement(OrderDO order) {
+        return !"LOCAL_ONLY".equals(order.getDeliveryMode());
     }
 
     @Override
@@ -2551,6 +2604,45 @@ public class LotteryServiceImpl implements LotteryService {
         return processIncomingMessageInternal(reqVO, loginName());
     }
 
+    private CurrentCancelResult cancelCurrentRoomOrders(MemberDO member, String channel, String actor,
+                                                        boolean onlyFollowOrders) {
+        // Ignore unopened previews, but never trust the client-supplied period for a cancellation.
+        IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, member.getUserId())
+                        .isNotNull(IssueDO::getOpenedAt).orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        if (current == null || !"OPEN".equals(current.getStatus())) {
+            return new CurrentCancelResult(current == null ? null : current.getPeriod(), 0, 0, 0, 0);
+        }
+        LambdaQueryWrapper<OrderDO> query = new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, member.getUserId()).eq(OrderDO::getMemberId, member.getId())
+                .eq(OrderDO::getPeriod, current.getPeriod()).eq(OrderDO::getStatus, "未开奖");
+        if (onlyFollowOrders) {
+            query.isNotNull(OrderDO::getFollowId);
+        } else {
+            query.eq(OrderDO::getSource, CHANNEL_WEB_PRIVATE.equals(channel) ? "私聊" : CHANNEL_WEB_GROUP);
+        }
+        List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
+                query.orderByAsc(OrderDO::getCreateTime).orderByAsc(OrderDO::getId)));
+        int cancelled = 0;
+        int pending = 0;
+        int rejected = 0;
+        for (OrderDO order : orders) {
+            try {
+                CancelResult result = cancelOrderInternal(order.getId(), member.getId(), actor, true);
+                if ("已退码".equals(result.status())) cancelled++;
+                else if ("退码处理中".equals(result.status())) pending++;
+            } catch (ServiceException ex) {
+                if (Set.of(ORDER_CAN_NOT_CANCEL.getCode(), ORDER_NOT_FOUND.getCode(),
+                        MARKET_ORDER_RECONCILING.getCode(), MARKET_WRITE_DISABLED.getCode()).contains(ex.getCode())) {
+                    rejected++;
+                } else {
+                    throw ex;
+                }
+            }
+        }
+        return new CurrentCancelResult(current.getPeriod(), orders.size(), cancelled, pending, rejected);
+    }
+
     private Map<String, Object> processIncomingMessageInternal(LotteryReqVO.IncomingMessage reqVO, String actor) {
         MemberDO member = StrUtil.isNotBlank(reqVO.getMemberId()) ? requireMember(reqVO.getMemberId())
                 : findMemberByName(reqVO.getMemberName());
@@ -2560,9 +2652,16 @@ public class LotteryServiceImpl implements LotteryService {
             MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
                     new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                             .eq(MessageDO::getExternalId, reqVO.getExternalId())));
-            if (existing != null) return map("duplicate", true, "messageId", existing.getId(),
-                    "orderId", existing.getOrderId(), "status", existing.getStatus(), "reply", existing.getReply(),
-                    "commandType", existing.getCommandType());
+            if (existing != null) {
+                Map<String, Object> duplicate = map("duplicate", true, "messageId", existing.getId(),
+                        "orderId", existing.getOrderId(), "status", existing.getStatus(), "reply", existing.getReply(),
+                        "commandType", existing.getCommandType());
+                if ("DRAW_REQUEST".equals(existing.getCommandType()) && StrUtil.isNotBlank(existing.getDrawImage())) {
+                    duplicate.put("period", existing.getPeriod());
+                    duplicate.put("drawImage", messageDrawImage(existing));
+                }
+                return duplicate;
+            }
         }
         LotteryRoomMessagePolicy.MessageType messageType = roomMessagePolicy.classify(content);
         if (messageType == LotteryRoomMessagePolicy.MessageType.CHAT) {
@@ -2593,6 +2692,54 @@ public class LotteryServiceImpl implements LotteryService {
             String reply = robotReplyTemplate.profitLoss(member.getName(), member.getProfitLoss());
             MessageDO message = saveCommandMessage(member, reqVO, "PROFIT_LOSS", reply);
             return map("messageId", message.getId(), "reply", reply, "commandType", "PROFIT_LOSS");
+        }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.FOLLOW) {
+            LotteryPlayerFollowService.BindResult bound = playerFollowService.bind(member, reqVO.getChannel());
+            String reply = robotReplyTemplate.followResult(member.getName(), bound.text());
+            MessageDO message = saveCommandMessage(member, reqVO, "FOLLOW", reply);
+            return map("messageId", message.getId(), "reply", reply, "commandType", "FOLLOW");
+        }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.STOP) {
+            int stopped = playerFollowService.stop(member);
+            CurrentCancelResult cancelled = cancelCurrentRoomOrders(member, reqVO.getChannel(), actor, true);
+            String reply = robotReplyTemplate.followStopResult(member.getName(), stopped, cancelled.matched(),
+                    cancelled.cancelled(), cancelled.pending(), cancelled.rejected());
+            MessageDO message = saveCommandMessage(member, reqVO, "FOLLOW_STOP", reply);
+            if (cancelled.period() != null) {
+                message.setPeriod(cancelled.period());
+                messageMapper.updateById(message);
+            }
+            return map("messageId", message.getId(), "reply", reply, "commandType", "FOLLOW_STOP");
+        }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.CANCEL_CURRENT) {
+            CurrentCancelResult cancelled = cancelCurrentRoomOrders(member, reqVO.getChannel(), actor, false);
+            String reply = cancelled.matched() == 0 ? robotReplyTemplate.cancelCurrentNoRecord(member.getName())
+                    : robotReplyTemplate.cancelCurrentResult(member.getName(), cancelled.cancelled(),
+                    cancelled.pending(), cancelled.rejected());
+            MessageDO message = saveCommandMessage(member, reqVO, "CANCEL_CURRENT", reply);
+            if (cancelled.period() != null) {
+                message.setPeriod(cancelled.period());
+                messageMapper.updateById(message);
+            }
+            return map("messageId", message.getId(), "reply", reply, "commandType", "CANCEL_CURRENT");
+        }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.DRAW_REQUEST) {
+            MessageDO draw = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                    new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                            .eq(MessageDO::getCommandType, COMMAND_DRAW_RESULT)
+                            .orderByDesc(MessageDO::getPeriod).last("LIMIT 1")));
+            if (draw != null && StrUtil.isBlank(draw.getDrawImage())) ensureRoomDrawImages(member.getUserId(), List.of(draw));
+            boolean available = draw != null && StrUtil.isNotBlank(draw.getDrawImage());
+            String reply = available ? roomRobotReply(draw) : robotReplyTemplate.noDrawResult(member.getName());
+            MessageDO message = saveCommandMessage(member, reqVO, "DRAW_REQUEST", reply);
+            if (available) {
+                message.setPeriod(draw.getPeriod());
+                message.setDrawImage(draw.getDrawImage());
+                messageMapper.updateById(message);
+            }
+            return map("messageId", message.getId(), "reply", reply, "commandType", "DRAW_REQUEST",
+                    "period", available ? draw.getPeriod() : "", "result", available ? draw.getContent() : "",
+                    "drawImage", available ? messageDrawImage(draw) : "");
         }
         java.util.regex.Matcher amount = java.util.regex.Pattern.compile("^(上|下)(?:分)?(\\d+(?:\\.\\d+)?)$").matcher(content);
         if (amount.matches()) {
@@ -3143,7 +3290,8 @@ public class LotteryServiceImpl implements LotteryService {
                                                Map<String, Integer> avatarByMemberId,
                                                Map<String, Integer> avatarByMemberName) {
         Map<String, Object> result = messageMap(item);
-        if (COMMAND_DRAW_RESULT.equals(item.getCommandType()) && StrUtil.isNotBlank(item.getDrawImage())) {
+        if (Set.of(COMMAND_DRAW_RESULT, "DRAW_REQUEST").contains(item.getCommandType())
+                && StrUtil.isNotBlank(item.getDrawImage())) {
             result.put("drawImage", messageDrawImage(item));
         }
         boolean own = Objects.equals(item.getMemberId(), member.getId())
@@ -3250,6 +3398,23 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> placePlayerFollowBet(Long userId, String memberId, String period,
+                                                     String content, String channel, String followId, String executionId) {
+        MemberDO member = requireMember(memberId, userId);
+        if (isAutoProxy(member) || !Set.of(CHANNEL_WEB_GROUP, CHANNEL_WEB_PRIVATE).contains(channel)) {
+            throw exception(ROOM_CREDENTIAL_INVALID);
+        }
+        LotteryReqVO.PlaceBet bet = new LotteryReqVO.PlaceBet();
+        bet.setMemberId(memberId);
+        bet.setPeriod(period);
+        bet.setContent(content);
+        bet.setChannel(channel);
+        bet.setExternalId("player-follow:" + executionId);
+        return betResultMap(placeBetInternal(bet, member.getName(), TYPE_PLAYER, followId));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             RoomAccess access = requireRoomAccess(reqVO);
@@ -3321,7 +3486,7 @@ public class LotteryServiceImpl implements LotteryService {
         String reply = robotReplyTemplate.roomClosed(member.getName());
         MessageDO message = saveCommandMessage(member, reqVO, "ROOM_CLOSED", reply);
         message.setStatus("已拒绝");
-        message.setError("当前未开盘");
+        message.setError(robotReplyTemplate.roomClosedReason());
         messageMapper.updateById(message);
         return map("messageId", message.getId(), "reply", reply, "commandType", "ROOM_CLOSED");
     }
@@ -3494,6 +3659,29 @@ public class LotteryServiceImpl implements LotteryService {
                 message.setReply(reply);
             }
         }
+    }
+
+    private void publishPayoutSummaryIfMissing(Long userId, String period, List<String> settlementReplies,
+                                               BigDecimal totalPayout) {
+        String externalId = "payout-summary:" + period;
+        MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                        .eq(MessageDO::getExternalId, externalId).last("LIMIT 1")));
+        if (existing != null) return;
+        MessageDO payoutSummary = new MessageDO();
+        payoutSummary.setChannel(CHANNEL_WEB_GROUP);
+        payoutSummary.setMemberId(null);
+        payoutSummary.setMember("");
+        payoutSummary.setPeriod(period);
+        payoutSummary.setContent("");
+        payoutSummary.setStatus("已结算");
+        payoutSummary.setExternalId(externalId);
+        payoutSummary.setCommandType(COMMAND_PAYOUT_SUMMARY);
+        payoutSummary.setMessageType(TYPE_PLAYER);
+        payoutSummary.setReply(roomDisplayText(robotReplyTemplate.payoutSummary(settlementReplies, totalPayout)));
+        payoutSummary.setProcessedAt(LocalDateTime.now());
+        payoutSummary.setUserId(userId);
+        messageMapper.insert(payoutSummary);
     }
 
     /** Persist the image with its draw message; existing messages are backfilled when read. */

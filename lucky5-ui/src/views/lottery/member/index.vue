@@ -19,7 +19,6 @@ const store = useLucky5Store()
 const timeType = ref(0)
 const puller = ref('')
 const memberSearchInput = ref('')
-const memberSearchKeyword = ref('')
 const memberVisible = ref(false)
 const transferVisible = ref(false)
 const clearAllVisible = ref(false)
@@ -54,7 +53,7 @@ const pullers = computed(() => [
   ...new Set(store.members.map((item) => item.partner).filter((item) => item && item !== '无'))
 ])
 const rows = computed(() => {
-  const keyword = memberSearchKeyword.value.trim().toLocaleLowerCase()
+  const keyword = memberSearchInput.value.trim().toLocaleLowerCase()
   return store.members.filter((item) => {
     if (puller.value && item.partner !== puller.value) return false
     if (!keyword) return true
@@ -294,10 +293,6 @@ const formatStatistic = (value: number) => {
   return String(Math.round((Math.abs(amount) < 0.005 ? 0 : amount) * 100) / 100)
 }
 
-const applyMemberSearch = () => {
-  memberSearchKeyword.value = memberSearchInput.value.trim()
-}
-
 let memberRefreshTimer: number | undefined
 const startMemberRefresh = () => {
   if (memberRefreshTimer) return
@@ -362,12 +357,11 @@ onBeforeUnmount(stopMemberRefresh)
           v-model="memberSearchInput"
           clearable
           placeholder="输入昵称"
-          @clear="applyMemberSearch"
-          @keyup.enter="applyMemberSearch"
         />
       </div>
 
       <PaginatedTable
+        :key="`${puller}:${memberSearchInput}`"
         mobile-layout="member-scroll"
         :data="rows"
         :expand-row-keys="rows.map((row) => row.id)"

@@ -150,6 +150,20 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void walkFixedUsesThePoolAfterWalkLikeTheReferenceSite() {
+        List<LotteryBettingService.ParsedBet> walked = service.parse("12345走56789三定各1", odds);
+        assertThat(walked).hasSize(240)
+                .containsExactlyElementsOf(service.parse("56789三定各1", odds));
+        assertThat(walked).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("567X", "X987")
+                .allSatisfy(selection -> assertThat(selection).matches("[56789X]{4}"));
+        assertThat(service.parse("98走123三定各1", odds)).hasSize(24)
+                .containsExactlyElementsOf(service.parse("123三定各1", odds));
+        assertThat(service.parse("98走112三定各1", odds)).hasSize(12)
+                .containsExactlyElementsOf(service.parse("112三定各1", odds));
+    }
+
+    @Test
     void splitsCombinedCommandsAndPreservesDuplicateCommands() {
         assertThat(service.parse("5679各1.1 9765各1", odds)).hasSize(2);
         assertThat(service.parse("0759三定各1,0759三定各1", odds)).hasSize(192);
@@ -249,6 +263,19 @@ class LotteryBettingServiceTest {
         assertThat(service.parse("千12五34五位二定各1", odds)).hasSize(4);
         assertThat(service.parse("千12五位二定五34各1", odds)).hasSize(20);
         assertThat(service.parse("除12配34配二定各1", odds)).hasSize(552);
+    }
+
+    @Test
+    void upperPrizeMatchesAnyUnspecifiedPositionLikeTheReferenceSite() {
+        List<LotteryBettingService.ParsedBet> prefixed = service.parse("1上奖四定各1", odds);
+        List<LotteryBettingService.ParsedBet> suffixed = service.parse("四定上奖1各1", odds);
+
+        assertThat(prefixed).hasSize(3439);
+        assertThat(suffixed).hasSize(3439);
+        assertThat(prefixed).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("1111", "7419").doesNotContain("0000", "9876");
+        assertThat(prefixed).extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactlyElementsOf(suffixed.stream().map(LotteryBettingService.ParsedBet::selection).toList());
     }
 
     @Test

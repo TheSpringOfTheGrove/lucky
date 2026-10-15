@@ -230,7 +230,15 @@ export const sendRoomMessageApi = (
   credential: RoomCredential,
   data: { period?: string; content: string; externalId: string; sentAt?: number }
 ) =>
-  request<{ messageId: number; reply: string; commandType: string; orderId?: string }>(
+  request<{
+    messageId: number
+    reply: string
+    commandType: string
+    orderId?: string
+    period?: string
+    result?: string
+    drawImage?: string
+  }>(
     '/app-api/lottery/room/messages',
     {
       method: 'POST',

@@ -100,6 +100,7 @@ body.lucky-admin-theme .dashboard-breadcrumb {
     height: auto;
     overflow-x: hidden;
     overflow-y: scroll;
+    touch-action: pan-x pan-y;
   }
   html:has(body.lucky-admin-theme.el-popup-parent--hidden) {
     overflow-y: hidden;
@@ -506,6 +507,10 @@ body.lucky-admin-theme .dashboard-breadcrumb {
       font-size: 14px;
       line-height: 20px;
     }
+    .luck-layout #member-nickname-search {
+      // iOS Safari otherwise zooms the whole page when this field receives focus.
+      font-size: 16px;
+    }
     .luck-layout .member-row-actions {
       gap: 4px;
       min-height: 34px;
@@ -839,6 +844,48 @@ body.lucky-admin-theme .dashboard-breadcrumb {
       }
       .el-dialog__footer .el-button {
         min-width: 0;
+      }
+    }
+    .el-dialog.owner-account-dialog .owner-account-pagination {
+      float: none;
+      width: 100%;
+      height: auto;
+      margin: 12px 0 6px !important;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 6px 2px;
+      font-size: 12px;
+      --el-pagination-button-width: 24px;
+      --el-pagination-button-height: 28px;
+      --el-pagination-item-gap: 2px;
+
+      &::before {
+        content: '';
+        flex: 0 0 100%;
+        height: 0;
+        order: 1;
+      }
+      .el-pagination__total,
+      .el-pagination__sizes {
+        order: 0;
+      }
+      .btn-prev,
+      .el-pager,
+      .btn-next,
+      .el-pagination__jump {
+        order: 2;
+      }
+      .el-select {
+        width: 84px;
+      }
+      .el-pagination__jump .el-input {
+        width: 36px;
+      }
+      .el-pagination__goto {
+        margin-right: 2px;
+      }
+      .el-pagination__classifier {
+        margin-left: 2px;
       }
     }
     // The page and a long modal can each reserve a scrollbar. Give the

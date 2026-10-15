@@ -304,7 +304,8 @@ public class LotteryBettingService {
                     amount, odd.getRate(), content.length());
         }
 
-        Matcher poolMatcher = Pattern.compile("^([0-9]+)([二三四])定").matcher(expression);
+        // 旧指令“前池走后池三定”按后池展开，前池不是可下注号码池。
+        Matcher poolMatcher = Pattern.compile("^(?:[0-9]+走)?([0-9]+)([二三四])定").matcher(expression);
         if (poolMatcher.find()) {
             int count = CHINESE_COUNT.get(poolMatcher.group(2).charAt(0));
             OddDO odd = configuredOdd("regex" + count + "d", amount, odds);
@@ -547,15 +548,21 @@ public class LotteryBettingService {
     private List<String> applyFilters(List<String> input, String expression) {
         List<String> result = new ArrayList<>(input);
         Matcher upper = Pattern.compile("上奖([0-9]+)").matcher(expression);
-        if (upper.find()) {
-            Set<Character> allowed = chars(upper.group(1));
-            Set<Integer> constrained = extractPositionGroups(expression.substring(0, upper.start())).keySet();
+        Matcher leadingUpper = Pattern.compile("^([0-9]+)上奖").matcher(expression);
+        boolean hasUpper = upper.find();
+        boolean hasLeadingUpper = leadingUpper.find();
+        if (hasUpper || hasLeadingUpper) {
+            String upperDigits = hasUpper ? upper.group(1) : leadingUpper.group(1);
+            int upperStart = hasUpper ? upper.start() : leadingUpper.start();
+            Set<Character> allowed = chars(upperDigits);
+            Set<Integer> constrained = extractPositionGroups(expression.substring(0, upperStart)).keySet();
+            // 上奖取的是未指定位置中至少一位命中号码池，而不是要求所有未指定位置都命中。
             result.removeIf(value -> {
                 for (int index = 0; index < value.length(); index++) {
                     char digit = value.charAt(index);
-                    if (digit != 'X' && !constrained.contains(index) && !allowed.contains(digit)) return true;
+                    if (digit != 'X' && !constrained.contains(index) && allowed.contains(digit)) return false;
                 }
-                return false;
+                return true;
             });
         }
 

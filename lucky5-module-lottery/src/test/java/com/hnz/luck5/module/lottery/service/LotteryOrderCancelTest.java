@@ -1,6 +1,7 @@
 package com.hnz.luck5.module.lottery.service;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
@@ -10,6 +11,7 @@ import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.SwitchSettingDO;
 import com.hnz.luck5.module.lottery.controller.app.vo.LotteryRoomReqVO;
+import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
 import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.LinkConfigMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MarketRouteItemMapper;
@@ -27,9 +29,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -81,6 +85,7 @@ class LotteryOrderCancelTest {
         ReflectionTestUtils.setField(service, "linkConfigMapper", linkConfigMapper);
         ReflectionTestUtils.setField(service, "issueFreshnessPolicy", new LotteryIssueFreshnessPolicy());
         ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
+        ReflectionTestUtils.setField(service, "roomMessagePolicy", new LotteryRoomMessagePolicy());
         ReflectionTestUtils.setField(service, "operationLogMapper", mock(OperationLogMapper.class));
         ReflectionTestUtils.setField(service, "balanceLedgerService", mock(LotteryBalanceLedgerService.class));
     }
@@ -170,6 +175,69 @@ class LotteryOrderCancelTest {
         assertThat(member.getTotalBet()).isEqualByComparingTo("0.00");
         verify(messageMapper, never()).insert(any(MessageDO.class));
         verify(messageMapper).update(any(), any(LambdaUpdateWrapper.class));
+    }
+
+    @Test
+    void cancelCommandCancelsEveryCurrentIssueOrderInThisRoom() {
+        MemberDO member = commandMember();
+        OrderDO first = pendingOrder("PLAYER", "网页群");
+        OrderDO second = pendingOrder("PLAYER", "网页群");
+        second.setId("O-2");
+        second.setAmount(new BigDecimal("25"));
+        second.setFollowId("F-1");
+        IssueDO issue = openIssue(first.getPeriod());
+        issue.setOpenedAt(LocalDateTime.now().minusSeconds(10));
+        SwitchSettingDO openCancel = new SwitchSettingDO();
+        openCancel.setEnabled(true);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(orderMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(orderMapper.selectById("O-1")).thenReturn(first);
+        when(orderMapper.selectById("O-2")).thenReturn(second);
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        when(switchSettingMapper.selectOne(any())).thenReturn(openCancel);
+        when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        Map<String, Object> response = service.processIncomingMessage(command("取消"));
+
+        assertThat(response.get("reply")).asString().contains("已退码2笔");
+        assertThat(member.getBalance()).isEqualByComparingTo("175.00");
+        ArgumentCaptor<Wrapper> selected = ArgumentCaptor.forClass(Wrapper.class);
+        verify(orderMapper).selectList(selected.capture());
+        assertThat(selected.getValue().getSqlSegment()).contains("member_id", "source", "period", "status")
+                .doesNotContain("follow_id");
+        assertThat(((com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<?>) selected.getValue())
+                .getParamNameValuePairs().values()).contains(first.getPeriod())
+                .doesNotContain("old-client-period");
+    }
+
+    @Test
+    void stopCommandOnlyCancelsCurrentIssueFollowOrdersAcrossRooms() {
+        MemberDO member = commandMember();
+        OrderDO followOrder = pendingOrder("PLAYER", "私聊");
+        followOrder.setFollowId("F-PRIVATE");
+        IssueDO issue = openIssue(followOrder.getPeriod());
+        issue.setOpenedAt(LocalDateTime.now().minusSeconds(10));
+        SwitchSettingDO openCancel = new SwitchSettingDO();
+        openCancel.setEnabled(true);
+        LotteryPlayerFollowService followService = mock(LotteryPlayerFollowService.class);
+        ReflectionTestUtils.setField(service, "playerFollowService", followService);
+        when(followService.stop(member)).thenReturn(2);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(orderMapper.selectList(any())).thenReturn(List.of(followOrder));
+        when(orderMapper.selectById("O-1")).thenReturn(followOrder);
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        when(switchSettingMapper.selectOne(any())).thenReturn(openCancel);
+        when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        Map<String, Object> response = service.processIncomingMessage(command("停止"));
+
+        assertThat(response.get("reply")).asString().contains("所有跟单已停止", "已退码1笔");
+        ArgumentCaptor<Wrapper> selected = ArgumentCaptor.forClass(Wrapper.class);
+        verify(orderMapper).selectList(selected.capture());
+        assertThat(selected.getValue().getSqlSegment()).contains("member_id", "period", "follow_id")
+                .doesNotContain("source");
     }
 
     @Test
@@ -270,6 +338,26 @@ class LotteryOrderCancelTest {
         order.setAmount(new BigDecimal("100"));
         order.setVersion(0);
         return order;
+    }
+
+    private MemberDO commandMember() {
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setName("玩家A");
+        member.setUserId(142L);
+        member.setBalance(new BigDecimal("50"));
+        member.setTotalBet(new BigDecimal("125"));
+        member.setVersion(0);
+        return member;
+    }
+
+    private LotteryReqVO.IncomingMessage command(String content) {
+        LotteryReqVO.IncomingMessage request = new LotteryReqVO.IncomingMessage();
+        request.setMemberId("M-1");
+        request.setContent(content);
+        request.setChannel("网页群");
+        request.setPeriod("old-client-period");
+        return request;
     }
 
     private IssueDO openIssue(String period) {

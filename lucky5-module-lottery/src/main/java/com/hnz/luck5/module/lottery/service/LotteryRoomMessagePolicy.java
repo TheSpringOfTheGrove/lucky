@@ -19,6 +19,10 @@ public class LotteryRoomMessagePolicy {
         PROFIT_LOSS,
         AMOUNT,
         CANCEL,
+        FOLLOW,
+        STOP,
+        CANCEL_CURRENT,
+        DRAW_REQUEST,
         BET
     }
 
@@ -45,6 +49,10 @@ public class LotteryRoomMessagePolicy {
         if (CANCEL_COMMAND.matcher(content).matches()) {
             return MessageType.CANCEL;
         }
+        if ("跟".equals(content)) return MessageType.FOLLOW;
+        if ("停止".equals(content)) return MessageType.STOP;
+        if ("取消".equals(content)) return MessageType.CANCEL_CURRENT;
+        if ("奖".equals(content)) return MessageType.DRAW_REQUEST;
         // The room input is command-only. Both valid and invalid remaining messages go through the same
         // transactional placement/rejection path so the original text and a clear robot response are retained.
         return MessageType.BET;

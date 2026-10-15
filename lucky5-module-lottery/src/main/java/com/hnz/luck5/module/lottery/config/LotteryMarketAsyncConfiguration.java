@@ -33,4 +33,18 @@ public class LotteryMarketAsyncConfiguration {
         executor.initialize();
         return executor;
     }
+
+    /** Settle different owners independently without sharing the market write or read queues. */
+    @Bean("lotterySettlementExecutor")
+    public Executor lotterySettlementExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(6);
+        executor.setMaxPoolSize(6);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("lottery-settlement-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(60);
+        executor.initialize();
+        return executor;
+    }
 }

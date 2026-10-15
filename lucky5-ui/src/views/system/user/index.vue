@@ -168,7 +168,7 @@
     v-model="ownerDialogVisible"
     :title="`${ownerParent?.username || ''} 的老板账号`"
     width="90%"
-    class="lucky-dialog"
+    class="lucky-dialog owner-account-dialog"
     append-to-body
   >
     <el-form ref="ownerQueryFormRef" :model="ownerQuery" :inline="true" class="mb-12px">
@@ -228,6 +228,7 @@
       @command="handleCommand"
     />
     <Pagination
+      class="owner-account-pagination"
       :total="ownerTotal"
       v-model:page="ownerQuery.pageNo"
       v-model:limit="ownerQuery.pageSize"

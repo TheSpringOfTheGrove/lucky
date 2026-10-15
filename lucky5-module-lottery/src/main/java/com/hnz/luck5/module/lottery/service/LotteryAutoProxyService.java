@@ -57,6 +57,15 @@ public class LotteryAutoProxyService {
      * Creates durable per-member tasks. The unique database key makes repeated OPEN events harmless.
      */
     public RunResult run(Long userId, String period) {
+        return schedule(userId, period, false);
+    }
+
+    /** Starts this already-open period immediately when the owner turns the room on. */
+    public RunResult runNow(Long userId, String period) {
+        return schedule(userId, period, true);
+    }
+
+    private RunResult schedule(Long userId, String period, boolean immediate) {
         String normalizedPeriod = StrUtil.trim(period);
         if (!normalizedPeriod.matches("\\d+")) {
             return new RunResult(normalizedPeriod, 0, 0);
@@ -83,12 +92,27 @@ public class LotteryAutoProxyService {
             task.setError("");
             task.setAttemptCount(0);
             task.setVersion(0);
-            task.setScheduledAt(LocalDateTime.now().plusSeconds(ThreadLocalRandom.current().nextLong(5, 31)));
+            LocalDateTime scheduledAt = LocalDateTime.now();
+            task.setScheduledAt(immediate ? scheduledAt
+                    : scheduledAt.plusSeconds(ThreadLocalRandom.current().nextLong(5, 31)));
             try {
                 executionMapper.insert(task);
                 scheduled++;
             } catch (DuplicateKeyException ignored) {
-                // A repeated OPEN event or another application instance already created this member-period task.
+                // A period OPEN event may have queued (or failed) this task while the room was still off.
+                // Move only unfinished tasks forward; RUNNING/SUCCESS and completed orders stay untouched.
+                if (immediate) {
+                    scheduled += DataPermissionUtils.executeIgnore(() -> executionMapper.update(null,
+                            new LambdaUpdateWrapper<AutoProxyExecutionDO>()
+                                    .eq(AutoProxyExecutionDO::getUserId, userId)
+                                    .eq(AutoProxyExecutionDO::getMemberId, member.getId())
+                                    .eq(AutoProxyExecutionDO::getPeriod, normalizedPeriod)
+                                    .in(AutoProxyExecutionDO::getStatus, SCHEDULED, FAILED, SKIPPED)
+                                    .set(AutoProxyExecutionDO::getStatus, SCHEDULED)
+                                    .set(AutoProxyExecutionDO::getScheduledAt, scheduledAt)
+                                    .set(AutoProxyExecutionDO::getCompletedAt, null)
+                                    .set(AutoProxyExecutionDO::getError, "")));
+                }
             }
         }
         return new RunResult(normalizedPeriod, members.size(), scheduled);

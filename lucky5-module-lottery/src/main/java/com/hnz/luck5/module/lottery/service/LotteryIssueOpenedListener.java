@@ -16,14 +16,31 @@ public class LotteryIssueOpenedListener {
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryIssueOpenedListener.class);
 
     private final LotteryAutoProxyService autoProxyService;
+    private final LotteryPlayerFollowService playerFollowService;
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void handle(LotteryIssueOpenedEvent event) {
         try {
+            TenantUtils.execute(event.tenantId(), () -> playerFollowService.schedule(event.userId(), event.period()));
+        } catch (RuntimeException ex) {
+            LOGGER.error("玩家跟单排期失败 tenant={} user={} period={}", event.tenantId(), event.userId(), event.period(), ex);
+        }
+        try {
             TenantUtils.execute(event.tenantId(), () -> autoProxyService.run(event.userId(), event.period()));
         } catch (RuntimeException ex) {
             LOGGER.error("自动托执行失败 tenant={} user={} period={}", event.tenantId(), event.userId(), event.period(), ex);
+        }
+    }
+
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void handleRoomStarted(LotteryRoomStartedEvent event) {
+        try {
+            TenantUtils.execute(event.tenantId(), () -> autoProxyService.runNow(event.userId(), event.period()));
+        } catch (RuntimeException ex) {
+            LOGGER.error("房间启动后自动托排期失败 tenant={} user={} period={}", event.tenantId(),
+                    event.userId(), event.period(), ex);
         }
     }
 

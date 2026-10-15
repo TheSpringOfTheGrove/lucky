@@ -11,6 +11,7 @@ import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.PresetOrderMapper;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -75,6 +77,42 @@ class LotteryAutoProxyServiceTest {
         assertThat(task.getStatus()).isEqualTo("SCHEDULED");
         assertThat(task.getScheduledAt()).isBetween(before.plusSeconds(4), LocalDateTime.now().plusSeconds(31));
         verify(lotteryService, never()).placeAutoBet(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void turningRoomOnSchedulesThisPeriodImmediately() {
+        when(memberMapper.selectList(any())).thenReturn(List.of(member()));
+        when(messageMapper.selectOne(any())).thenReturn(null);
+        when(executionMapper.insert(any(AutoProxyExecutionDO.class))).thenReturn(1);
+        LocalDateTime before = LocalDateTime.now();
+
+        LotteryAutoProxyService.RunResult result = service.runNow(10L, "20260809001");
+
+        assertThat(result.scheduled()).isEqualTo(1);
+        ArgumentCaptor<AutoProxyExecutionDO> captor = ArgumentCaptor.forClass(AutoProxyExecutionDO.class);
+        verify(executionMapper).insert(captor.capture());
+        assertThat(captor.getValue().getScheduledAt()).isBetween(before, LocalDateTime.now());
+        verify(lotteryService, never()).placeAutoBet(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void turningRoomOnReschedulesAnUnfinishedTaskFromBeforeItOpened() {
+        when(memberMapper.selectList(any())).thenReturn(List.of(member()));
+        when(messageMapper.selectOne(any())).thenReturn(null);
+        when(executionMapper.insert(any(AutoProxyExecutionDO.class)))
+                .thenThrow(new DuplicateKeyException("existing member-period task"));
+        when(executionMapper.update(any(), any())).thenReturn(1);
+
+        LotteryAutoProxyService.RunResult result = service.runNow(10L, "20260809001");
+
+        assertThat(result.scheduled()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AutoProxyExecutionDO>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(executionMapper).update(any(), captor.capture());
+        captor.getValue().getSqlSegment();
+        assertThat(captor.getValue().getParamNameValuePairs().values())
+                .contains("SCHEDULED", "FAILED", "SKIPPED");
     }
 
     @Test

@@ -30,7 +30,8 @@ public class LotteryUserDataPermissionRule implements DataPermissionRule {
             "lucky5_market_route_item", "lucky5_draw",
             "lucky5_issue", "lucky5_issue_transition", "lucky5_preset_order", "lucky5_quick_command",
             "lucky5_follow_order", "lucky5_operation_log", "lucky5_message", "lucky5_rebate_record",
-            "lucky5_chima_record", "lucky5_auto_proxy_execution");
+            "lucky5_chima_record", "lucky5_auto_proxy_execution", "lucky5_player_follow",
+            "lucky5_player_follow_execution");
 
     @Override
     public Set<String> getTableNames() {

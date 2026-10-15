@@ -110,7 +110,7 @@ class LotteryRobotReplyTemplateTest {
 
     @Test
     void shouldFormatClosedAndAmountReplies() {
-        assertThat(template.roomClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n当前未开盘");
+        assertThat(template.roomClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n机器人尚未启动，请联系老师");
         assertThat(template.periodClosed("旺旺杀米米")).isEqualTo("@旺旺杀米米\n已结束");
         assertThat(template.amountPending("旺旺杀米米")).isEqualTo("@旺旺杀米米\n请稍后");
         assertThat(template.amountAudited("旺旺杀米米", "上分", new BigDecimal("100.00"),

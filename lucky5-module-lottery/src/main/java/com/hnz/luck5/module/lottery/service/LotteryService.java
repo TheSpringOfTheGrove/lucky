@@ -109,6 +109,8 @@ public interface LotteryService {
 
     void publishVerifiedDrawForUser(Long userId, String period, String result);
 
+    void repairRecentSettledDrawMessagesForUser(Long userId);
+
     void handleMarketIssueOpened(Long userId, String period);
 
     Map<String, Object> getIssueStatus();
@@ -150,6 +152,10 @@ public interface LotteryService {
     Map<String, Object> previewRoomBet(LotteryRoomReqVO.PreviewBet reqVO);
 
     Map<String, Object> processRoomMessage(LotteryRoomReqVO.Message reqVO);
+
+    /** Internal real-player placement used by one durable fixed-instruction follow execution. */
+    Map<String, Object> placePlayerFollowBet(Long userId, String memberId, String period,
+                                             String content, String channel, String followId, String executionId);
 
     Map<String, Object> createRoomAmountRequest(LotteryRoomReqVO.Amount reqVO);
 

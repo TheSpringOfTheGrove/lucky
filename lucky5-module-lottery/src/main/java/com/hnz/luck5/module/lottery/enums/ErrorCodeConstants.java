@@ -50,4 +50,6 @@ public interface ErrorCodeConstants {
             "盘口账号尚未连接，无法开启盘口模式");
     ErrorCode MARKET_BALANCE_NOT_ENOUGH = new ErrorCode(2_001_000_038, "余额不足");
     ErrorCode ROOM_CANCEL_NO_RECORD = new ErrorCode(2_001_000_039, "没有记录");
+    ErrorCode BOSS_ROOM_LOGIN_REQUIRED = new ErrorCode(2_001_000_040,
+            "请先配置会员网址和账号密码，并确认登录成功后再开启老板模式");
 }

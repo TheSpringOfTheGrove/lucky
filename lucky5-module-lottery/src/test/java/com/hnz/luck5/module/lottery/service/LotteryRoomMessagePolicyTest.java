@@ -23,6 +23,10 @@ class LotteryRoomMessagePolicyTest {
         assertThat(policy.classify("yk")).isEqualTo(LotteryRoomMessagePolicy.MessageType.PROFIT_LOSS);
         assertThat(policy.classify("上分100")).isEqualTo(LotteryRoomMessagePolicy.MessageType.AMOUNT);
         assertThat(policy.classify("退码L5-100")).isEqualTo(LotteryRoomMessagePolicy.MessageType.CANCEL);
+        assertThat(policy.classify("跟")).isEqualTo(LotteryRoomMessagePolicy.MessageType.FOLLOW);
+        assertThat(policy.classify("停止")).isEqualTo(LotteryRoomMessagePolicy.MessageType.STOP);
+        assertThat(policy.classify("取消")).isEqualTo(LotteryRoomMessagePolicy.MessageType.CANCEL_CURRENT);
+        assertThat(policy.classify("奖")).isEqualTo(LotteryRoomMessagePolicy.MessageType.DRAW_REQUEST);
         assertThat(policy.classify("大100 单50")).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
         assertThat(policy.classify("千12百34二定各10")).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
     }

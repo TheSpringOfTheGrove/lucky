@@ -377,6 +377,51 @@ const chatMessages = computed<ChatItem[]>(() => {
       message.messageType === 'AUTO_PROXY' &&
       ['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType)
     ) continue
+    if (message.commandType === 'DRAW_REQUEST' && message.drawImage) {
+      const matchingDraw = session.value.draws.find((draw) => draw.period === message.period)
+      messages.push({
+        id: `member-message-${message.id}`,
+        kind: 'member',
+        type: 'text',
+        content: message.content,
+        createdAt: message.createdAt,
+        displayTimeAt: message.sentAt || message.createdAt,
+        senderName: message.member,
+        avatar: message.memberAvatar ?? session.value.member.avatar
+      })
+      messages.push({
+        id: `robot-message-${message.id}`,
+        kind: 'robot',
+        type: 'draw',
+        content: message.reply,
+        createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
+        displayTimeAt: message.createdAt,
+        drawImage: message.drawImage,
+        draw: matchingDraw || {
+          period: message.period,
+          result: '',
+          numbers: [],
+          bigSmall: '',
+          oddEven: '',
+          dragonTiger: '',
+          status: '已开奖',
+          drawTime: message.createdAt,
+          settledAt: message.createdAt
+        }
+      })
+      continue
+    }
+    if (message.commandType === 'FOLLOW_STOPPED') {
+      messages.push({
+        id: `robot-message-${message.id}`,
+        kind: 'robot',
+        type: 'text',
+        content: message.reply,
+        createdAt: message.createdAt,
+        displayTimeAt: message.createdAt
+      })
+      continue
+    }
     const persistedDraw = persistedDrawFromMessage(message)
     if (persistedDraw) {
       // Only the saved image is a draw bubble. A newer lightweight number snapshot cannot invent one.
@@ -1019,7 +1064,7 @@ watch(composer, async () => {
 
 const shouldShowBetSubmitting = (content: string) => {
   const normalized = content.trim()
-  if (!normalized || normalized === '查' || normalized === '余额') return false
+  if (!normalized || ['查', '余额', '盈亏', 'yk', 'YK', '跟', '停止', '取消', '奖'].includes(normalized)) return false
   if (/^(?:上|下)(?:分)?\d+(?:\.\d+)?$/.test(normalized)) return false
   if (/^退(?:码)?\s*[A-Za-z0-9_-]+$/.test(normalized)) return false
   return true
@@ -1077,7 +1122,35 @@ const submitChat = async () => {
       trackedBetMessageIds.value = [...new Set([...trackedBetMessageIds.value, result.messageId])]
       betReplyFastPollUntilMs.value = Math.max(betReplyFastPollUntilMs.value, Date.now() + 30_000)
     }
-    await loadSession(true)
+    if (result.commandType === 'DRAW_REQUEST' && result.drawImage) {
+      const matchingDraw = session.value.draws.find((draw) => draw.period === result.period)
+      localMessages.value = [
+        ...localMessages.value,
+        {
+          id: `pending-robot-message-${externalId}`,
+          kind: 'robot',
+          type: 'draw',
+          content: result.reply,
+          createdAt: dayjs(submittedAt).add(1, 'millisecond').toISOString(),
+          displayTimeAt: submittedAt,
+          serverMessageId: result.messageId,
+          drawImage: result.drawImage,
+          draw: matchingDraw || {
+            period: result.period || '',
+            result: result.result || '',
+            numbers: [...(result.result || '')],
+            bigSmall: '',
+            oddEven: '',
+            dragonTiger: '',
+            status: '已开奖',
+            drawTime: submittedAt,
+            settledAt: submittedAt
+          }
+        }
+      ]
+    } else {
+      await loadSession(true)
+    }
     scheduleSessionRefresh()
     scheduleBetReplyRefresh()
     if (session.value.messages.some((message) => message.id === result.messageId)) {

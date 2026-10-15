@@ -21,7 +21,11 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String roomClosed(String memberName) {
-        return "@" + memberName + "\n当前未开盘";
+        return "@" + memberName + "\n" + roomClosedReason();
+    }
+
+    public String roomClosedReason() {
+        return "机器人尚未启动，请联系老师";
     }
 
     public String periodClosed(String memberName) {
@@ -47,6 +51,50 @@ public class LotteryRobotReplyTemplate {
 
     public String profitLoss(String memberName, BigDecimal profitLoss) {
         return "@" + memberName + "\nyk：" + number(profitLoss);
+    }
+
+    public String followResult(String memberName, String result) {
+        return "@" + memberName + "\n" + result;
+    }
+
+    public String followBalanceStopped(String memberName) {
+        return "@" + memberName + "\n余额不足，跟单已停止";
+    }
+
+    public String followSourceFailed(String memberName) {
+        return "@" + memberName + "\n原下注未成功，这条跟单已停止";
+    }
+
+    public String noDrawResult(String memberName) {
+        return "@" + memberName + "\n暂无开奖结果";
+    }
+
+    public String cancelCurrentNoRecord(String memberName) {
+        return "@" + memberName + "\n当前期没有可取消的订单";
+    }
+
+    public String cancelCurrentResult(String memberName, int cancelled, int pending, int rejected) {
+        if (cancelled == 0 && pending == 0) {
+            return "@" + memberName + "\n当前期订单不能退码";
+        }
+        return "@" + memberName + "\n" + cancelCurrentSummary(cancelled, pending, rejected);
+    }
+
+    public String followStopResult(String memberName, int stopped, int matched,
+                                   int cancelled, int pending, int rejected) {
+        String stoppedText = stopped > 0 ? "所有跟单已停止" : "当前没有进行中的跟单";
+        String cancellationText = matched == 0 ? "当前期没有可退的跟单订单"
+                : cancelled == 0 && pending == 0 ? "当前期跟单订单不能退码"
+                : cancelCurrentSummary(cancelled, pending, rejected);
+        return "@" + memberName + "\n" + stoppedText + "\n" + cancellationText;
+    }
+
+    private String cancelCurrentSummary(int cancelled, int pending, int rejected) {
+        List<String> results = new java.util.ArrayList<>();
+        if (cancelled > 0) results.add("已退码" + cancelled + "笔");
+        if (pending > 0) results.add("退码处理中" + pending + "笔");
+        if (rejected > 0) results.add("未能退码" + rejected + "笔");
+        return "当前期" + String.join("，", results);
     }
 
     public String periodSummary(List<String> memberCommands) {
