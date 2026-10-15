@@ -25,6 +25,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -88,6 +90,10 @@ class LotteryOrderCancelTest {
         ReflectionTestUtils.setField(service, "roomMessagePolicy", new LotteryRoomMessagePolicy());
         ReflectionTestUtils.setField(service, "operationLogMapper", mock(OperationLogMapper.class));
         ReflectionTestUtils.setField(service, "balanceLedgerService", mock(LotteryBalanceLedgerService.class));
+        ReflectionTestUtils.setField(service, "marketOrderStateService", mock(LotteryMarketOrderStateService.class));
+        PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+        when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+        ReflectionTestUtils.setField(service, "transactionManager", transactionManager);
     }
 
     @Test

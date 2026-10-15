@@ -30,15 +30,20 @@ public class LotteryMarketOrderDispatchService {
     private final LotteryMarketSyncService marketSyncService;
     private final LotteryMarketBalanceRefreshService balanceRefreshService;
     private final LotteryMarketAccountLockService accountLockService;
+    private final LotteryMarketReferenceLockService referenceLockService;
+    private final LotteryMarketBetIdEnrichmentService betIdEnrichmentService;
     private final AtomicBoolean recovering = new AtomicBoolean();
 
     public void submit(Long userId, String orderId) {
         if (!marketClient.isRealWritesEnabled()) return;
         Long tenantId = TenantContextHolder.getRequiredTenantId();
-        accountLockService.execute(tenantId, userId, () -> submitLocked(userId, orderId));
+        AtomicBoolean needsDetailLookup = new AtomicBoolean();
+        accountLockService.execute(tenantId, userId,
+                () -> submitLocked(userId, orderId, needsDetailLookup));
+        if (needsDetailLookup.get()) betIdEnrichmentService.enqueue(tenantId, userId, orderId);
     }
 
-    private void submitLocked(Long userId, String orderId) {
+    private void submitLocked(Long userId, String orderId, AtomicBoolean needsDetailLookup) {
         long claimStartedAt = System.nanoTime();
         LotteryMarketOrderStateService.DispatchContext context = stateService.claimSubmit(userId, orderId);
         if (context == null || context.requests().isEmpty()) return;
@@ -67,6 +72,7 @@ public class LotteryMarketOrderDispatchService {
                 // 状态服务会再次校验全量路由、金额和无明细 ID 条件，失败时才保留只读回查。
                 boolean acceptedWithoutDetailIds =
                         stateService.confirmAcceptedDetailsWithoutIdentifiers(userId, orderId);
+                if (acceptedWithoutDetailIds) needsDetailLookup.set(true);
                 LOGGER.info(acceptedWithoutDetailIds
                                 ? "盘口批量已明确受理，缺少逐注明细标识，已按批次结果自动确认 user={} order={} batches={} routes={}"
                                 : "盘口批量已明确受理，转只读明细确认 user={} order={} batches={} routes={}",
@@ -127,13 +133,22 @@ public class LotteryMarketOrderDispatchService {
         LotteryMarketOrderStateService.VerificationContext context =
                 stateService.verificationContext(userId, orderId);
         if (context == null || context.requests().isEmpty()) return;
+        referenceLockService.execute(TenantContextHolder.getRequiredTenantId(), userId, context.period(), () -> {
+            verifyContext(userId, orderId, context);
+            return null;
+        });
+    }
+
+    private void verifyContext(Long userId, String orderId,
+                               LotteryMarketOrderStateService.VerificationContext context) {
         if (verificationExpired(context)) {
             stateService.confirmAcceptedDetailsWithoutIdentifiers(userId, orderId);
             return;
         }
         try {
             Wa55MarketOrderClient.VerificationBatch result = marketClient.verifyAccepted(
-                    context.credentials(), context.period(), context.requests());
+                    context.credentials(), context.period(), context.requests(),
+                    stateService.claimedMarketBetIds(userId, context.period(), orderId));
             if (result.unresolvedBatches().isEmpty()) {
                 LOGGER.info("盘口批量明细自动确认完成 user={} order={} routes={}", userId, orderId,
                         result.confirmations().size());

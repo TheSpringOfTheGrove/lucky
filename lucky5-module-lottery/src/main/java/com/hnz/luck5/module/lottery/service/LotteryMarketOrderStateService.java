@@ -1,6 +1,9 @@
 package com.hnz.luck5.module.lottery.service;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
@@ -26,6 +29,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -38,6 +44,8 @@ public class LotteryMarketOrderStateService {
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final Set<String> SUBMITTABLE = Set.of("PENDING", "RETRY");
     private static final Set<String> CONFIRMABLE = Set.of("SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING");
+    private static final String ACCEPTED_WITHOUT_IDS_NOTE =
+            "盘口已明确受理，逐注明细编号未返回；已确认受理，不能退码";
 
     @Resource private OrderMapper orderMapper;
     @Resource private MarketRouteItemMapper routeItemMapper;
@@ -267,6 +275,18 @@ public class LotteryMarketOrderStateService {
         OrderDO order = order(userId, orderId);
         if (order == null || !Set.of("CONFIRMED", "PARTIAL_CONFIRMED", "CANCEL_REQUESTED", "CANCEL_FAILED")
                 .contains(order.getMarketStatus())) return null;
+        List<MarketRouteItemDO> confirmed = routes(userId, orderId).stream()
+                .filter(item -> "CONFIRMED".equals(item.getStatus()) || "CANCEL_FAILED".equals(item.getStatus())
+                        || "CANCEL_PENDING".equals(item.getStatus())).toList();
+        List<Wa55MarketOrderClient.CancelRequest> cancelRequests = new ArrayList<>();
+        for (MarketRouteItemDO route : confirmed) {
+            List<Wa55MarketOrderClient.CancelRequest> references = cancelReferences(route);
+            if (references.isEmpty()) throw exception(BET_STATE_CHANGED);
+            cancelRequests.addAll(references);
+        }
+        if ("CONFIRMED".equals(order.getMarketStatus()) && cancelRequests.isEmpty()) {
+            throw exception(BET_STATE_CHANGED);
+        }
         int version = value(order.getVersion(), 0);
         int claimed = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                 .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
@@ -274,10 +294,6 @@ public class LotteryMarketOrderStateService {
                 .set(OrderDO::getMarketStatus, "CANCEL_PENDING").set(OrderDO::getVersion, version + 1)
                 .set(OrderDO::getMarketError, ""));
         if (claimed != 1) return null;
-        List<MarketRouteItemDO> confirmed = routes(userId, orderId).stream()
-                .filter(item -> "CONFIRMED".equals(item.getStatus()) || "CANCEL_FAILED".equals(item.getStatus())
-                        || "CANCEL_PENDING".equals(item.getStatus()))
-                .filter(item -> item.getMarketBetId() != null && !item.getMarketBetId().isBlank()).toList();
         confirmed.forEach(item -> routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                 .eq(MarketRouteItemDO::getId, item.getId()).eq(MarketRouteItemDO::getUserId, userId)
                 .set(MarketRouteItemDO::getStatus, "CANCEL_PENDING")));
@@ -286,9 +302,7 @@ public class LotteryMarketOrderStateService {
         return new CancelContext(orderId, order.getPeriod(), "PARTIAL_CONFIRMED".equals(order.getMarketStatus()),
                 new Wa55MarketOrderClient.Credentials(
                 config.getUpstreamUrl(), config.getUpstreamAccount(),
-                        credentialService.decrypt(config.getMarketPasswordEncrypted())), confirmed.stream()
-                .map(item -> new Wa55MarketOrderClient.CancelRequest(item.getMarketBetId(),
-                        Math.max(1, value(item.getMarketBetCount(), 1)))).toList());
+                        credentialService.decrypt(config.getMarketPasswordEncrypted())), cancelRequests);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -361,7 +375,7 @@ public class LotteryMarketOrderStateService {
                         && (item.getMarketBetId() == null || item.getMarketBetId().isBlank()));
         if (!acceptedWithoutIdentifiers) return false;
         int version = value(order.getVersion(), 0);
-        String note = "盘口已明确受理，逐注明细编号未返回；已确认受理，不能退码";
+        String note = ACCEPTED_WITHOUT_IDS_NOTE;
         int changed = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                 .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
                 .in(OrderDO::getMarketStatus, "VERIFYING", "MANUAL_REVIEW").eq(OrderDO::getVersion, version)
@@ -376,6 +390,128 @@ public class LotteryMarketOrderStateService {
                 .set(MarketRouteItemDO::getLastError, note));
         updateAcceptedWithoutDetailsMessage(userId, orderId);
         return true;
+    }
+
+    /** The accepted order stays CONFIRMED while a separate read-only worker recovers its cancel IDs. */
+    public VerificationContext acceptedDetailContext(Long userId, String orderId) {
+        OrderDO order = order(userId, orderId);
+        if (order == null || !"未开奖".equals(order.getStatus())
+                || !"CONFIRMED".equals(order.getMarketStatus())
+                || !ACCEPTED_WITHOUT_IDS_NOTE.equals(order.getMarketError())
+                || !isCancellationWindowOpen(userId, order.getPeriod())) return null;
+        List<MarketRouteItemDO> marketRoutes = routes(userId, orderId).stream()
+                .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+        if (marketRoutes.size() != 1 || !marketRoutingService.isCompactRoute(marketRoutes.get(0))
+                || StrUtil.isNotBlank(marketRoutes.get(0).getMarketCancelReferencesJson())) return null;
+        LotteryConfigDO config = config(userId);
+        if (config == null) return null;
+        return new VerificationContext(orderId, order.getPeriod(), marketRoutes.get(0).getSubmittedAt(),
+                new Wa55MarketOrderClient.Credentials(config.getUpstreamUrl(), config.getUpstreamAccount(),
+                        credentialService.decrypt(config.getMarketPasswordEncrypted())),
+                marketRoutingService.expandMarketRequests(marketRoutes));
+    }
+
+    /** Known IDs from this owner's other orders in the same period, including already cancelled orders. */
+    public Set<String> claimedMarketBetIds(Long userId, String period, String exceptOrderId) {
+        List<MarketRouteItemDO> known = DataPermissionUtils.executeIgnore(() -> routeItemMapper.selectList(
+                new LambdaQueryWrapper<MarketRouteItemDO>().eq(MarketRouteItemDO::getUserId, userId)
+                        .eq(MarketRouteItemDO::getPeriod, period).ne(MarketRouteItemDO::getOrderId, exceptOrderId)
+                        .and(wrapper -> wrapper.isNotNull(MarketRouteItemDO::getMarketBetId)
+                                .ne(MarketRouteItemDO::getMarketBetId, "")
+                                .or().isNotNull(MarketRouteItemDO::getMarketCancelReferencesJson)
+                                .ne(MarketRouteItemDO::getMarketCancelReferencesJson, ""))
+                        .select(MarketRouteItemDO::getMarketBetId,
+                                MarketRouteItemDO::getMarketCancelReferencesJson,
+                                MarketRouteItemDO::getMarketBetCount)));
+        Set<String> ids = new java.util.HashSet<>();
+        for (MarketRouteItemDO route : known) {
+            if (StrUtil.isNotBlank(route.getMarketCancelReferencesJson())) {
+                cancelReferences(route).forEach(reference -> ids.add(reference.marketBetId()));
+            } else if (StrUtil.isNotBlank(route.getMarketBetId())) {
+                ids.add(route.getMarketBetId());
+            }
+        }
+        return ids;
+    }
+
+    /** Persist a complete matched set atomically; a partial detail page must never enable cancellation. */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean attachAcceptedCancelReferences(Long userId, String orderId,
+                                                  List<Wa55MarketOrderClient.BetConfirmation> confirmations) {
+        OrderDO order = order(userId, orderId);
+        if (order == null || !"未开奖".equals(order.getStatus())
+                || !"CONFIRMED".equals(order.getMarketStatus())
+                || !ACCEPTED_WITHOUT_IDS_NOTE.equals(order.getMarketError())) return false;
+        List<MarketRouteItemDO> marketRoutes = routes(userId, orderId).stream()
+                .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+        if (marketRoutes.size() != 1 || !marketRoutingService.isCompactRoute(marketRoutes.get(0))) return false;
+        MarketRouteItemDO route = marketRoutes.get(0);
+        int expected = marketRoutingService.expandMarketRequests(List.of(route)).size();
+        if (confirmations == null || confirmations.size() != expected || expected == 0) return false;
+        BigDecimal matchedAmount = confirmations.stream().map(Wa55MarketOrderClient.BetConfirmation::acceptedAmount)
+                .filter(java.util.Objects::nonNull).reduce(ZERO, BigDecimal::add);
+        if (matchedAmount.compareTo(money(route.getMarketAmount())) != 0) return false;
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (Wa55MarketOrderClient.BetConfirmation confirmation : confirmations) {
+            if (StrUtil.isBlank(confirmation.marketBetId()) || StrUtil.isBlank(confirmation.serialNo())
+                    || confirmation.betCount() <= 0) return false;
+            counts.merge(confirmation.marketBetId(), confirmation.betCount(), Math::max);
+        }
+        if (counts.values().stream().mapToInt(Integer::intValue).sum() != expected) return false;
+        if (!java.util.Collections.disjoint(counts.keySet(),
+                claimedMarketBetIds(userId, order.getPeriod(), orderId))) return false;
+        List<Map<String, Object>> references = counts.entrySet().stream()
+                .map(item -> Map.<String, Object>of("betId", item.getKey(), "count", item.getValue())).toList();
+        Wa55MarketOrderClient.BetConfirmation first = confirmations.get(0);
+        int changed = routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
+                .eq(MarketRouteItemDO::getId, route.getId()).eq(MarketRouteItemDO::getUserId, userId)
+                .eq(MarketRouteItemDO::getStatus, "CONFIRMED")
+                .isNull(MarketRouteItemDO::getMarketCancelReferencesJson)
+                .set(MarketRouteItemDO::getMarketCancelReferencesJson, JSONUtil.toJsonStr(references))
+                .set(MarketRouteItemDO::getMarketBetId, first.marketBetId())
+                .set(MarketRouteItemDO::getMarketSerialNo, first.serialNo())
+                .set(MarketRouteItemDO::getMarketBetCount, expected)
+                .set(MarketRouteItemDO::getLastError, ""));
+        if (changed != 1) return false;
+        int orderChanged = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
+                .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
+                .eq(OrderDO::getMarketStatus, "CONFIRMED")
+                .eq(OrderDO::getMarketError, ACCEPTED_WITHOUT_IDS_NOTE)
+                .set(OrderDO::getMarketError, "").set(OrderDO::getMarketOrderId, first.serialNo()));
+        if (orderChanged != 1) throw new IllegalStateException("订单状态已变化，退码编号未写入");
+        return true;
+    }
+
+    public boolean hasCompleteCancelReferences(Long userId, String orderId) {
+        List<MarketRouteItemDO> marketRoutes = routes(userId, orderId).stream()
+                .filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
+        return !marketRoutes.isEmpty() && marketRoutes.stream()
+                .allMatch(item -> !cancelReferences(item).isEmpty());
+    }
+
+    private List<Wa55MarketOrderClient.CancelRequest> cancelReferences(MarketRouteItemDO route) {
+        int expected = Math.max(1, value(route.getMarketBetCount(), 1));
+        if (expected > 1 && StrUtil.isNotBlank(route.getMarketCancelReferencesJson())) {
+            try {
+                JSONArray values = JSONUtil.parseArray(route.getMarketCancelReferencesJson());
+                List<Wa55MarketOrderClient.CancelRequest> result = new ArrayList<>(values.size());
+                java.util.Set<String> seen = new java.util.HashSet<>();
+                int count = 0;
+                for (Object value : values) {
+                    JSONObject item = JSONUtil.parseObj(value);
+                    String betId = item.getStr("betId");
+                    int betCount = value(item.getInt("count"), 0);
+                    if (StrUtil.isBlank(betId) || betCount <= 0 || !seen.add(betId)) return List.of();
+                    count += betCount;
+                    result.add(new Wa55MarketOrderClient.CancelRequest(betId, betCount));
+                }
+                return count == expected ? result : List.of();
+            } catch (RuntimeException ex) {
+                return List.of();
+            }
+        }
+        return StrUtil.isBlank(route.getMarketBetId()) ? List.of()
+                : List.of(new Wa55MarketOrderClient.CancelRequest(route.getMarketBetId(), expected));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -518,10 +654,6 @@ public class LotteryMarketOrderStateService {
                                 String actor, String reason, boolean failedSubmission) {
         OrderDO order = order(userId, orderId);
         if (order == null || !"未开奖".equals(order.getStatus())) return;
-        MessageDO orderMessage = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
-                        .eq(MessageDO::getOrderId, orderId).eq(MessageDO::getCommandType, "BET")
-                        .orderByAsc(MessageDO::getCreateTime).last("LIMIT 1")));
         int version = value(order.getVersion(), 0);
         int changed = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                 .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖").eq(OrderDO::getVersion, version)
@@ -547,7 +679,9 @@ public class LotteryMarketOrderStateService {
                 orderId, actor, reason);
         String playerReply = failedSubmission
                 ? robotReplyTemplate.betFailed(member.getName(), order.getAmount())
-                : robotReplyTemplate.cancelSucceeded(orderMessage == null ? "" : orderMessage.getReply());
+                : robotReplyTemplate.cancelSuccessReceipt(member.getName(), order.getPeriod(),
+                        value(order.getPeriodSequence(), 0), order.getContent(),
+                        value(order.getItemCount(), 0), order.getAmount(), after);
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
                 .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, orderStatus)
                 .set(MessageDO::getReply, playerReply)

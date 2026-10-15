@@ -2,10 +2,12 @@ package com.hnz.luck5.module.lottery.service;
 
 import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
 import com.hnz.luck5.module.lottery.dal.dataobject.AutoProxyExecutionDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.PresetOrderDO;
 import com.hnz.luck5.module.lottery.dal.mysql.AutoProxyExecutionMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MemberMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.PresetOrderMapper;
@@ -24,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +57,7 @@ class LotteryAutoProxyServiceTest {
     @Mock private MemberMapper memberMapper;
     @Mock private MessageMapper messageMapper;
     @Mock private AutoProxyExecutionMapper executionMapper;
+    @Mock private IssueMapper issueMapper;
     @Mock private LotteryService lotteryService;
 
     @InjectMocks
@@ -61,6 +65,9 @@ class LotteryAutoProxyServiceTest {
 
     @Test
     void openingPeriodOnlyCreatesOneDurableDelayedTask() {
+        IssueDO previous = new IssueDO();
+        previous.setStatus("SETTLED");
+        when(issueMapper.selectOne(any())).thenReturn(previous);
         when(memberMapper.selectList(any())).thenReturn(List.of(member()));
         when(messageMapper.selectOne(any())).thenReturn(null);
         when(executionMapper.insert(any(AutoProxyExecutionDO.class))).thenReturn(1);
@@ -80,6 +87,38 @@ class LotteryAutoProxyServiceTest {
     }
 
     @Test
+    void openingEventCannotScheduleBotBeforePreviousOpenedIssueSettles() {
+        IssueDO previous = new IssueDO();
+        previous.setStatus("DRAWN");
+        when(issueMapper.selectOne(any())).thenReturn(previous);
+
+        LotteryAutoProxyService.RunResult result = service.run(10L, "20260809002");
+
+        assertThat(result.scheduled()).isZero();
+        verify(executionMapper, never()).insert(any(AutoProxyExecutionDO.class));
+    }
+
+    @Test
+    void settlementSchedulesAlreadyOpenFollowingIssueWithRandomDelay() {
+        IssueDO open = new IssueDO();
+        open.setPeriod("20260809002");
+        IssueDO settled = new IssueDO();
+        settled.setStatus("SETTLED");
+        when(issueMapper.selectOne(any())).thenReturn(open, settled);
+        when(memberMapper.selectList(any())).thenReturn(List.of(member()));
+        when(executionMapper.insert(any(AutoProxyExecutionDO.class))).thenReturn(1);
+        LocalDateTime before = LocalDateTime.now();
+
+        LotteryAutoProxyService.RunResult result = service.runAfterSettlement(10L, "20260809001");
+
+        assertThat(result.scheduled()).isEqualTo(1);
+        ArgumentCaptor<AutoProxyExecutionDO> captor = ArgumentCaptor.forClass(AutoProxyExecutionDO.class);
+        verify(executionMapper).insert(captor.capture());
+        assertThat(captor.getValue().getScheduledAt()).isBetween(before.plusSeconds(4),
+                LocalDateTime.now().plusSeconds(31));
+    }
+
+    @Test
     void turningRoomOnSchedulesThisPeriodImmediately() {
         when(memberMapper.selectList(any())).thenReturn(List.of(member()));
         when(messageMapper.selectOne(any())).thenReturn(null);
@@ -93,6 +132,45 @@ class LotteryAutoProxyServiceTest {
         verify(executionMapper).insert(captor.capture());
         assertThat(captor.getValue().getScheduledAt()).isBetween(before, LocalDateTime.now());
         verify(lotteryService, never()).placeAutoBet(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void turningRoomOnExecutesCurrentPeriodTaskWithoutWaitingForPolling() {
+        mockDueTask(new BigDecimal("100"), new BigDecimal("10"));
+        when(memberMapper.selectList(any())).thenReturn(List.of(member()));
+        when(executionMapper.insert(any(AutoProxyExecutionDO.class))).thenReturn(1);
+        when(lotteryService.placeAutoBet(anyLong(), any(), anyString())).thenReturn(Map.of("orderId", "O-1"));
+
+        service.runNow(10L, "20260809001");
+
+        verify(lotteryService).placeAutoBet(anyLong(), any(), anyString());
+    }
+
+    @Test
+    void turningRoomOnRunsOnlyFirstBotAndSpacesRemainingSlotsByFiveToThirtySeconds() {
+        mockDueTask(new BigDecimal("100"), new BigDecimal("10"));
+        MemberDO second = member();
+        second.setId("M-2");
+        MemberDO third = member();
+        third.setId("M-3");
+        when(memberMapper.selectList(any())).thenReturn(List.of(member(), second, third));
+        when(executionMapper.insert(any(AutoProxyExecutionDO.class))).thenReturn(1);
+        when(lotteryService.placeAutoBet(anyLong(), any(), anyString())).thenReturn(Map.of("orderId", "O-1"));
+        LocalDateTime before = LocalDateTime.now();
+
+        LotteryAutoProxyService.RunResult result = service.runNow(10L, "20260809001");
+
+        assertThat(result.scheduled()).isEqualTo(3);
+        ArgumentCaptor<AutoProxyExecutionDO> captor = ArgumentCaptor.forClass(AutoProxyExecutionDO.class);
+        verify(executionMapper, times(3)).insert(captor.capture());
+        List<AutoProxyExecutionDO> tasks = captor.getAllValues();
+        assertThat(tasks.get(0).getScheduledAt()).isBetween(before, LocalDateTime.now());
+        for (int index = 1; index < tasks.size(); index++) {
+            long gap = Duration.between(tasks.get(index - 1).getScheduledAt(),
+                    tasks.get(index).getScheduledAt()).toSeconds();
+            assertThat(gap).isBetween(5L, 30L);
+        }
+        verify(lotteryService, times(1)).placeAutoBet(anyLong(), any(), anyString());
     }
 
     @Test
@@ -116,6 +194,20 @@ class LotteryAutoProxyServiceTest {
     }
 
     @Test
+    void turningRoomOnExecutesPreviouslyQueuedCurrentPeriodTask() {
+        mockDueTask(new BigDecimal("100"), new BigDecimal("10"));
+        when(memberMapper.selectList(any())).thenReturn(List.of(member()));
+        when(executionMapper.insert(any(AutoProxyExecutionDO.class)))
+                .thenThrow(new DuplicateKeyException("existing member-period task"));
+        when(lotteryService.placeAutoBet(anyLong(), any(), anyString())).thenReturn(Map.of("orderId", "O-1"));
+
+        LotteryAutoProxyService.RunResult result = service.runNow(10L, "20260809001");
+
+        assertThat(result.scheduled()).isEqualTo(1);
+        verify(lotteryService).placeAutoBet(anyLong(), any(), anyString());
+    }
+
+    @Test
     void dueTaskPlacesLocalVirtualOrderWithoutTopUpWhenBalanceIsEnough() {
         mockDueTask(new BigDecimal("100"), new BigDecimal("10"));
         when(lotteryService.placeAutoBet(anyLong(), any(), anyString())).thenReturn(Map.of("orderId", "O-1"));
@@ -134,6 +226,34 @@ class LotteryAutoProxyServiceTest {
         verify(presetOrderMapper).selectList(queryCaptor.capture());
         assertThat(queryCaptor.getValue().getSqlSegment().toLowerCase()).doesNotContain("enabled");
         verify(executionMapper, times(2)).update(any(), any());
+    }
+
+    @Test
+    void dueTaskWaitsWhenPreviousBotOnlyJustCompleted() {
+        AutoProxyExecutionDO task = new AutoProxyExecutionDO();
+        task.setId("T-1");
+        task.setUserId(10L);
+        task.setPeriod("20260809001");
+        task.setStatus("SCHEDULED");
+        task.setVersion(0);
+        task.setScheduledAt(LocalDateTime.now().minusSeconds(1));
+        AutoProxyExecutionDO completed = new AutoProxyExecutionDO();
+        completed.setId("T-previous");
+        completed.setCompletedAt(LocalDateTime.now().minusSeconds(1));
+        when(executionMapper.selectOne(any())).thenReturn(task);
+        when(executionMapper.selectList(any())).thenReturn(List.of(), List.of(completed));
+        when(executionMapper.update(any(), any())).thenReturn(1);
+
+        service.execute("T-1", 10L);
+
+        verify(lotteryService, never()).placeAutoBet(anyLong(), any(), anyString());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<AutoProxyExecutionDO>> captor =
+                ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(executionMapper).update(any(), captor.capture());
+        assertThat(captor.getValue().getParamNameValuePairs().values().stream()
+                .filter(LocalDateTime.class::isInstance).map(LocalDateTime.class::cast))
+                .anySatisfy(next -> assertThat(next).isAfter(LocalDateTime.now()));
     }
 
     @Test
@@ -169,6 +289,9 @@ class LotteryAutoProxyServiceTest {
 
     @Test
     void openingPeriodSkipsBotWhenCompletedOrderAlreadyExists() {
+        IssueDO previous = new IssueDO();
+        previous.setStatus("SETTLED");
+        when(issueMapper.selectOne(any())).thenReturn(previous);
         when(memberMapper.selectList(any())).thenReturn(List.of(member()));
         MessageDO completed = new MessageDO();
         completed.setOrderId("O-1");
@@ -197,6 +320,7 @@ class LotteryAutoProxyServiceTest {
         task.setStatus("SCHEDULED");
         task.setVersion(0);
         task.setAttemptCount(0);
+        task.setScheduledAt(LocalDateTime.now().minusSeconds(1));
         when(executionMapper.selectOne(any())).thenReturn(task);
         when(executionMapper.update(any(), any())).thenReturn(1);
         when(memberMapper.selectOne(any())).thenReturn(member());

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { LotteryMessageRow } from '@/api/lottery'
 import { receiptAction, receiptText } from '../utils/receipt'
+import CancelSuccessReceipt from './CancelSuccessReceipt.vue'
 
 const props = defineProps<{ row: LotteryMessageRow }>()
 const action = computed(() =>
@@ -18,9 +19,11 @@ const image = computed(() =>
 
 <template>
   <div class="message-content" :class="{ 'message-content--receipt': action }">
-    <div class="message-content__text">{{ text }}</div>
-    <span v-if="action === 'cancelable'" class="message-content__cancel">点击退码</span>
-    <span v-else-if="action === 'canceled'" class="message-content__canceled">已退码</span>
+    <CancelSuccessReceipt v-if="action === 'canceled'" :value="row.content" />
+    <template v-else>
+      <div class="message-content__text">{{ text }}</div>
+      <span v-if="action === 'cancelable'" class="message-content__cancel">点击退码</span>
+    </template>
     <img
       v-if="image"
       class="message-content__draw"
@@ -48,15 +51,10 @@ const image = computed(() =>
   font-weight: 400;
 }
 
-.message-content__cancel,
-.message-content__canceled {
+.message-content__cancel {
   display: block;
   margin-top: 20px;
   color: #ffa500;
-}
-
-.message-content__canceled {
-  color: #888;
 }
 
 .message-content__draw {

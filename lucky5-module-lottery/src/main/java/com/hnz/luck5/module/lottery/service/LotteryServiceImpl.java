@@ -34,6 +34,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.validation.annotation.Validated;
 
 import java.math.BigDecimal;
@@ -167,6 +169,8 @@ public class LotteryServiceImpl implements LotteryService {
     @Resource private LotteryMarketRoutingService marketRoutingService;
     @Resource private LotteryBatchInsertService batchInsertService;
     @Resource private LotteryMarketOrderStateService marketOrderStateService;
+    @Resource private LotteryMarketBetIdEnrichmentService betIdEnrichmentService;
+    @Resource private PlatformTransactionManager transactionManager;
     @Resource private Wa55MarketOrderClient marketOrderClient;
     @Resource private SecurityFrameworkService securityFrameworkService;
     @Resource private AdminGoldService adminGoldService;
@@ -2021,9 +2025,13 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> cancelOrder(String id) {
-        return cancelResultMap(cancelOrderInternal(id, null, loginName(), false));
+        OrderDO order = orderMapper.selectById(id);
+        if (order != null && Objects.equals(order.getUserId(), SecurityFrameworkUtils.getLoginUserId())) {
+            prepareCancelReferences(order, false);
+        }
+        return new TransactionTemplate(transactionManager).execute(status ->
+                cancelResultMap(cancelOrderInternal(id, null, loginName(), false)));
     }
 
     @Override
@@ -2116,15 +2124,13 @@ public class LotteryServiceImpl implements LotteryService {
         if (refunded != 1) throw exception(BET_STATE_CHANGED);
         balanceLedgerService.recordAppliedChange(member, balanceBefore, member.getBalance(),
                 LotteryBalanceLedgerService.BET_REFUND, order.getId(), actor, "退码订单 " + order.getId());
-        MessageDO orderMessage = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                        .eq(MessageDO::getOrderId, id).eq(MessageDO::getCommandType, "BET")
-                        .orderByAsc(MessageDO::getCreateTime).last("LIMIT 1")));
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                 .eq(MessageDO::getOrderId, id).eq(MessageDO::getCommandType, "BET")
                 .set(MessageDO::getStatus, "已退码")
                 .set(MessageDO::getReply,
-                        robotReplyTemplate.cancelSucceeded(orderMessage == null ? "" : orderMessage.getReply())));
+                        robotReplyTemplate.cancelSuccessReceipt(member.getName(), order.getPeriod(),
+                                value(order.getPeriodSequence(), 0), order.getContent(),
+                                value(order.getItemCount(), 0), order.getAmount(), member.getBalance())));
         if (realMarketDelivery) {
             marketRouteItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                     .eq(MarketRouteItemDO::getUserId, order.getUserId())
@@ -2137,6 +2143,15 @@ public class LotteryServiceImpl implements LotteryService {
         return new CancelResult(id, "已退码", money(order.getAmount()));
     }
 
+    private void prepareCancelReferences(OrderDO order, boolean requireCancelEnabled) {
+        if (order == null || !"未开奖".equals(order.getStatus())
+                || !"CONFIRMED".equals(order.getMarketStatus())
+                || !Set.of("MARKET_ADAPTER", "MIXED_MARKET").contains(order.getDeliveryMode())
+                || StrUtil.isBlank(order.getMarketError())) return;
+        if (requireCancelEnabled && !enabled("openCancel", order.getUserId())) return;
+        betIdEnrichmentService.resolveNow(TenantContextHolder.getRequiredTenantId(), order.getUserId(), order.getId());
+    }
+
     private boolean hasDrawResult(Long userId, String period) {
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
@@ -2145,20 +2160,17 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private boolean hasCompleteMarketCancelReferences(OrderDO order) {
-        List<MarketRouteItemDO> marketRoutes = DataPermissionUtils.executeIgnore(() ->
-                marketRouteItemMapper.selectList(new LambdaQueryWrapper<MarketRouteItemDO>()
-                        .eq(MarketRouteItemDO::getUserId, order.getUserId())
-                        .eq(MarketRouteItemDO::getOrderId, order.getId())))
-                .stream().filter(item -> money(item.getMarketAmount()).signum() > 0).toList();
-        return !marketRoutes.isEmpty() && marketRoutes.stream()
-                .allMatch(item -> StrUtil.isNotBlank(item.getMarketBetId()));
+        return marketOrderStateService.hasCompleteCancelReferences(order.getUserId(), order.getId());
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> settlePeriod(String period, LotteryReqVO.Settle reqVO) {
         Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
-        return settlePeriodInternal(userId, period, reqVO, loginName());
+        Map<String, Object> result = settlePeriodInternal(userId, period, reqVO, loginName());
+        eventPublisher.publishEvent(new LotteryIssueSettledEvent(
+                TenantContextHolder.getRequiredTenantId(), userId, period));
+        return result;
     }
 
     @Override
@@ -2167,7 +2179,10 @@ public class LotteryServiceImpl implements LotteryService {
         LotteryReqVO.Settle reqVO = new LotteryReqVO.Settle();
         reqVO.setResult(result);
         reqVO.setReason("开奖API二次确认后自动结算");
-        return settlePeriodInternal(userId, period, reqVO, actor);
+        Map<String, Object> settled = settlePeriodInternal(userId, period, reqVO, actor);
+        eventPublisher.publishEvent(new LotteryIssueSettledEvent(
+                TenantContextHolder.getRequiredTenantId(), userId, period));
+        return settled;
     }
 
     @Override
@@ -3433,7 +3448,6 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> cancelRoomOrder(String orderId, LotteryRoomReqVO.Credential reqVO) {
         return TenantUtils.execute(reqVO.getTenantId(), () -> {
             RoomAccess access = requireRoomAccess(reqVO);
@@ -3442,8 +3456,12 @@ public class LotteryServiceImpl implements LotteryService {
             if (roomOrder == null || !Objects.equals(roomOrder.getMemberId(), member.getId())) {
                 throw exception(ROOM_CANCEL_NO_RECORD);
             }
-            CancelResult result = cancelOrderInternal(orderId, member.getId(), member.getName(), true);
-            return cancelResultMap(result);
+            prepareCancelReferences(roomOrder, true);
+            return new TransactionTemplate(transactionManager).execute(status -> {
+                MemberDO current = requireRoomAccess(reqVO).member();
+                CancelResult result = cancelOrderInternal(orderId, current.getId(), current.getName(), true);
+                return cancelResultMap(result);
+            });
         });
     }
 

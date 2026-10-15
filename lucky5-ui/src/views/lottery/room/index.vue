@@ -18,9 +18,10 @@ import {
 } from '@/api/lottery/room'
 import ScratchCard from './components/ScratchCard.vue'
 import QuickPickDialog from './components/QuickPickDialog.vue'
-import { resolveDragonTiger, roomReplyTemplates } from './replyTemplates'
+import { cancelFailureText, resolveDragonTiger, roomReplyTemplates } from './replyTemplates'
 import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
-import { receiptText } from '../utils/receipt'
+import { receiptAction as parseReceiptAction, receiptText } from '../utils/receipt'
+import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
 import logo from '@/assets/imgs/logo.png'
 import robotAvatar from '@/assets/lottery/robot-avatar.png'
 import scratchButton from '@/assets/lottery/scratch-button.jpg'
@@ -469,13 +470,7 @@ const chatMessages = computed<ChatItem[]>(() => {
     const waitingForFinalResult = Boolean(order?.processing) && !message.reply
     const silentCancelCommand = message.commandType === 'CANCEL' && !message.reply
     const receiptAction =
-      message.commandType !== 'BET'
-        ? undefined
-        : message.reply?.includes('已退码')
-          ? 'canceled'
-          : message.reply?.includes('点击退码')
-            ? 'cancelable'
-            : undefined
+      message.commandType !== 'BET' ? undefined : parseReceiptAction(message.reply || '')
     if (
       (message.own !== false || showSharedRobotReply) &&
       message.commandType !== 'CHAT' &&
@@ -693,6 +688,13 @@ const resetChatMessageTracking = () => {
 // reflowed by the client before players see them.
 const formatRobotReply = (value: string) => value
 
+const showCancelFailure = (reason?: string) =>
+  ElMessageBox.alert(cancelFailureText(reason), '', {
+    confirmButtonText: '确定',
+    showClose: false,
+    customClass: 'room-cancel-failure'
+  }).catch(() => undefined)
+
 const copyInstruction = async (message: ChatItem) => {
   if (message.kind === 'robot' || !message.content.trim()) return
   if (Date.now() < suppressMessageClickUntil) return
@@ -816,7 +818,7 @@ const loadSession = async (quiet = false) => {
         if (message.own === false || message.commandType !== 'BET') continue
         const previousStatus = previousMessageStatus.get(message.id)
         if (message.status === '退码失败' && previousStatus !== message.status) {
-          ElMessage.error('退码失败：当前订单不能退码')
+          void showCancelFailure(message.error)
         } else if (message.status === '退码待确认' && previousStatus !== message.status) {
           ElMessage.warning('退码结果待确认，请联系管理员')
         }
@@ -1261,13 +1263,7 @@ const cancelOrder = async (order: Pick<RoomOrder, 'id' | 'period'>) => {
     await loadSession(true)
   } catch (reason: any) {
     if (reason !== 'cancel' && reason !== 'close') {
-      ElMessage.error(
-        reason?.message === '没有记录'
-          ? '没有记录'
-          : reason?.message
-            ? `退码失败：${reason.message}`
-            : '退码失败'
-      )
+      await showCancelFailure(reason?.message)
     }
   } finally {
     saving.value = false
@@ -1433,32 +1429,44 @@ onBeforeUnmount(() => {
                 </template>
 
                 <template v-else-if="message.type === 'order' && message.order">
-                  <pre class="reference-receipt">{{ receiptText(message.content) }}</pre>
-                  <button
-                    v-if="message.order.status !== '已退码' && message.receiptAction === 'cancelable'"
-                    class="cancel-link"
-                    type="button"
-                    @click="cancelOrder(message.order)"
-                  >
-                    点击退码
-                  </button>
-                  <span
-                    v-else-if="message.order.status === '已退码' || message.receiptAction === 'canceled'"
-                    class="cancel-status"
-                  >已退码</span>
+                  <CancelSuccessReceipt
+                    v-if="message.order.status === '已退码' || message.receiptAction === 'canceled'"
+                    :value="message.content"
+                  />
+                  <template v-else>
+                    <pre class="reference-receipt">{{ receiptText(message.content) }}</pre>
+                    <button
+                      v-if="message.receiptAction === 'cancelable'"
+                      class="cancel-link"
+                      type="button"
+                      @click="cancelOrder(message.order)"
+                    >
+                      点击退码
+                    </button>
+                  </template>
                 </template>
 
                 <template v-else-if="message.kind === 'robot' && message.receiptAction">
-                  <pre class="reference-receipt">{{ receiptText(message.content) }}</pre>
-                  <button
-                    v-if="message.receiptAction === 'cancelable' && message.cancelOrderId"
-                    class="cancel-link"
-                    type="button"
-                    @click="cancelOrder({ id: message.cancelOrderId, period: message.cancelPeriod || '' })"
-                  >
-                    点击退码
-                  </button>
-                  <span v-else-if="message.receiptAction === 'canceled'" class="cancel-status">已退码</span>
+                  <CancelSuccessReceipt
+                    v-if="message.receiptAction === 'canceled'"
+                    :value="message.content"
+                  />
+                  <template v-else>
+                    <pre class="reference-receipt">{{ receiptText(message.content) }}</pre>
+                    <button
+                      v-if="message.cancelOrderId"
+                      class="cancel-link"
+                      type="button"
+                      @click="
+                        cancelOrder({
+                          id: message.cancelOrderId,
+                          period: message.cancelPeriod || ''
+                        })
+                      "
+                    >
+                      点击退码
+                    </button>
+                  </template>
                 </template>
 
                 <template v-else-if="message.type === 'amount' && message.amountRecord">
@@ -2193,8 +2201,47 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.cancel-link,
-.cancel-status {
+:global(.room-cancel-failure.el-message-box) {
+  width: min(600px, calc(100vw - 32px));
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  font-family: 'Times New Roman', SimSun, '宋体', serif;
+}
+
+:global(.room-cancel-failure .el-message-box__header) {
+  display: none;
+}
+
+:global(.room-cancel-failure .el-message-box__content) {
+  padding: 11px 20px 15px;
+}
+
+:global(.room-cancel-failure .el-message-box__message) {
+  display: block;
+  font-size: 28px;
+  line-height: 36px;
+  text-align: center;
+}
+
+:global(.room-cancel-failure .el-message-box__btns) {
+  justify-content: center;
+  padding: 19px 0 20px;
+  border-top: 1px solid #eee;
+}
+
+:global(.room-cancel-failure .el-message-box__btns .el-button) {
+  height: auto;
+  padding: 0;
+  border: 0;
+  color: #00c800;
+  background: transparent;
+  font: 400 30px/40px 'Times New Roman', SimSun, '宋体', serif;
+}
+
+.cancel-link {
   display: block;
   margin: 18px 6px 6px;
   font: 400 16px/18px 'Times New Roman', SimSun, '宋体', serif;
@@ -2270,10 +2317,6 @@ onBeforeUnmount(() => {
   color: #8a8f98 !important;
   opacity: 1;
   -webkit-text-fill-color: #8a8f98 !important;
-}
-
-.cancel-status {
-  color: #888;
 }
 
 .composer-row textarea:focus {

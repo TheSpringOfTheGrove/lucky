@@ -8,10 +8,12 @@ import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.tenant.core.util.TenantUtils;
 import com.hnz.luck5.module.lottery.controller.admin.vo.LotteryReqVO;
 import com.hnz.luck5.module.lottery.dal.dataobject.AutoProxyExecutionDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.IssueDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.PresetOrderDO;
 import com.hnz.luck5.module.lottery.dal.mysql.AutoProxyExecutionMapper;
+import com.hnz.luck5.module.lottery.dal.mysql.IssueMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MemberMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.PresetOrderMapper;
@@ -50,6 +52,7 @@ public class LotteryAutoProxyService {
     private final MemberMapper memberMapper;
     private final MessageMapper messageMapper;
     private final AutoProxyExecutionMapper executionMapper;
+    private final IssueMapper issueMapper;
     private final LotteryService lotteryService;
     private final AtomicBoolean polling = new AtomicBoolean(false);
 
@@ -57,12 +60,38 @@ public class LotteryAutoProxyService {
      * Creates durable per-member tasks. The unique database key makes repeated OPEN events harmless.
      */
     public RunResult run(Long userId, String period) {
+        if (!previousOpenedIssueSettled(userId, period)) {
+            return new RunResult(StrUtil.trim(period), 0, 0);
+        }
         return schedule(userId, period, false);
+    }
+
+    /** Also handles an issue that was manually marked OPEN before the preceding payout committed. */
+    public RunResult runAfterSettlement(Long userId, String settledPeriod) {
+        IssueDO open = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .gt(IssueDO::getPeriod, settledPeriod).eq(IssueDO::getStatus, "OPEN")
+                        .isNotNull(IssueDO::getOpenedAt).orderByAsc(IssueDO::getPeriod).last("LIMIT 1")));
+        return open == null ? new RunResult(settledPeriod, 0, 0) : run(userId, open.getPeriod());
     }
 
     /** Starts this already-open period immediately when the owner turns the room on. */
     public RunResult runNow(Long userId, String period) {
+        if (!previousOpenedIssueSettled(userId, period)) {
+            return new RunResult(StrUtil.trim(period), 0, 0);
+        }
         return schedule(userId, period, true);
+    }
+
+    private boolean previousOpenedIssueSettled(Long userId, String period) {
+        String normalized = StrUtil.trim(period);
+        if (normalized == null || !normalized.matches("\\d+")) return false;
+        IssueDO previous = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
+                        .lt(IssueDO::getPeriod, normalized).isNotNull(IssueDO::getOpenedAt)
+                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+        // A brand-new owner has no preceding issue to settle; the first OPEN is the initial cycle.
+        return previous == null || "SETTLED".equals(previous.getStatus());
     }
 
     private RunResult schedule(Long userId, String period, boolean immediate) {
@@ -75,10 +104,21 @@ public class LotteryAutoProxyService {
                         .and(query -> query.eq(MemberDO::getMemberType, "BOT").or().eq(MemberDO::getAutoProxy, true))
                         .eq(MemberDO::getAutoBetEnabled, true).orderByAsc(MemberDO::getId)));
         int scheduled = 0;
+        String immediateTaskId = null;
+        LocalDateTime nextScheduledAt = LocalDateTime.now();
+        boolean firstTask = true;
         for (MemberDO member : members) {
             if (hasCompletedOrder(userId, member.getId(), normalizedPeriod)) {
                 continue;
             }
+            boolean firstSlot = firstTask;
+            // The first room-start bet is immediate. Every subsequent bot gets its own cumulative
+            // 5–30 second slot; independent random delays would bunch many bots together.
+            if (!immediate || !firstTask) {
+                nextScheduledAt = nextScheduledAt.plusSeconds(ThreadLocalRandom.current().nextLong(5, 31));
+            }
+            LocalDateTime scheduledAt = nextScheduledAt;
+            firstTask = false;
             AutoProxyExecutionDO task = new AutoProxyExecutionDO();
             task.setId(IdUtil.fastSimpleUUID());
             task.setUserId(userId);
@@ -92,17 +132,16 @@ public class LotteryAutoProxyService {
             task.setError("");
             task.setAttemptCount(0);
             task.setVersion(0);
-            LocalDateTime scheduledAt = LocalDateTime.now();
-            task.setScheduledAt(immediate ? scheduledAt
-                    : scheduledAt.plusSeconds(ThreadLocalRandom.current().nextLong(5, 31)));
+            task.setScheduledAt(scheduledAt);
             try {
                 executionMapper.insert(task);
                 scheduled++;
+                if (immediate && firstSlot) immediateTaskId = task.getId();
             } catch (DuplicateKeyException ignored) {
                 // A period OPEN event may have queued (or failed) this task while the room was still off.
                 // Move only unfinished tasks forward; RUNNING/SUCCESS and completed orders stay untouched.
                 if (immediate) {
-                    scheduled += DataPermissionUtils.executeIgnore(() -> executionMapper.update(null,
+                    int rescheduled = DataPermissionUtils.executeIgnore(() -> executionMapper.update(null,
                             new LambdaUpdateWrapper<AutoProxyExecutionDO>()
                                     .eq(AutoProxyExecutionDO::getUserId, userId)
                                     .eq(AutoProxyExecutionDO::getMemberId, member.getId())
@@ -112,7 +151,25 @@ public class LotteryAutoProxyService {
                                     .set(AutoProxyExecutionDO::getScheduledAt, scheduledAt)
                                     .set(AutoProxyExecutionDO::getCompletedAt, null)
                                     .set(AutoProxyExecutionDO::getError, "")));
+                    scheduled += rescheduled;
+                    if (rescheduled > 0 && firstSlot) {
+                        AutoProxyExecutionDO existing = DataPermissionUtils.executeIgnore(() ->
+                                executionMapper.selectOne(new LambdaQueryWrapper<AutoProxyExecutionDO>()
+                                        .eq(AutoProxyExecutionDO::getUserId, userId)
+                                        .eq(AutoProxyExecutionDO::getMemberId, member.getId())
+                                        .eq(AutoProxyExecutionDO::getPeriod, normalizedPeriod).last("LIMIT 1")));
+                        if (existing != null) immediateTaskId = existing.getId();
+                    }
                 }
+            }
+        }
+        // Run only the first bot now; the durable poller handles later slots without blocking room start.
+        if (immediateTaskId != null) {
+            try {
+                execute(immediateTaskId, userId);
+            } catch (RuntimeException ex) {
+                LOGGER.error("当期自动托立即执行失败 user={} task={} period={}", userId, immediateTaskId,
+                        normalizedPeriod, ex);
             }
         }
         return new RunResult(normalizedPeriod, members.size(), scheduled);
@@ -157,6 +214,7 @@ public class LotteryAutoProxyService {
                 new LambdaQueryWrapper<AutoProxyExecutionDO>().eq(AutoProxyExecutionDO::getId, taskId)
                         .eq(AutoProxyExecutionDO::getUserId, userId).last("LIMIT 1")));
         if (task == null || !SCHEDULED.equals(task.getStatus())) return;
+        if (deferForMemberSpacing(task, userId)) return;
         int version = value(task.getVersion(), 0);
         int claimed = DataPermissionUtils.executeIgnore(() -> executionMapper.update(null,
                 new LambdaUpdateWrapper<AutoProxyExecutionDO>().eq(AutoProxyExecutionDO::getId, taskId)
@@ -236,6 +294,39 @@ public class LotteryAutoProxyService {
             }
         }
         finish(taskId, userId, SKIPPED, null, null, ZERO, ZERO, lastError);
+    }
+
+    /** Keep the actual starts apart even when a poller was delayed or multiple due slots accumulated. */
+    private boolean deferForMemberSpacing(AutoProxyExecutionDO task, Long userId) {
+        if (task.getScheduledAt() == null) return false;
+        List<AutoProxyExecutionDO> blocking = DataPermissionUtils.executeIgnore(() -> executionMapper.selectList(
+                new LambdaQueryWrapper<AutoProxyExecutionDO>().eq(AutoProxyExecutionDO::getUserId, userId)
+                        .eq(AutoProxyExecutionDO::getPeriod, task.getPeriod())
+                        .ne(AutoProxyExecutionDO::getId, task.getId())
+                        .and(query -> query.eq(AutoProxyExecutionDO::getStatus, RUNNING)
+                                .or(nested -> nested.eq(AutoProxyExecutionDO::getStatus, SCHEDULED)
+                                        .lt(AutoProxyExecutionDO::getScheduledAt, task.getScheduledAt())))
+                        .last("LIMIT 1")));
+        if (blocking != null && !blocking.isEmpty()) return true;
+        List<AutoProxyExecutionDO> completed = DataPermissionUtils.executeIgnore(() -> executionMapper.selectList(
+                new LambdaQueryWrapper<AutoProxyExecutionDO>().eq(AutoProxyExecutionDO::getUserId, userId)
+                        .eq(AutoProxyExecutionDO::getPeriod, task.getPeriod())
+                        .ne(AutoProxyExecutionDO::getId, task.getId())
+                        .isNotNull(AutoProxyExecutionDO::getCompletedAt)
+                        .orderByDesc(AutoProxyExecutionDO::getCompletedAt).last("LIMIT 1")));
+        if (completed == null || completed.isEmpty()) return false;
+        LocalDateTime lastCompletedAt = completed.get(0).getCompletedAt();
+        if (lastCompletedAt == null || !LocalDateTime.now().isBefore(lastCompletedAt.plusSeconds(5))) return false;
+        LocalDateTime nextSlot = lastCompletedAt.plusSeconds(ThreadLocalRandom.current().nextLong(5, 31));
+        int version = value(task.getVersion(), 0);
+        DataPermissionUtils.executeIgnore(() -> executionMapper.update(null,
+                new LambdaUpdateWrapper<AutoProxyExecutionDO>().eq(AutoProxyExecutionDO::getId, task.getId())
+                        .eq(AutoProxyExecutionDO::getUserId, userId)
+                        .eq(AutoProxyExecutionDO::getStatus, SCHEDULED)
+                        .eq(AutoProxyExecutionDO::getVersion, version)
+                        .set(AutoProxyExecutionDO::getScheduledAt, nextSlot)
+                        .set(AutoProxyExecutionDO::getVersion, version + 1)));
+        return true;
     }
 
     private void finish(String taskId, Long userId, String status, PresetOrderDO preset, String orderId,

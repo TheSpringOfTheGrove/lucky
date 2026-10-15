@@ -45,6 +45,7 @@ class Wa55MarketOrderClientTest {
     private boolean batchSessionExpired;
     private boolean includeSummaryRow;
     private int detailVisibleAfterCall;
+    private int detailPageSize = Integer.MAX_VALUE;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -230,6 +231,100 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
+    void verifiesBatchAcrossMoreThanTwentyDetailPages() {
+        detailPageSize = 1;
+        Wa55MarketOrderClient client = client(true);
+        java.util.concurrent.ExecutorService pageExecutor = java.util.concurrent.Executors.newFixedThreadPool(4);
+        client.setDetailPageExecutorForTest(pageExecutor);
+        List<Wa55MarketOrderClient.BetRequest> requests = new ArrayList<>();
+        for (int index = 0; index < 21; index++) {
+            requests.add(request("route-" + index, "四定位", String.format("%04d", index),
+                    "1", "guid-" + index, false));
+        }
+
+        try {
+            Wa55MarketOrderClient.SubmissionBatch submitted = client.submit(credentials(), issuePeriod, requests);
+            Wa55MarketOrderClient.VerificationBatch verified = client.verifyAccepted(
+                    credentials(), issuePeriod, requests);
+
+            assertThat(submitted.acceptedBatches()).hasSize(1);
+            assertThat(verified.unresolvedBatches()).isEmpty();
+            assertThat(verified.confirmations()).hasSize(21);
+            assertThat(detailCalls).hasValue(21);
+        } finally {
+            pageExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void excludesIdsAlreadyBoundToAnEarlierIdenticalBatch() {
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> first = List.of(
+                request("old-1", "四定位", "5874", "1", "guid-old-1", false),
+                request("old-2", "四定位", "8888", "1", "guid-old-2", false));
+        List<Wa55MarketOrderClient.BetRequest> second = List.of(
+                request("new-1", "四定位", "5874", "1", "guid-new-1", false),
+                request("new-2", "四定位", "8888", "1", "guid-new-2", false));
+        client.submit(credentials(), issuePeriod, first);
+        var firstIds = client.verifyAccepted(credentials(), issuePeriod, first).confirmations().stream()
+                .map(Wa55MarketOrderClient.BetConfirmation::marketBetId).collect(java.util.stream.Collectors.toSet());
+        client.submit(credentials(), issuePeriod, second);
+
+        assertThat(client.verifyAccepted(credentials(), issuePeriod, second).diagnostics())
+                .singleElement().satisfies(item -> assertThat(item.reason()).isEqualTo("AMBIGUOUS_MATCH"));
+        var resolved = client.verifyAccepted(credentials(), issuePeriod, second, firstIds);
+        assertThat(resolved.unresolvedBatches()).isEmpty();
+        assertThat(resolved.confirmations()).hasSize(2)
+                .allSatisfy(item -> assertThat(item.marketBetId()).startsWith("BET-2-"));
+    }
+
+    @Test
+    void ignoresOnlyExplicitlyCancelledDetailRows() {
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> first = List.of(
+                request("old-1", "四定位", "5874", "1", "guid-old-1", false),
+                request("old-2", "四定位", "8888", "1", "guid-old-2", false));
+        List<Wa55MarketOrderClient.BetRequest> second = List.of(
+                request("new-1", "四定位", "5874", "1", "guid-new-1", false),
+                request("new-2", "四定位", "8888", "1", "guid-new-2", false));
+        client.submit(credentials(), issuePeriod, first);
+        client.submit(credentials(), issuePeriod, second);
+        for (int index = 0; index < 2; index++) {
+            Map<String, Object> cancelled = new LinkedHashMap<>(marketRows.get(index));
+            cancelled.put("is_cancel", 1);
+            marketRows.set(index, cancelled);
+        }
+
+        var result = client.verifyAccepted(credentials(), issuePeriod, second);
+        assertThat(result.unresolvedBatches()).isEmpty();
+        assertThat(result.confirmations()).hasSize(2)
+                .allSatisfy(item -> assertThat(item.marketBetId()).startsWith("BET-2-"));
+    }
+
+    @Test
+    void usesEchoedGuidWhenBothIdenticalBatchesAreUnclaimed() {
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> first = List.of(
+                request("old-1", "四定位", "5874", "1", "guid-old-1", false),
+                request("old-2", "四定位", "8888", "1", "guid-old-2", false));
+        List<Wa55MarketOrderClient.BetRequest> second = List.of(
+                request("new-1", "四定位", "5874", "1", "guid-new-1", false),
+                request("new-2", "四定位", "8888", "1", "guid-new-2", false));
+        String firstGuid = client.submit(credentials(), issuePeriod, first).acceptedBatches().get(0).guid();
+        String secondGuid = client.submit(credentials(), issuePeriod, second).acceptedBatches().get(0).guid();
+        for (int index = 0; index < marketRows.size(); index++) {
+            Map<String, Object> withGuid = new LinkedHashMap<>(marketRows.get(index));
+            withGuid.put("guid", index < 2 ? firstGuid : secondGuid);
+            marketRows.set(index, withGuid);
+        }
+
+        var result = client.verifyAccepted(credentials(), issuePeriod, second);
+        assertThat(result.unresolvedBatches()).isEmpty();
+        assertThat(result.confirmations()).hasSize(2)
+                .allSatisfy(item -> assertThat(item.marketBetId()).startsWith("BET-2-"));
+    }
+
+    @Test
     void keepsAcceptedBatchForReadOnlyVerificationAndNeverResubmits() {
         detailVisibleAfterCall = 1;
         Wa55MarketOrderClient client = client(true);
@@ -249,12 +344,43 @@ class Wa55MarketOrderClientTest {
                 credentials(), issuePeriod, requests);
         assertThat(unresolved.confirmations()).isEmpty();
         assertThat(unresolved.unresolvedBatches()).hasSize(1);
+        assertThat(unresolved.diagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.reason()).isEqualTo("NO_VALID_ROWS");
+            assertThat(diagnostic.expectedRows()).isEqualTo(2);
+            assertThat(diagnostic.rawRows()).isZero();
+        });
         Wa55MarketOrderClient.VerificationBatch verified = client.verifyAccepted(
                 credentials(), issuePeriod, requests);
         assertThat(verified.unresolvedBatches()).isEmpty();
+        assertThat(verified.diagnostics()).isEmpty();
         assertThat(verified.confirmations()).hasSize(2);
         assertThat(betCalls).hasValue(1);
         assertThat(detailCalls).hasValue(2);
+    }
+
+    @Test
+    void explainsValidDetailRowsThatDoNotMatchAcceptedSelectionsWithoutLoggingThem() {
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false));
+        client.submit(credentials(), issuePeriod, requests);
+        Map<String, Object> changed = new LinkedHashMap<>(marketRows.get(0));
+        changed.put("bet_no", "1234");
+        marketRows.set(0, changed);
+
+        Wa55MarketOrderClient.VerificationBatch result = client.verifyAccepted(
+                credentials(), issuePeriod, requests);
+
+        assertThat(result.confirmations()).isEmpty();
+        assertThat(result.diagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.reason()).isEqualTo("CONTENT_MISMATCH");
+            assertThat(diagnostic.rawRows()).isEqualTo(2);
+            assertThat(diagnostic.validRows()).isEqualTo(2);
+            assertThat(diagnostic.sameSizeGroups()).isEqualTo(1);
+            assertThat(diagnostic.exactGroups()).isZero();
+            assertThat(diagnostic.toString()).doesNotContain("1234", "5874", "8888", "BET-");
+        });
     }
 
     @Test
@@ -516,8 +642,16 @@ class Wa55MarketOrderClientTest {
                     "bet_id", "SUMMARY", "serial_no", "SERIAL-1", "bet_no", -1,
                     "bet_money", "999", "BetCount", 1, "odds", 0));
         }
-        String rows = new ObjectMapper().writeValueAsString(visibleRows);
-        json(exchange, "{\"Status\":1,\"Data\":{\"PageCount\":1,\"Rows\":" + rows + "}}");
+        int pages = visibleRows.isEmpty() ? 1 : 1 + (visibleRows.size() - 1) / detailPageSize;
+        int page = 1;
+        for (String parameter : exchange.getRequestURI().getRawQuery().split("&")) {
+            if (parameter.startsWith("pageindex=")) page = Integer.parseInt(parameter.substring(10));
+        }
+        int start = (page - 1) * detailPageSize;
+        List<Map<String, Object>> current = start >= visibleRows.size() ? List.of()
+                : visibleRows.subList(start, Math.min(visibleRows.size(), start + detailPageSize));
+        String rows = new ObjectMapper().writeValueAsString(current);
+        json(exchange, "{\"Status\":1,\"Data\":{\"PageCount\":" + pages + ",\"Rows\":" + rows + "}}");
     }
 
     private List<Map<String, Object>> batchBets(Map<String, String> form) {

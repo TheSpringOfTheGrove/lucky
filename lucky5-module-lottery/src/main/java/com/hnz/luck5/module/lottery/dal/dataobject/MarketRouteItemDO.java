@@ -29,6 +29,8 @@ public class MarketRouteItemDO extends LotteryUserBaseDO {
     private BigDecimal localPayout;
     private String marketGuid;
     private String marketBetId;
+    /** Complete, verified cancel references for a compact external batch. */
+    private String marketCancelReferencesJson;
     private String marketSerialNo;
     private Integer marketBetCount;
     private BigDecimal marketOdds;

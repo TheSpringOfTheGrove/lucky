@@ -32,6 +32,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -50,7 +52,7 @@ public class Wa55MarketOrderClient {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern NORMAL_SELECTION = Pattern.compile("(?i)[0-9X]{4}");
     private static final Pattern XIAN_SELECTION = Pattern.compile("[0-9]{2,4}");
-    private static final int MAX_BATCH_DETAIL_PAGES = 20;
+    private static final int MAX_BATCH_DETAIL_PAGES = 300;
 
     /**
      * A market login requires several round trips before a batch can be submitted.  Owner operations are already
@@ -61,6 +63,9 @@ public class Wa55MarketOrderClient {
 
     @Resource
     private ObjectMapper objectMapper;
+
+    @Resource(name = "lotteryMarketDetailPageExecutor")
+    private Executor detailPageExecutor;
 
     @Value("${lottery.market.real-writes-enabled:true}")
     private boolean realWritesEnabled;
@@ -160,17 +165,46 @@ public class Wa55MarketOrderClient {
      * This method never calls a market write endpoint and therefore is safe to repeat until the identifiers appear.
      */
     public VerificationBatch verifyAccepted(Credentials credentials, String period, List<BetRequest> requests) {
-        if (requests == null || requests.isEmpty()) return new VerificationBatch(List.of(), List.of());
+        return verifyAccepted(credentials, period, requests, java.util.Set.of());
+    }
+
+    public VerificationBatch verifyAccepted(Credentials credentials, String period, List<BetRequest> requests,
+                                            java.util.Set<String> alreadyClaimedIds) {
+        if (requests == null || requests.isEmpty()) return new VerificationBatch(List.of(), List.of(), List.of());
         requests.forEach(request -> validateRequest(period, request));
-        List<ExternalBetRow> rows = memberBetRows(connect(credentials), period);
+        DetailScan scan = memberBetRows(connect(credentials), period);
         List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
         List<AcceptedBatch> unresolved = new ArrayList<>();
+        List<VerificationDiagnostic> diagnostics = new ArrayList<>();
         for (BetGroup group : groupRequests(period, requests)) {
-            List<BetConfirmation> matched = matchBatchConfirmations(rows, group, "", "");
-            if (matched.isEmpty()) unresolved.add(acceptedBatch(group));
-            else confirmations.addAll(matched);
+            MarketBetReferenceMatcher.Result match = MarketBetReferenceMatcher.match(
+                    group.requests().stream().map(request -> new MarketBetReferenceMatcher.Expected(
+                            request.routeItemId(), group.guid(), dictNoTypeId(request), request.selection(),
+                            money(request.amount()))).toList(),
+                    scan.rows().stream().map(row -> new MarketBetReferenceMatcher.Candidate(row.betId(),
+                            row.serialNo(), row.guid(), row.dictNoTypeId(), row.selection(), row.amount(), row.betCount(),
+                            row.odds(), row.cancelled())).toList(), alreadyClaimedIds);
+            boolean incompleteScan = scan.reportedPages() > scan.fetchedPages()
+                    || scan.missingRowsPages() > 0 || scan.unstablePages();
+            if (incompleteScan || match.confirmations().isEmpty()) {
+                unresolved.add(acceptedBatch(group));
+                String reason = scan.unstablePages() ? "UNSTABLE_PAGES"
+                        : scan.reportedPages() > scan.fetchedPages() ? "PAGE_LIMIT"
+                        : scan.missingRowsPages() > 0 ? "MISSING_ROWS_PAGE"
+                        : scan.rows().isEmpty() ? "NO_VALID_ROWS" : match.reason();
+                diagnostics.add(new VerificationDiagnostic(reason, group.requests().size(),
+                        scan.fetchedPages(), scan.reportedPages(), scan.rawRows(), scan.rows().size(),
+                        scan.missingRowsPages(), scan.missingIdentifiers(), scan.invalidTypeOrAmount(),
+                        scan.invalidSelection(), scan.invalidBetCount(), match.serialGroups(), match.claimedGroups(),
+                        match.cancelledGroups(), match.sameSizeGroups(), match.exactGroups()));
+            } else {
+                confirmations.addAll(match.confirmations().stream().map(reference -> new BetConfirmation(
+                        reference.routeItemId(), reference.guid(), reference.betId(), reference.serialNo(),
+                        reference.betCount(), reference.amount(), reference.odds())).toList());
+            }
         }
-        return new VerificationBatch(List.copyOf(confirmations), List.copyOf(unresolved));
+        return new VerificationBatch(List.copyOf(confirmations), List.copyOf(unresolved),
+                List.copyOf(diagnostics));
     }
 
     private Preflight preflight(Credentials credentials, String expectedPeriod) {
@@ -198,55 +232,53 @@ public class Wa55MarketOrderClient {
                 betId, serialNo, betCount, money(request.amount()), odds)).toList();
     }
 
-    private List<BetConfirmation> matchBatchConfirmations(List<ExternalBetRow> rows, BetGroup group,
-                                                           String directBetId, String directSerialNo) {
-        Map<String, List<ExternalBetRow>> rowsBySerial = new LinkedHashMap<>();
-        for (ExternalBetRow row : rows) {
-            if (!directBetId.isBlank() && !directBetId.equals(row.betId())) continue;
-            if (!directSerialNo.isBlank() && !directSerialNo.equals(row.serialNo())) continue;
-            rowsBySerial.computeIfAbsent(row.serialNo(), ignored -> new ArrayList<>()).add(row);
-        }
-        List<List<ExternalBetRow>> matches = rowsBySerial.values().stream()
-                .filter(candidate -> matchesGroup(candidate, group.requests())).toList();
-        return matches.size() == 1 ? confirmations(group, matches.get(0)) : List.of();
-    }
-
-    private boolean matchesGroup(List<ExternalBetRow> rows, List<BetRequest> requests) {
-        if (rows.size() != requests.size()) return false;
-        Map<ExternalBetKey, Integer> expected = new LinkedHashMap<>();
-        Map<ExternalBetKey, Integer> actual = new LinkedHashMap<>();
-        requests.forEach(request -> expected.merge(new ExternalBetKey(dictNoTypeId(request), request.selection(),
-                money(request.amount())), 1, Integer::sum));
-        rows.forEach(row -> actual.merge(new ExternalBetKey(row.dictNoTypeId(), row.selection(),
-                money(row.amount())), 1, Integer::sum));
-        return expected.equals(actual);
-    }
-
-    private List<BetConfirmation> confirmations(BetGroup group, List<ExternalBetRow> rows) {
-        Map<ExternalBetKey, ArrayDeque<ExternalBetRow>> available = new LinkedHashMap<>();
-        rows.forEach(row -> available.computeIfAbsent(new ExternalBetKey(row.dictNoTypeId(), row.selection(),
-                money(row.amount())), ignored -> new ArrayDeque<>()).add(row));
-        List<BetConfirmation> result = new ArrayList<>(group.requests().size());
-        for (BetRequest request : group.requests()) {
-            ExternalBetRow row = available.get(new ExternalBetKey(dictNoTypeId(request), request.selection(),
-                    money(request.amount()))).remove();
-            result.add(new BetConfirmation(request.routeItemId(), group.guid(), row.betId(), row.serialNo(),
-                    row.betCount(), money(request.amount()), row.odds()));
-        }
-        return result;
-    }
-
-    private List<ExternalBetRow> memberBetRows(Session session, String period) {
+    private DetailScan memberBetRows(Session session, String period) {
+        long startedAt = System.nanoTime();
         List<ExternalBetRow> result = new ArrayList<>();
         int pageCount = 1;
+        int fetchedPages = 0;
+        int rawRows = 0;
+        int missingRowsPages = 0;
+        int missingIdentifiers = 0;
+        int invalidTypeOrAmount = 0;
+        int invalidSelection = 0;
+        int invalidBetCount = 0;
+        int explicitCancelledRows = 0;
+        int cancellationFlagRows = 0;
+        boolean unstablePages = false;
+        java.util.Set<String> seenBetIds = new java.util.HashSet<>();
+        Map<Integer, CompletableFuture<JsonNode>> prefetched = new LinkedHashMap<>();
+        String pathPrefix = "/Member/GetMemberBetList?period_number=" + encode(period) + "&pageindex=";
         for (int page = 1; page <= pageCount && page <= MAX_BATCH_DETAIL_PAGES; page++) {
-            JsonNode payload = getJson(session, "/Member/GetMemberBetList?period_number=" + encode(period)
-                    + "&pageindex=" + page + "&_=" + System.currentTimeMillis());
-            assertSuccess(payload, "盘口下注明细读取失败");
+            JsonNode payload;
+            try {
+                if (page > 1 && detailPageExecutor != null && prefetched.isEmpty()) {
+                    for (int next = page; next <= Math.min(pageCount, Math.min(MAX_BATCH_DETAIL_PAGES, page + 3)); next++) {
+                        int requestedPage = next;
+                        prefetched.put(next, CompletableFuture.supplyAsync(() -> getJson(session,
+                                pathPrefix + requestedPage + "&_=" + System.currentTimeMillis()),
+                                detailPageExecutor));
+                    }
+                }
+                payload = prefetched.isEmpty() ? getJson(session,
+                        pathPrefix + page + "&_=" + System.currentTimeMillis()) : prefetched.remove(page).join();
+                fetchedPages++;
+                assertSuccess(payload, "盘口下注明细读取失败");
+            } catch (RuntimeException ex) {
+                LOGGER.warn("Lucky5 market detail page failed: page={}, fetchedPages={}, cause={}",
+                        page, fetchedPages, ex.getClass().getSimpleName());
+                throw ex;
+            }
             JsonNode data = first(payload, "Data", "data");
-            pageCount = Math.max(1, number(first(data, "PageCount", "page_count"), 1));
+            int reportedPageCount = Math.max(1, number(first(data, "PageCount", "page_count"), 1));
+            if (fetchedPages > 1 && reportedPageCount != pageCount) unstablePages = true;
+            pageCount = reportedPageCount;
             JsonNode rows = first(data, "Rows", "rows", "List", "list");
-            if (rows == null || !rows.isArray()) continue;
+            if (rows == null || !rows.isArray()) {
+                missingRowsPages++;
+                continue;
+            }
+            rawRows += rows.size();
             for (JsonNode row : rows) {
                 String betId = text(first(row, "bet_id", "BetId", "id"));
                 String serialNo = text(first(row, "serial_no", "SerialNo"));
@@ -254,16 +286,60 @@ public class Wa55MarketOrderClient {
                 String selection = text(first(row, "bet_no", "BetNo", "selection")).toUpperCase(Locale.ROOT);
                 BigDecimal amount = decimal(first(row, "bet_money", "BetMoney", "money", "Money"));
                 int betCount = number(first(row, "BetCount", "bet_count"), 1);
-                if (betId.isBlank() || serialNo.isBlank() || dictNoTypeId <= 0 || selection.isBlank() || amount == null
-                        || betCount <= 0) continue;
+                if (betId.isBlank() || serialNo.isBlank()) {
+                    missingIdentifiers++;
+                    continue;
+                }
+                if (dictNoTypeId <= 0 || amount == null) {
+                    invalidTypeOrAmount++;
+                    continue;
+                }
                 boolean validSelection = NORMAL_SELECTION.matcher(selection).matches()
                         || XIAN_SELECTION.matcher(selection).matches();
-                if (!validSelection) continue;
-                result.add(new ExternalBetRow(betId, serialNo, dictNoTypeId, selection, amount, betCount,
-                        decimal(first(row, "odds", "Odds"))));
+                if (!validSelection) {
+                    invalidSelection++;
+                    continue;
+                }
+                if (betCount <= 0) {
+                    invalidBetCount++;
+                    continue;
+                }
+                if (!seenBetIds.add(betId)) unstablePages = true;
+                if (hasCancellationFlag(row)) cancellationFlagRows++;
+                boolean cancelled = explicitlyCancelled(row);
+                if (cancelled) explicitCancelledRows++;
+                result.add(new ExternalBetRow(betId, serialNo,
+                        text(first(row, "guid", "Guid", "bet_guid", "BetGuid")),
+                        dictNoTypeId, selection, amount, betCount,
+                        decimal(first(row, "odds", "Odds")), cancelled));
             }
         }
-        return result;
+        if (cancellationFlagRows > 0 || explicitCancelledRows > 0) {
+            LOGGER.info("Lucky5 market detail cancellation markers: flagRows={}, cancelledRows={}",
+                    cancellationFlagRows, explicitCancelledRows);
+        }
+        LOGGER.info("Lucky5 market detail scan timing: pages={}, validRows={}, scanMs={}",
+                fetchedPages, result.size(), (System.nanoTime() - startedAt) / 1_000_000);
+        return new DetailScan(result, fetchedPages, pageCount, rawRows, missingRowsPages,
+                missingIdentifiers, invalidTypeOrAmount, invalidSelection, invalidBetCount, unstablePages);
+    }
+
+    private boolean explicitlyCancelled(JsonNode row) {
+        JsonNode flag = first(row, "is_cancel", "IsCancel", "is_cancelled", "IsCancelled",
+                "is_canceled", "IsCanceled");
+        if (flag != null && (flag.isBoolean() && flag.booleanValue()
+                || flag.isNumber() && flag.intValue() == 1
+                || flag.isTextual() && java.util.Set.of("1", "true", "yes", "y")
+                        .contains(flag.asText().trim().toLowerCase(Locale.ROOT)))) return true;
+        JsonNode status = first(row, "status", "Status", "bet_status", "BetStatus");
+        return status != null && status.isTextual()
+                && java.util.Set.of("已退码", "退码成功", "cancelled", "canceled")
+                        .contains(status.asText().trim().toLowerCase(Locale.ROOT));
+    }
+
+    private boolean hasCancellationFlag(JsonNode row) {
+        return row.has("is_cancel") || row.has("IsCancel") || row.has("is_cancelled")
+                || row.has("IsCancelled") || row.has("is_canceled") || row.has("IsCanceled");
     }
 
     private JsonNode submitGroup(Session session, String expectedPeriod, BetGroup group) {
@@ -658,6 +734,10 @@ public class Wa55MarketOrderClient {
         this.objectMapper = objectMapper;
     }
 
+    void setDetailPageExecutorForTest(Executor executor) {
+        this.detailPageExecutor = executor;
+    }
+
     void setRealWritesEnabledForTest(boolean enabled) {
         this.realWritesEnabled = enabled;
     }
@@ -679,7 +759,19 @@ public class Wa55MarketOrderClient {
         }
     }
 
-    public record VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches) {}
+    public record VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches,
+                                    List<VerificationDiagnostic> diagnostics) {
+        public VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches) {
+            this(confirmations, unresolvedBatches, List.of());
+        }
+    }
+
+    /** Counts and reason codes only; never contains credentials, selections or external identifiers. */
+    public record VerificationDiagnostic(String reason, int expectedRows, int fetchedPages, int reportedPages,
+                                         int rawRows, int validRows, int missingRowsPages, int missingIdentifiers,
+                                         int invalidTypeOrAmount, int invalidSelection, int invalidBetCount,
+                                         int serialGroups, int claimedGroups, int cancelledGroups,
+                                         int sameSizeGroups, int exactGroups) {}
 
     public record AccountSnapshot(String lineUrl, String displayAccount, BigDecimal balance) {}
 
@@ -692,14 +784,13 @@ public class Wa55MarketOrderClient {
     private record BetGroup(List<BetRequest> requests, String selections, boolean xian, BigDecimal amount,
                             BigDecimal totalAmount, String guid) {}
 
-    private record ExternalBetKey(int dictNoTypeId, String selection, BigDecimal amount) {
-        private ExternalBetKey {
-            selection = selection == null ? "" : selection.toUpperCase(Locale.ROOT);
-        }
-    }
+    private record ExternalBetRow(String betId, String serialNo, String guid, int dictNoTypeId,
+                                  String selection, BigDecimal amount,
+                                  int betCount, BigDecimal odds, boolean cancelled) {}
 
-    private record ExternalBetRow(String betId, String serialNo, int dictNoTypeId, String selection, BigDecimal amount,
-                                  int betCount, BigDecimal odds) {}
+    private record DetailScan(List<ExternalBetRow> rows, int fetchedPages, int reportedPages, int rawRows,
+                              int missingRowsPages, int missingIdentifiers, int invalidTypeOrAmount,
+                              int invalidSelection, int invalidBetCount, boolean unstablePages) {}
 
     private record Preflight(Session session) {}
 

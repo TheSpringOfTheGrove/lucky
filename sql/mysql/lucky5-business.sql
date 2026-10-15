@@ -327,6 +327,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_market_route_item` (
   `local_amount` decimal(18,2) NOT NULL DEFAULT 0, `market_amount` decimal(18,2) NOT NULL DEFAULT 0,
   `odds` decimal(12,4) NOT NULL DEFAULT 0, `local_payout` decimal(18,2) NOT NULL DEFAULT 0,
   `market_guid` varchar(64) NOT NULL, `market_bet_id` varchar(100) NOT NULL DEFAULT '',
+  `market_cancel_references_json` mediumtext NULL,
   `market_serial_no` varchar(100) NOT NULL DEFAULT '', `market_bet_count` int NOT NULL DEFAULT 0,
   `market_odds` decimal(12,4) NOT NULL DEFAULT 0, `status` varchar(30) NOT NULL DEFAULT 'PENDING',
   `attempts` int NOT NULL DEFAULT 0, `last_error` varchar(1000) NOT NULL DEFAULT '',

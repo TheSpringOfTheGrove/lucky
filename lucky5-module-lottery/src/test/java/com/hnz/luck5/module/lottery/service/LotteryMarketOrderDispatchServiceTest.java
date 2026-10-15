@@ -29,6 +29,8 @@ class LotteryMarketOrderDispatchServiceTest {
     @Mock private LotteryMarketSyncService marketSyncService;
     @Mock private LotteryMarketBalanceRefreshService balanceRefreshService;
     @Mock private LotteryMarketAccountLockService accountLockService;
+    @Mock private LotteryMarketReferenceLockService referenceLockService;
+    @Mock private LotteryMarketBetIdEnrichmentService betIdEnrichmentService;
 
     private LotteryMarketOrderDispatchService service;
 
@@ -36,11 +38,13 @@ class LotteryMarketOrderDispatchServiceTest {
     void setUp() {
         TenantContextHolder.setTenantId(1L);
         service = new LotteryMarketOrderDispatchService(marketClient, stateService, marketSyncService,
-                balanceRefreshService, accountLockService);
+                balanceRefreshService, accountLockService, referenceLockService, betIdEnrichmentService);
         lenient().doAnswer(invocation -> {
             invocation.getArgument(2, Runnable.class).run();
             return null;
         }).when(accountLockService).execute(anyLong(), anyLong(), any(Runnable.class));
+        lenient().when(referenceLockService.execute(anyLong(), anyLong(), any(), any()))
+                .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
     }
 
     @AfterEach
@@ -111,11 +115,13 @@ class LotteryMarketOrderDispatchServiceTest {
         when(marketClient.submit(credentials, "20260811001", List.of(request))).thenReturn(
                 new Wa55MarketOrderClient.SubmissionBatch(List.of(), List.of(accepted),
                         new BigDecimal("100.00")));
+        when(stateService.confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1")).thenReturn(true);
 
         service.submit(9L, "order-1");
 
         verify(stateService).markAcceptedBatchesVerifying(anyLong(), any(), any(), any(LocalDateTime.class));
         verify(stateService).confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1");
+        verify(betIdEnrichmentService).enqueue(1L, 9L, "order-1");
         verify(stateService, never()).markManualReview(anyLong(), any(), any());
         verify(marketSyncService).recordSuccessfulSubmission(9L, new BigDecimal("100.00"), BigDecimal.ONE);
         verify(balanceRefreshService).refreshAfterAcceptedSubmission(1L, 9L);
@@ -134,7 +140,9 @@ class LotteryMarketOrderDispatchServiceTest {
                 new LotteryMarketOrderStateService.VerificationContext("order-1", "20260811001",
                         LocalDateTime.now(), credentials, List.of(request));
         when(stateService.verificationContext(9L, "order-1")).thenReturn(context);
-        when(marketClient.verifyAccepted(credentials, "20260811001", List.of(request))).thenReturn(
+        when(stateService.claimedMarketBetIds(9L, "20260811001", "order-1"))
+                .thenReturn(java.util.Set.of());
+        when(marketClient.verifyAccepted(credentials, "20260811001", List.of(request), java.util.Set.of())).thenReturn(
                 new Wa55MarketOrderClient.VerificationBatch(List.of(confirmation), List.of()));
         when(stateService.applyConfirmations(9L, "order-1", List.of(confirmation))).thenReturn(true);
 
@@ -159,7 +167,7 @@ class LotteryMarketOrderDispatchServiceTest {
         service.verify(9L, "order-1");
 
         verify(stateService).confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1");
-        verify(marketClient, never()).verifyAccepted(any(), any(), any());
+        verify(marketClient, never()).verifyAccepted(any(), any(), any(), any());
         verify(stateService, never()).markManualReview(anyLong(), any(), any());
     }
 

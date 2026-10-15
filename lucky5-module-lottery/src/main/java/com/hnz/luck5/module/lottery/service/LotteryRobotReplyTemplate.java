@@ -125,6 +125,7 @@ public class LotteryRobotReplyTemplate {
             return "已退码";
         }
         String receipt = originalReceipt.stripTrailing();
+        if (receipt.endsWith("tui碼成功") || receipt.endsWith("退码成功")) return receipt;
         while (!receipt.isEmpty()) {
             int lastLineStart = receipt.lastIndexOf('\n') + 1;
             String lastLine = receipt.substring(lastLineStart).trim();
@@ -134,6 +135,16 @@ public class LotteryRobotReplyTemplate {
             receipt = receipt.substring(0, Math.max(0, lastLineStart - 1)).stripTrailing();
         }
         return receipt.isEmpty() ? "已退码" : receipt + "\n\n已退码";
+    }
+
+    public String cancelSuccessReceipt(String memberName, String period, int sequence, String content,
+                                       int itemCount, BigDecimal refunded, BigDecimal balance) {
+        return "@" + memberName + "\n[挂牌时间]" + period
+                + "\n【编号】： " + sequence + "\n" + displayCommands(content)
+                + "\n【套内】：" + itemCount
+                + "\n【退面积】：" + receiptMoney(refunded)
+                + "\n【面积】：" + receiptMoney(balance)
+                + "\ntui碼成功";
     }
 
     public String cancelPending(String orderId) {

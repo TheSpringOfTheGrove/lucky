@@ -44,4 +44,16 @@ public class LotteryIssueOpenedListener {
         }
     }
 
+    @Async
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void handleSettlement(LotteryIssueSettledEvent event) {
+        try {
+            TenantUtils.execute(event.tenantId(), () ->
+                    autoProxyService.runAfterSettlement(event.userId(), event.period()));
+        } catch (RuntimeException ex) {
+            LOGGER.error("结算后自动托排期失败 tenant={} user={} period={}", event.tenantId(),
+                    event.userId(), event.period(), ex);
+        }
+    }
+
 }

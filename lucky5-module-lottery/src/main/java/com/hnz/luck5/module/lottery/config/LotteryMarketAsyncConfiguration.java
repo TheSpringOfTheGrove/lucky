@@ -34,6 +34,32 @@ public class LotteryMarketAsyncConfiguration {
         return executor;
     }
 
+    /** Large paged bet-detail reads must never occupy the market write or balance-read pools. */
+    @Bean("lotteryMarketDetailExecutor")
+    public Executor lotteryMarketDetailExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("lottery-market-detail-");
+        executor.setWaitForTasksToCompleteOnShutdown(false);
+        executor.initialize();
+        return executor;
+    }
+
+    /** Only independent read-only detail pages use this bounded pool. */
+    @Bean("lotteryMarketDetailPageExecutor")
+    public Executor lotteryMarketDetailPageExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(16);
+        executor.setThreadNamePrefix("lottery-market-page-");
+        executor.setWaitForTasksToCompleteOnShutdown(false);
+        executor.initialize();
+        return executor;
+    }
+
     /** Settle different owners independently without sharing the market write or read queues. */
     @Bean("lotterySettlementExecutor")
     public Executor lotterySettlementExecutor() {

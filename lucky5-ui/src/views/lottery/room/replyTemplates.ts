@@ -1,5 +1,14 @@
 const money = (value: number) => Number(value || 0).toFixed(2)
 
+export const cancelSuccessText = 'tui碼成功'
+
+export const cancelFailureText = (reason?: string) => {
+  const detail = (reason || '当前订单不能退码')
+    .trim()
+    .replace(/^(?:tui碼失败|退码失败)[：:,，]?\s*/, '')
+  return `tui碼失败，${detail || '当前订单不能退码'}`
+}
+
 export const resolveDragonTiger = (numbers: string[], storedResult = '') => {
   if (['龙', '虎', '和'].includes(storedResult)) return storedResult
   const settlementNumbers = (numbers || []).slice(0, 4).map(Number)

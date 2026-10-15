@@ -78,6 +78,18 @@ class LotteryRobotReplyTemplateTest {
     }
 
     @Test
+    void shouldRenderRefundReceiptWithFullIssueAndBalanceAfterRefund() {
+        String receipt = template.cancelSuccessReceipt("晓琳", "20261015268", 12,
+                "5962033785962倒四定各0.1", 3000, new BigDecimal("300"),
+                new BigDecimal("19451.6"));
+
+        assertThat(receipt).isEqualTo("@晓琳\n[挂牌时间]20261015268\n【编号】： 12"
+                + "\n5962033785962倒四定各0.1\n【套内】：3000"
+                + "\n【退面积】：300.00\n【面积】：19451.60\ntui碼成功");
+        assertThat(template.cancelSucceeded(receipt)).isEqualTo(receipt);
+    }
+
+    @Test
     void shouldOnlyExposeFinalBetOutcomeToPlayer() {
         assertThat(template.marketBetPending("露露", "20260809194", "654倒二定各10"))
                 .isEqualTo("@露露\n提交中");
