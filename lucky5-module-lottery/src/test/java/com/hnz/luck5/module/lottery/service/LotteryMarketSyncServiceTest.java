@@ -500,6 +500,53 @@ class LotteryMarketSyncServiceTest {
         assertThat(second).hasSize(2).extracting(LotteryConfigDO::getUserId).contains(1L, 3L);
     }
 
+    @Test
+    void onlyRepairsAnOldDrawThatStillBlocksTheNextPeriod() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 19, 12, 40);
+        IssueDO blocker = new IssueDO();
+        blocker.setStatus("CLOSED");
+        blocker.setOpenedAt(now.minusMinutes(10));
+        blocker.setDrawTime(now.minusSeconds(31));
+
+        assertThat(LotteryMarketSyncService.isMissingDrawBlocker(blocker, now)).isTrue();
+        blocker.setDrawTime(now.minusSeconds(29));
+        assertThat(LotteryMarketSyncService.isMissingDrawBlocker(blocker, now)).isFalse();
+        blocker.setDrawTime(now.minusSeconds(31));
+        blocker.setStatus("DRAW_PENDING");
+        assertThat(LotteryMarketSyncService.isMissingDrawBlocker(blocker, now)).isTrue();
+        blocker.setStatus("SETTLED");
+        assertThat(LotteryMarketSyncService.isMissingDrawBlocker(blocker, now)).isFalse();
+    }
+
+    @Test
+    void backfillRequiresAConsistentVerifiedResultAndPreservesTheCandidateSource() {
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
+        IssueDO by123 = verifiedIssue("by123开奖", "31146");
+        IssueDO market = verifiedIssue("系统开奖", "31146");
+
+        assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
+                List.of(market, by123), "by123开奖")).isSameAs(by123);
+        assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
+                List.of(market, by123), "unknown")).isNull();
+        market.setResult("31147");
+        assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
+                List.of(market, by123), null)).isNull();
+        market.setResult("31146");
+        market.setDrawConfirmations(1);
+        assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
+                List.of(market, by123), null)).isSameAs(by123);
+    }
+
+    private static IssueDO verifiedIssue(String source, String result) {
+        IssueDO issue = new IssueDO();
+        issue.setPeriod("20261015267");
+        issue.setStatus("SETTLED");
+        issue.setResult(result);
+        issue.setSource(source);
+        issue.setDrawConfirmations(2);
+        return issue;
+    }
+
     private static LotteryConfigDO clockConfig(Long userId) {
         LotteryConfigDO config = new LotteryConfigDO();
         config.setTenantId(1L);

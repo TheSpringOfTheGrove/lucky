@@ -59,6 +59,7 @@ public class LotteryMarketSyncService {
     private final Set<String> settlingOwners = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean repairingPeriodSummaries = new AtomicBoolean();
     private final AtomicBoolean repairingDrawMessages = new AtomicBoolean();
+    private final AtomicBoolean repairingMissingDraws = new AtomicBoolean();
     private final AtomicBoolean syncingBackupDraws = new AtomicBoolean();
     private final AtomicInteger fallbackClockCursor = new AtomicInteger();
     private final Map<String, String> drawSourceClaims = new ConcurrentHashMap<>();
@@ -205,6 +206,102 @@ public class LotteryMarketSyncService {
         } finally {
             settlingAll.set(false);
         }
+    }
+
+    /**
+     * A result can fall out of the upstream's short history before every owner receives it. A previously settled
+     * owner is a durable, twice-confirmed reference for the same shared draw; replay it only to owners whose last
+     * formally opened period is blocking their current preview. Normal draw verification and settlement still apply.
+     */
+    @Scheduled(initialDelayString = "${lottery.market.missing-draw-repair-initial-delay-ms:45000}",
+            fixedDelayString = "${lottery.market.missing-draw-repair-interval-ms:15000}")
+    public void repairLiveMissingDraws() {
+        if (!repairingMissingDraws.compareAndSet(false, true)) return;
+        try {
+            List<IssueDO> waiting = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(() ->
+                    issueMapper.selectList(new LambdaQueryWrapper<IssueDO>()
+                            .eq(IssueDO::getStatus, "OPEN").isNull(IssueDO::getOpenedAt)
+                            .orderByDesc(IssueDO::getPeriod).last("LIMIT 100"))));
+            Set<String> visitedOwners = new LinkedHashSet<>();
+            for (IssueDO preview : waiting) {
+                String ownerKey = preview.getTenantId() + ":" + preview.getUserId();
+                if (!visitedOwners.add(ownerKey)) continue;
+                try {
+                    TenantUtils.execute(preview.getTenantId(), () -> {
+                        IssueDO blocker = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
+                                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, preview.getUserId())
+                                        .lt(IssueDO::getPeriod, preview.getPeriod())
+                                        .isNotNull(IssueDO::getOpenedAt)
+                                        .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+                        if (!isMissingDrawBlocker(blocker, LocalDateTime.now())) return null;
+                        List<IssueDO> references = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
+                                new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getPeriod, blocker.getPeriod())
+                                        .eq(IssueDO::getStatus, "SETTLED")
+                                        .ge(IssueDO::getDrawConfirmations, 2)));
+                        IssueDO reference = trustedSharedReference(references,
+                                blocker.getDrawFirstSeenAt() == null ? null : blocker.getSource());
+                        if (reference == null || !blocker.getPeriod().equals(reference.getPeriod())) return null;
+                        Wa55MarketClient.Draw draw = new Wa55MarketClient.Draw(reference.getPeriod(),
+                                reference.getResult(), reference.getDrawTime(), reference.getDrawUpdatedAt(),
+                                reference.getRawSnapshot());
+                        if (blocker.getResult() != null && !blocker.getResult().isBlank()
+                                && !blocker.getResult().equals(draw.result())) {
+                            LOGGER.error("历史开奖补偿发现号码冲突 tenant={} user={} period={}",
+                                    preview.getTenantId(), preview.getUserId(), blocker.getPeriod());
+                            return null;
+                        }
+                        LinkedHashSet<String> newlyDrawn = new LinkedHashSet<>();
+                        transactionTemplate.execute(status -> {
+                            IssueDO current = findIssue(preview.getUserId(), blocker.getPeriod());
+                            if (!isMissingDrawBlocker(current, LocalDateTime.now())) return null;
+                            upsertDrawIssue(preview.getUserId(), draw, reference.getSource(),
+                                    LocalDateTime.now(), newlyDrawn);
+                            return null;
+                        });
+                        if (!newlyDrawn.isEmpty()) {
+                            LOGGER.warn("历史开奖结果补偿成功 tenant={} user={} period={}",
+                                    preview.getTenantId(), preview.getUserId(), blocker.getPeriod());
+                            dispatchSettlement(preview.getTenantId(), preview.getUserId());
+                        }
+                        return null;
+                    });
+                } catch (RuntimeException ex) {
+                    LOGGER.error("历史开奖结果补偿失败 tenant={} user={} period={}",
+                            preview.getTenantId(), preview.getUserId(), preview.getPeriod(), ex);
+                }
+            }
+        } finally {
+            repairingMissingDraws.set(false);
+        }
+    }
+
+    static boolean isMissingDrawBlocker(IssueDO issue, LocalDateTime now) {
+        if (issue == null || issue.getOpenedAt() == null || issue.getSettledAt() != null
+                || !Set.of("CLOSED", "DRAW_PENDING").contains(issue.getStatus())) return false;
+        LocalDateTime expectedDraw = issue.getDrawTime() == null ? issue.getClosedAt() : issue.getDrawTime();
+        return expectedDraw != null && expectedDraw.isBefore(now.minusSeconds(30));
+    }
+
+    private IssueDO trustedSharedReference(List<IssueDO> references, String requiredSource) {
+        IssueDO trusted = null;
+        IssueDO selected = null;
+        for (IssueDO candidate : references) {
+            if (!"SETTLED".equals(candidate.getStatus()) || candidate.getDrawConfirmations() == null
+                    || candidate.getDrawConfirmations() < 2
+                    || !(MARKET_DRAW_SOURCE.equals(candidate.getSource())
+                            || BY123_DRAW_SOURCE.equals(candidate.getSource()))
+                    || !drawVerificationService.isTrusted(candidate.getResult())) continue;
+            if (trusted != null && (!Objects.equals(trusted.getPeriod(), candidate.getPeriod())
+                    || !Objects.equals(trusted.getResult(), candidate.getResult()))) {
+                LOGGER.error("同期开奖源记录不一致 period={}", candidate.getPeriod());
+                return null;
+            }
+            trusted = candidate;
+            if (selected == null && (requiredSource == null || requiredSource.equals(candidate.getSource()))) {
+                selected = candidate;
+            }
+        }
+        return selected;
     }
 
     private void dispatchSettlement(Long tenantId, Long userId) {
