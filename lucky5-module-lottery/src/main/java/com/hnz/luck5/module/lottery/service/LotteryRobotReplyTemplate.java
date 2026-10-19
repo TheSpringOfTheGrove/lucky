@@ -3,6 +3,7 @@ package com.hnz.luck5.module.lottery.service;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,6 +52,28 @@ public class LotteryRobotReplyTemplate {
 
     public String profitLoss(String memberName, BigDecimal profitLoss) {
         return "@" + memberName + "\nyk：" + number(profitLoss);
+    }
+
+    public String flow(String memberName, BigDecimal total, BigDecimal normal, BigDecimal dragon) {
+        return "@" + memberName + "\n累计流水：" + fixed(total, 2)
+                + "，普通：" + fixed(normal, 2) + "，龙虎：" + fixed(dragon, 2);
+    }
+
+    public String flowRebate(String memberName, BigDecimal pendingNormal, BigDecimal pendingDragon,
+                             BigDecimal paidNormal, BigDecimal paidDragon, BigDecimal balance) {
+        return "@" + memberName + "\n可返流水：" + fixed(pendingNormal.add(pendingDragon), 2)
+                + "，普通：" + fixed(pendingNormal, 2) + "，龙虎：" + fixed(pendingDragon, 2)
+                + "\n返还水：" + fixed(paidNormal.add(paidDragon), 3)
+                + "，普通：" + fixed(paidNormal, 3) + "，龙虎：" + fixed(paidDragon, 3)
+                + "\n目前：" + fixed(balance, 2);
+    }
+
+    public String flowUnavailable(String memberName) {
+        return "@" + memberName + "\n当前不可查流水";
+    }
+
+    private String fixed(BigDecimal value, int scale) {
+        return (value == null ? BigDecimal.ZERO : value).setScale(scale, RoundingMode.HALF_UP).toPlainString();
     }
 
     public String followResult(String memberName, String result) {

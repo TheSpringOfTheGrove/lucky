@@ -17,6 +17,8 @@ public class LotteryRoomMessagePolicy {
         CHAT,
         BALANCE,
         PROFIT_LOSS,
+        FLOW,
+        FLOW_REBATE,
         AMOUNT,
         CANCEL,
         FOLLOW,
@@ -43,6 +45,8 @@ public class LotteryRoomMessagePolicy {
         if (Set.of("盈亏", "yk", "YK").contains(content)) {
             return MessageType.PROFIT_LOSS;
         }
+        if ("流水".equals(content)) return MessageType.FLOW;
+        if ("回流水".equals(content)) return MessageType.FLOW_REBATE;
         if (AMOUNT_COMMAND.matcher(content).matches()) {
             return MessageType.AMOUNT;
         }

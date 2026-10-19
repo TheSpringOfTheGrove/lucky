@@ -1440,13 +1440,15 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId).in(BetItemDO::getOrderId, orderIds)));
         Map<String, List<BetItemDO>> itemsByOrder = itemsByOrderWithExpandedSnapshots(items);
         List<RebateRecordDO> rebateRecords = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
-                new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)));
+                new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)
+                        .last("FOR UPDATE")));
         BigDecimal total = ZERO;
         int count = 0;
         List<Map<String, Object>> paidMembers = new ArrayList<>();
         List<MemberDO> members = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
                 new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
-                        .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)));
+                        .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)
+                        .last("FOR UPDATE")));
         Map<String, MemberDO> pullersByName = members.stream().filter(member -> "拉手".equals(member.getTag()))
                 .collect(Collectors.toMap(MemberDO::getName, Function.identity(), (first, ignored) -> first));
         for (MemberDO member : members) {
@@ -2708,6 +2710,33 @@ public class LotteryServiceImpl implements LotteryService {
             MessageDO message = saveCommandMessage(member, reqVO, "PROFIT_LOSS", reply);
             return map("messageId", message.getId(), "reply", reply, "commandType", "PROFIT_LOSS");
         }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.FLOW) {
+            String reply = Boolean.FALSE.equals(member.getSearchable())
+                    ? robotReplyTemplate.flowUnavailable(member.getName()) : flowReply(member);
+            MessageDO message = saveCommandMessage(member, reqVO, "FLOW", reply);
+            return map("messageId", message.getId(), "reply", reply, "commandType", "FLOW");
+        }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.FLOW_REBATE) {
+            // The owner finance row also serializes the admin and automatic rebate paths.
+            lockOwnerFinance(member.getUserId());
+            if (StrUtil.isNotBlank(reqVO.getExternalId())) {
+                MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                        new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
+                                .eq(MessageDO::getExternalId, reqVO.getExternalId()).last("LIMIT 1 FOR UPDATE")));
+                if (existing != null) {
+                    return map("duplicate", true, "messageId", existing.getId(), "reply", existing.getReply(),
+                            "commandType", existing.getCommandType());
+                }
+            }
+            MemberDO current = DataPermissionUtils.executeIgnore(() -> memberMapper.selectOne(
+                    new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getId, member.getId())
+                            .eq(MemberDO::getUserId, member.getUserId()).last("LIMIT 1 FOR UPDATE")));
+            if (current == null) throw exception(MEMBER_NOT_FOUND);
+            String reply = Boolean.FALSE.equals(current.getSearchable())
+                    ? robotReplyTemplate.flowUnavailable(current.getName()) : flowRebateReply(current, actor);
+            MessageDO message = saveCommandMessage(current, reqVO, "FLOW_REBATE", reply);
+            return map("messageId", message.getId(), "reply", reply, "commandType", "FLOW_REBATE");
+        }
         if (messageType == LotteryRoomMessagePolicy.MessageType.FOLLOW) {
             LotteryPlayerFollowService.BindResult bound = playerFollowService.bind(member, reqVO.getChannel());
             String reply = robotReplyTemplate.followResult(member.getName(), bound.text());
@@ -3747,6 +3776,96 @@ public class LotteryServiceImpl implements LotteryService {
         if (locked == null) {
             throw exception(BET_STATE_CHANGED);
         }
+    }
+
+    private String flowReply(MemberDO member) {
+        BigDecimal total = money(value(member.getTotalBet(), ZERO).max(ZERO));
+        BigDecimal dragon = ZERO;
+        if (total.signum() > 0 && enabled("dragonTigerSeparateRebate", member.getUserId())) {
+            List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
+                    new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, member.getUserId())
+                            .eq(OrderDO::getMemberId, member.getId())
+                            .in(OrderDO::getStatus, "未开奖", "已中奖", "未中奖")
+                            .and(query -> query.isNull(OrderDO::getOrderType)
+                                    .or().ne(OrderDO::getOrderType, TYPE_AUTO_PROXY))));
+            LocalDateTime clearedAt = member.getFlowClearedAt();
+            List<String> ids = orders.stream()
+                    .filter(order -> clearedAt == null || order.getCreateTime() == null
+                            || !order.getCreateTime().isBefore(clearedAt))
+                    .map(OrderDO::getId).toList();
+            if (!ids.isEmpty()) {
+                List<BetItemDO> items = DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
+                        new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, member.getUserId())
+                                .in(BetItemDO::getOrderId, ids)));
+                dragon = money(itemsByOrderWithExpandedSnapshots(items).values().stream().flatMap(List::stream)
+                        .filter(item -> "龙虎".equals(item.getPlay()))
+                        .map(item -> value(item.getAmount(), ZERO))
+                        .reduce(ZERO, BigDecimal::add)).min(total);
+            }
+        }
+        return robotReplyTemplate.flow(member.getName(), total, total.subtract(dragon), dragon);
+    }
+
+    private String flowRebateReply(MemberDO member, String actor) {
+        Long userId = member.getUserId();
+        boolean separateDragon = enabled("dragonTigerSeparateRebate", userId);
+        List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
+                new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, userId)
+                        .eq(OrderDO::getMemberId, member.getId()).in(OrderDO::getStatus, "已中奖", "未中奖")
+                        .and(query -> query.isNull(OrderDO::getOrderType)
+                                .or().ne(OrderDO::getOrderType, TYPE_AUTO_PROXY))));
+        List<String> ids = orders.stream().map(OrderDO::getId).toList();
+        List<BetItemDO> items = !separateDragon || ids.isEmpty() ? List.of()
+                : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
+                        new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId)
+                                .in(BetItemDO::getOrderId, ids)));
+        List<RebateRecordDO> records = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
+                new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)
+                        .eq(RebateRecordDO::getMemberId, member.getId()).last("FOR UPDATE")));
+        LotteryRebateCalculator.RebateResult rebate = rebateCalculator.calculate(member, orders,
+                itemsByOrderWithExpandedSnapshots(items), records, separateDragon);
+        BigDecimal pending = rebate.pendingNormalBet().add(rebate.pendingDragonBet());
+        if (pending.signum() > 0) {
+            MemberDO puller = null;
+            if (StrUtil.isNotBlank(member.getPartner()) && !"无".equals(member.getPartner())) {
+                puller = DataPermissionUtils.executeIgnore(() -> memberMapper.selectOne(
+                        new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
+                                .eq(MemberDO::getName, member.getPartner()).eq(MemberDO::getTag, "拉手")
+                                .last("LIMIT 1 FOR UPDATE")));
+            }
+            BigDecimal pullerAmount = puller == null || Objects.equals(puller.getId(), member.getId())
+                    ? ZERO : rebate.partnerTotalAmount();
+            RebateRecordDO record = new RebateRecordDO();
+            record.setId(id());
+            record.setMemberId(member.getId());
+            record.setNormalBet(rebate.pendingNormalBet());
+            record.setDragonBet(rebate.pendingDragonBet());
+            record.setNormalAmount(rebate.normalAmount());
+            record.setDragonAmount(rebate.dragonAmount());
+            record.setPartnerMemberId(pullerAmount.signum() > 0 ? puller.getId() : null);
+            record.setPartnerNormalAmount(pullerAmount.signum() > 0 ? rebate.partnerNormalAmount() : ZERO);
+            record.setPartnerDragonAmount(pullerAmount.signum() > 0 ? rebate.partnerDragonAmount() : ZERO);
+            record.setPartnerTotalAmount(pullerAmount);
+            record.setTotalAmount(rebate.totalAmount().add(pullerAmount));
+            record.setUserId(userId);
+            rebateRecordMapper.insert(record);
+            if (rebate.totalAmount().signum() > 0) {
+                String remark = "普通 " + rebate.normalAmount() + " / 龙虎 " + rebate.dragonAmount();
+                balanceLedgerService.change(member, rebate.totalAmount(), LotteryBalanceLedgerService.REBATE,
+                        record.getId(), actor, remark);
+                insertRebateAmountRecord(record.getId(), member, rebate.totalAmount(), remark, actor);
+            }
+            if (pullerAmount.signum() > 0) {
+                String remark = "拉手返水，来源 " + member.getName() + "：普通 " + rebate.partnerNormalAmount()
+                        + " / 龙虎 " + rebate.partnerDragonAmount();
+                String amountRecordId = id();
+                balanceLedgerService.change(puller, pullerAmount, LotteryBalanceLedgerService.REBATE,
+                        amountRecordId, actor, remark);
+                insertRebateAmountRecord(amountRecordId, puller, pullerAmount, remark, actor);
+            }
+        }
+        return robotReplyTemplate.flowRebate(member.getName(), rebate.pendingNormalBet(),
+                rebate.pendingDragonBet(), rebate.normalAmount(), rebate.dragonAmount(), member.getBalance());
     }
 
     private MessageDO saveCommandMessage(MemberDO member, LotteryReqVO.IncomingMessage reqVO, String type, String reply) {

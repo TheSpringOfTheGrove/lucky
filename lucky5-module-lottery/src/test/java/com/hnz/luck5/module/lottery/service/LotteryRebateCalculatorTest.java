@@ -53,6 +53,24 @@ class LotteryRebateCalculatorTest {
     }
 
     @Test
+    void zeroRateClaimStillConsumesItsSettledTurnover() {
+        MemberDO member = member(null);
+        member.setNormalRate(BigDecimal.ZERO);
+        OrderDO order = order("O-1", LocalDateTime.now());
+        order.setAmount(new BigDecimal("120"));
+        RebateRecordDO claimed = rebate("120", "0", LocalDateTime.now());
+        claimed.setNormalAmount(BigDecimal.ZERO);
+        claimed.setTotalAmount(BigDecimal.ZERO);
+
+        LotteryRebateCalculator.RebateResult result = calculator.calculate(member, List.of(order),
+                Map.of(), List.of(claimed), false);
+
+        assertThat(result.normalBet()).isEqualByComparingTo("120.00");
+        assertThat(result.pendingNormalBet()).isZero();
+        assertThat(result.totalAmount()).isZero();
+    }
+
+    @Test
     void calculatesPullerRebateFromThePlayersPendingBetBase() {
         MemberDO member = member(null);
         member.setPartner("拉手A");

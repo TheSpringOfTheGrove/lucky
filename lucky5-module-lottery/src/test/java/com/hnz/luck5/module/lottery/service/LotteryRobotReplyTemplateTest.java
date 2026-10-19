@@ -12,6 +12,17 @@ class LotteryRobotReplyTemplateTest {
     private final LotteryRobotReplyTemplate template = new LotteryRobotReplyTemplate();
 
     @Test
+    void shouldFormatFlowAndFlowRebateLikeReferenceRoom() {
+        assertThat(template.flow("阿杰", new BigDecimal("420"), new BigDecimal("400"),
+                new BigDecimal("20")))
+                .isEqualTo("@阿杰\n累计流水：420.00，普通：400.00，龙虎：20.00");
+        assertThat(template.flowRebate("阿杰", new BigDecimal("100"), new BigDecimal("20"),
+                new BigDecimal("1"), new BigDecimal("0.4"), new BigDecimal("11866.4")))
+                .isEqualTo("@阿杰\n可返流水：120.00，普通：100.00，龙虎：20.00"
+                        + "\n返还水：1.400，普通：1.000，龙虎：0.400\n目前：11866.40");
+    }
+
+    @Test
     void shouldFormatBetReceiptLikeReferenceRobot() {
         assertThat(template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
