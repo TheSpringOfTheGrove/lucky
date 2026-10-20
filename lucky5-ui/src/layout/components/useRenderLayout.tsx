@@ -19,8 +19,6 @@ const appStore = useAppStore()
 
 const permissionStore = usePermissionStore()
 
-const pageLoading = computed(() => appStore.getPageLoading)
-
 // 标签页
 const tagsView = computed(() => appStore.getTagsView)
 
@@ -104,7 +102,6 @@ export const useRenderLayout = () => {
           style="transition: all var(--transition-time-02);"
         >
           <ElScrollbar
-            v-loading={pageLoading.value}
             class={`${prefixCls}-content-scrollbar h-full`}
           >
             <AppView></AppView>
@@ -152,7 +149,6 @@ export const useRenderLayout = () => {
             style="transition: all var(--transition-time-02);"
           >
             <ElScrollbar
-              v-loading={pageLoading.value}
               class={[
                 `${prefixCls}-content-scrollbar`,
                 {
@@ -206,7 +202,6 @@ export const useRenderLayout = () => {
         </div>
         <div class={[`${prefixCls}-content`, 'w-full h-[calc(100%-var(--top-tool-height))]']}>
           <ElScrollbar
-            v-loading={pageLoading.value}
             class={[
               `${prefixCls}-content-scrollbar`,
               {
@@ -275,7 +270,6 @@ export const useRenderLayout = () => {
             style="transition: width var(--transition-time-02);"
           >
             <ElScrollbar
-              v-loading={pageLoading.value}
               class={[
                 `${prefixCls}-content-scrollbar`,
                 {

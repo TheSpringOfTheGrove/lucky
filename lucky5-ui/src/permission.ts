@@ -4,15 +4,12 @@ import { isRelogin } from '@/config/axios/service'
 import { getAccessToken } from '@/utils/auth'
 import { useTitle } from '@/hooks/web/useTitle'
 import { useNProgress } from '@/hooks/web/useNProgress'
-import { usePageLoading } from '@/hooks/web/usePageLoading'
 import { useDictStoreWithOut } from '@/store/modules/dict'
 import { useUserStoreWithOut } from '@/store/modules/user'
 import { usePermissionStoreWithOut } from '@/store/modules/permission'
 import { parseRouteLocation } from '@/utils/routeParams'
 
 const { start, done } = useNProgress()
-
-const { loadStart, loadDone } = usePageLoading()
 
 // 路由不重定向白名单
 const whiteList = [
@@ -39,7 +36,6 @@ const agentHomeRedirect = (path: string, roles: string[]) =>
 // 路由加载前
 router.beforeEach(async (to, from, next) => {
   start()
-  loadStart()
   // 玩家房间不属于后台登录体系。即使浏览器残留后台令牌，也不能触发后台用户初始化和重新登录弹窗。
   if (isPublicRoomPath(to.path)) {
     next()
@@ -97,5 +93,4 @@ router.beforeEach(async (to, from, next) => {
 router.afterEach((to) => {
   useTitle(to?.meta?.title as string)
   done() // 结束Progress
-  loadDone()
 })
