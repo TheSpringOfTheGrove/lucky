@@ -1180,7 +1180,6 @@ const appendKey = (key: string) => {
   else if (key === '换行') composer.value += '\n'
   else if (key === '查') {
     composer.value = key
-    void submitChat()
   } else {
     const expansions: Record<string, string> = {
       大: '56789',
@@ -1505,7 +1504,7 @@ onBeforeUnmount(() => {
         <span aria-hidden="true">▼</span>{{ unreadMessageKeys.length }}条新消息
       </button>
 
-      <form ref="composerFormRef" class="chat-composer" @submit.prevent="submitChat">
+      <form ref="composerFormRef" class="chat-composer" @submit.prevent>
         <div class="composer-row">
           <button
             class="keyboard-toggle"
@@ -1521,13 +1520,18 @@ onBeforeUnmount(() => {
             v-model="composer"
             rows="1"
             autocomplete="off"
+            enterkeyhint="enter"
             aria-label="聊天输入"
             placeholder="输入聊天或下注指令"
             @focus="bottomPanel = ''"
-            @keydown.enter.exact.prevent="submitChat"
           ></textarea>
           <button class="fast-select" type="button" @click="openQuickPicker">快选</button>
-          <button class="send-button" type="submit" :disabled="saving || !composer.trim()">
+          <button
+            class="send-button"
+            type="button"
+            :disabled="saving || !composer.trim()"
+            @click="submitChat"
+          >
             {{ saving ? '处理中' : '发送' }}
           </button>
           <button
