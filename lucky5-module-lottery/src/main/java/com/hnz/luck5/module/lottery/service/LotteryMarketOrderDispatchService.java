@@ -184,36 +184,73 @@ public class LotteryMarketOrderDispatchService {
     public void cancel(Long userId, String orderId) {
         if (!marketClient.isRealWritesEnabled()) return;
         Long tenantId = TenantContextHolder.getRequiredTenantId();
-        accountLockService.execute(tenantId, userId, () -> cancelLocked(userId, orderId));
+        long startedAt = System.nanoTime();
+        long[] lockAcquiredAt = {0};
+        try {
+            accountLockService.execute(tenantId, userId, () -> {
+                lockAcquiredAt[0] = System.nanoTime();
+                cancelLocked(userId, orderId);
+            });
+        } finally {
+            LOGGER.info("Lucky5 market cancel queue timing: user={} order={} lockWaitMs={} elapsedMs={}",
+                    userId, orderId, lockAcquiredAt[0] == 0 ? -1 : (lockAcquiredAt[0] - startedAt) / 1_000_000,
+                    (System.nanoTime() - startedAt) / 1_000_000);
+        }
     }
 
     private void cancelLocked(Long userId, String orderId) {
+        long startedAt = System.nanoTime();
         LotteryMarketOrderStateService.CancelContext context = stateService.claimCancel(userId, orderId);
         if (context == null) return;
-        if (!stateService.isCancellationWindowOpen(userId, context.period())) {
-            String reason = "该期已封盘，不能退码";
-            if (context.rejectedSubmission()) {
-                stateService.markCancelFailed(userId, orderId, reason);
-            } else {
-                stateService.markCancelRejected(userId, orderId, reason);
-            }
-            return;
-        }
-        if (context.requests().isEmpty()) {
-            stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
-            return;
-        }
+        long claimMs = (System.nanoTime() - startedAt) / 1_000_000;
+        long requestMs = 0;
+        long finalizeMs = 0;
+        String outcome = "skipped";
         try {
-            marketClient.cancel(context.credentials(), context.period(), context.requests());
-            stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
-        } catch (Wa55MarketOrderClient.MarketProtocolException ex) {
-            if (ex.submissionUncertain()) {
-                stateService.markCancelFailed(userId, orderId, ex.getMessage());
-            } else {
-                stateService.markCancelRejected(userId, orderId, ex.getMessage());
+            if (!stateService.isCancellationWindowOpen(userId, context.period())) {
+                String reason = "该期已封盘，不能退码";
+                if (context.rejectedSubmission()) {
+                    stateService.markCancelFailed(userId, orderId, reason);
+                } else {
+                    stateService.markCancelRejected(userId, orderId, reason);
+                }
+                outcome = "closed";
+                return;
             }
-        } catch (RuntimeException ex) {
-            stateService.markCancelFailed(userId, orderId, ex.getMessage());
+            if (context.requests().isEmpty()) {
+                long finalizeStartedAt = System.nanoTime();
+                stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
+                finalizeMs = (System.nanoTime() - finalizeStartedAt) / 1_000_000;
+                outcome = "local";
+                return;
+            }
+            try {
+                long requestStartedAt = System.nanoTime();
+                try {
+                    marketClient.cancel(context.credentials(), context.period(), context.requests());
+                } finally {
+                    requestMs = (System.nanoTime() - requestStartedAt) / 1_000_000;
+                }
+                long finalizeStartedAt = System.nanoTime();
+                stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
+                finalizeMs = (System.nanoTime() - finalizeStartedAt) / 1_000_000;
+                outcome = "confirmed";
+            } catch (Wa55MarketOrderClient.MarketProtocolException ex) {
+                if (ex.submissionUncertain()) {
+                    stateService.markCancelFailed(userId, orderId, ex.getMessage());
+                    outcome = "uncertain";
+                } else {
+                    stateService.markCancelRejected(userId, orderId, ex.getMessage());
+                    outcome = "rejected";
+                }
+            } catch (RuntimeException ex) {
+                stateService.markCancelFailed(userId, orderId, ex.getMessage());
+                outcome = "failed";
+            }
+        } finally {
+            LOGGER.info("Lucky5 market cancel timing: user={} order={} routes={} claimMs={} requestMs={} finalizeMs={} totalMs={} outcome={}",
+                    userId, orderId, context.requests().size(), claimMs, requestMs, finalizeMs,
+                    (System.nanoTime() - startedAt) / 1_000_000, outcome);
         }
     }
 

@@ -526,12 +526,21 @@ public class LotteryMarketSyncService {
         long syncStartedAt = System.nanoTime();
         List<LotteryConfigDO> sources = clockCandidates(configs);
         Wa55MarketClient.Snapshot snapshot = null;
+        long sourceReadMs = 0;
+        long resultClaimMs = 0;
         for (LotteryConfigDO source : sources) {
+            long readStartedAt = System.nanoTime();
             try {
                 Wa55MarketClient.Snapshot fetched = TenantUtils.execute(source.getTenantId(),
                         () -> readDrawSnapshot(source));
+                long readMs = (System.nanoTime() - readStartedAt) / 1_000_000;
+                long claimStartedAt = System.nanoTime();
                 // Claim results immediately after the HTTP response, before the unrelated connection write.
                 List<Wa55MarketClient.Draw> accepted = acceptedDraws(MARKET_DRAW_SOURCE, fetched.draws());
+                resultClaimMs = (System.nanoTime() - claimStartedAt) / 1_000_000;
+                sourceReadMs = readMs;
+                LOGGER.debug("Lucky5 draw source timing: source=market readMs={} claimMs={} observedDraws={} acceptedDraws={}",
+                        readMs, resultClaimMs, fetched.draws().size(), accepted.size());
                 snapshot = new Wa55MarketClient.Snapshot(fetched.lineUrl(), fetched.account(), fetched.issue(), accepted);
                 try {
                     TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "已连接",
@@ -543,8 +552,8 @@ public class LotteryMarketSyncService {
                 preferredClockOwnerKey = ownerRefreshKey(source);
                 break;
             } catch (RuntimeException ex) {
-                LOGGER.warn("开奖时钟读取失败 tenant={} user={}: {}", source.getTenantId(), source.getUserId(),
-                        rootMessage(ex));
+                LOGGER.warn("开奖时钟读取失败 tenant={} user={} readMs={}: {}", source.getTenantId(),
+                        source.getUserId(), (System.nanoTime() - readStartedAt) / 1_000_000, rootMessage(ex));
             }
         }
         if (snapshot == null) {
@@ -552,6 +561,7 @@ public class LotteryMarketSyncService {
             return null;
         }
         Wa55MarketClient.Snapshot sharedSnapshot = snapshot;
+        long distributionStartedAt = System.nanoTime();
         List<PeriodSummaryPublication> summaryPublications = Collections.synchronizedList(new ArrayList<>());
         List<CompletableFuture<Void>> distributions = new ArrayList<>(configs.size());
         for (LotteryConfigDO target : configs) {
@@ -591,8 +601,9 @@ public class LotteryMarketSyncService {
             }
         }
         distributions.forEach(CompletableFuture::join);
-        LOGGER.info("Lucky5 market draw distributed owners={} elapsedMs={} acceptedDraws={}",
-                configs.size(), (System.nanoTime() - syncStartedAt) / 1_000_000, sharedSnapshot.draws().size());
+        LOGGER.info("Lucky5 market draw distributed owners={} elapsedMs={} sourceReadMs={} claimMs={} distributionMs={} acceptedDraws={}",
+                configs.size(), (System.nanoTime() - syncStartedAt) / 1_000_000, sourceReadMs, resultClaimMs,
+                (System.nanoTime() - distributionStartedAt) / 1_000_000, sharedSnapshot.draws().size());
         // Publish summaries only after the shared issue/result snapshot has reached every owner. Summary formatting
         // and order reads must never delay another owner's draw display path.
         scheduleSummaries(summaryPublications, "期末成功订单汇总");
@@ -651,8 +662,11 @@ public class LotteryMarketSyncService {
         CompletableFuture.runAsync(() -> {
             long syncStartedAt = System.nanoTime();
             try {
+                long readStartedAt = System.nanoTime();
                 List<Wa55MarketClient.Draw> draws = acceptedDraws(BY123_DRAW_SOURCE, by123DrawClient.readDraws());
+                long readAndClaimMs = (System.nanoTime() - readStartedAt) / 1_000_000;
                 if (draws.isEmpty()) return;
+                long distributionStartedAt = System.nanoTime();
                 List<PeriodSummaryPublication> publications = Collections.synchronizedList(new ArrayList<>());
                 List<CompletableFuture<Void>> distributions = new ArrayList<>(configs.size());
                 for (LotteryConfigDO target : configs) {
@@ -698,8 +712,9 @@ public class LotteryMarketSyncService {
                     }
                 }
                 distributions.forEach(CompletableFuture::join);
-                LOGGER.info("Lucky5 backup draw distributed owners={} elapsedMs={} acceptedDraws={}",
-                        configs.size(), (System.nanoTime() - syncStartedAt) / 1_000_000, draws.size());
+                LOGGER.info("Lucky5 backup draw distributed owners={} elapsedMs={} readAndClaimMs={} distributionMs={} acceptedDraws={}",
+                        configs.size(), (System.nanoTime() - syncStartedAt) / 1_000_000, readAndClaimMs,
+                        (System.nanoTime() - distributionStartedAt) / 1_000_000, draws.size());
                 scheduleSummaries(publications, "备用开奖期末汇总");
             } catch (RuntimeException ex) {
                 LOGGER.warn("by123 备用开奖源本轮不可用: {}", rootMessage(ex));
@@ -731,9 +746,12 @@ public class LotteryMarketSyncService {
                             ? persisted.getSource() + "|" + persisted.getResult().replace(",", "") : claim;
                     Boolean claimed = stringRedisTemplate.opsForValue().setIfAbsent(key, preferred, Duration.ofDays(3));
                     if (Boolean.TRUE.equals(claimed)) {
-                        LOGGER.info("Lucky5 first valid draw claimed period={} source={} result={}",
+                        long officialLagMs = draw.drawTime() == null ? -1
+                                : Duration.between(draw.drawTime().atZone(ZoneId.of("Asia/Shanghai")).toInstant(),
+                                java.time.Instant.now()).toMillis();
+                        LOGGER.info("Lucky5 first valid draw claimed period={} source={} result={} officialLagMs={}",
                                 period, preferred.substring(0, preferred.indexOf('|')),
-                                preferred.substring(preferred.indexOf('|') + 1));
+                                preferred.substring(preferred.indexOf('|') + 1), officialLagMs);
                     }
                     return Boolean.TRUE.equals(claimed) ? preferred : stringRedisTemplate.opsForValue().get(key);
                 });

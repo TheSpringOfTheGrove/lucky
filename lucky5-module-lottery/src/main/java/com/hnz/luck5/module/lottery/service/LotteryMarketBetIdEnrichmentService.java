@@ -40,19 +40,29 @@ public class LotteryMarketBetIdEnrichmentService {
 
     /** A failed or incomplete lookup leaves the existing cancellation guard unchanged. */
     public boolean resolveNow(Long tenantId, Long userId, String orderId) {
+        long startedAt = System.nanoTime();
+        String outcome = "incomplete";
         CompletableFuture<Boolean> lookup = schedule(tenantId, userId, orderId);
         try {
-            return lookup.get(CANCEL_LOOKUP_WAIT_SECONDS, TimeUnit.SECONDS);
+            boolean resolved = lookup.get(CANCEL_LOOKUP_WAIT_SECONDS, TimeUnit.SECONDS);
+            outcome = resolved ? "resolved" : "incomplete";
+            return resolved;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
+            outcome = "interrupted";
             return false;
         } catch (TimeoutException ex) {
             LOGGER.info("盘口退码编号补查继续在后台执行 tenant={} user={} order={}", tenantId, userId, orderId);
+            outcome = "timeout";
             return false;
         } catch (Exception ex) {
             LOGGER.warn("盘口退码编号补查失败 tenant={} user={} order={} cause={}",
                     tenantId, userId, orderId, ex.getClass().getSimpleName());
+            outcome = "failed";
             return false;
+        } finally {
+            LOGGER.info("Lucky5 market cancel reference timing: user={} order={} lookupMs={} outcome={}",
+                    userId, orderId, (System.nanoTime() - startedAt) / 1_000_000, outcome);
         }
     }
 

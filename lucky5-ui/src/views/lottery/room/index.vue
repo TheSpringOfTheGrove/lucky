@@ -605,6 +605,8 @@ const keyboardRows = [
 let refreshTimer: number | undefined
 let betReplyTimer: number | undefined
 let betReplyRequestSequence = 0
+let cancelReceiptTimer: number | undefined
+let cancelReceiptSequence = 0
 let drawRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 let sessionRequestSequence = 0
@@ -1269,8 +1271,15 @@ const cancelOrder = async (order: Pick<RoomOrder, 'id' | 'period'>) => {
       cancelButtonText: '取消'
     })
     saving.value = true
-    await cancelRoomOrderApi(credential.value, order.id)
+    const result = await cancelRoomOrderApi(credential.value, order.id)
     await loadSession(true)
+    if (result.status === '退码处理中') {
+      ElMessage.info('退码处理中，结果确认后自动更新')
+      const receipt = session.value?.messages.find(
+        (message) => message.orderId === order.id && message.own !== false && message.commandType === 'BET'
+      )
+      if (receipt) scheduleCancelReceiptRefresh(receipt.id)
+    }
   } catch (reason: any) {
     if (reason !== 'cancel' && reason !== 'close') {
       await showCancelFailure(reason?.message)
@@ -1278,6 +1287,29 @@ const cancelOrder = async (order: Pick<RoomOrder, 'id' | 'period'>) => {
   } finally {
     saving.value = false
   }
+}
+
+const scheduleCancelReceiptRefresh = (messageId: number) => {
+  if (cancelReceiptTimer) window.clearTimeout(cancelReceiptTimer)
+  const sequence = ++cancelReceiptSequence
+  const deadline = Date.now() + 30000
+  const poll = async () => {
+    if (sequence !== cancelReceiptSequence || Date.now() >= deadline) return
+    try {
+      const [receipt] = await getRoomBetRepliesApi(credential.value, [messageId])
+      if (sequence !== cancelReceiptSequence) return
+      if (receipt && ['已退码', '退码失败', '退码待确认'].includes(receipt.status)) {
+        await loadSession(true)
+        return
+      }
+    } catch {
+      // 正常的五秒会话刷新仍会兜底，短时查询失败不改变退码结果。
+    }
+    if (sequence === cancelReceiptSequence && Date.now() < deadline) {
+      cancelReceiptTimer = window.setTimeout(poll, 500)
+    }
+  }
+  cancelReceiptTimer = window.setTimeout(poll, 500)
 }
 
 watch(
@@ -1296,6 +1328,8 @@ watch(
   () => `${credential.value.openId}:${credential.value.roomMode || 'DEFAULT'}`,
   async (credentialKey, previousCredentialKey) => {
     if (!credential.value.openId || credentialKey === previousCredentialKey) return
+    cancelReceiptSequence++
+    if (cancelReceiptTimer) window.clearTimeout(cancelReceiptTimer)
     sessionStartedAt.value = new Date().toISOString()
     localMessages.value = []
     historicalMessages.value = []
@@ -1351,8 +1385,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   betReplyRequestSequence++
+  cancelReceiptSequence++
   sessionRequestSequence++
   if (betReplyTimer) window.clearTimeout(betReplyTimer)
+  if (cancelReceiptTimer) window.clearTimeout(cancelReceiptTimer)
   composerResizeObserver?.disconnect()
   window.removeEventListener('resize', handleRoomResize)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)

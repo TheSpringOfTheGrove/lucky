@@ -365,16 +365,26 @@ public class Wa55MarketOrderClient {
                     "betmoney", group.amount().stripTrailingZeros().toPlainString()));
         }
         try {
+            long encodeStartedAt = System.nanoTime();
             List<Map<String, Object>> bets = group.requests().stream().map(request -> Map.<String, Object>of(
                     "dict_no_type_id", dictNoTypeId(request),
                     "bet_no", request.selection().toUpperCase(Locale.ROOT),
                     "bet_money", request.amount().stripTrailingZeros().toPlainString())).toList();
-            return postForm(session, "/Member/BatchBet", Map.of(
-                    "bets", objectMapper.writeValueAsString(bets),
-                    "way", "108",
-                    "period_no", expectedPeriod,
-                    "bet_log", group.requests().get(0).play(),
-                    "guid", group.guid()));
+            String encodedBets = objectMapper.writeValueAsString(bets);
+            LOGGER.info("Lucky5 market batch encode timing: itemCount={} encodeMs={}", group.requests().size(),
+                    (System.nanoTime() - encodeStartedAt) / 1_000_000);
+            long requestStartedAt = System.nanoTime();
+            try {
+                return postForm(session, "/Member/BatchBet", Map.of(
+                        "bets", encodedBets,
+                        "way", "108",
+                        "period_no", expectedPeriod,
+                        "bet_log", group.requests().get(0).play(),
+                        "guid", group.guid()));
+            } finally {
+                LOGGER.info("Lucky5 market batch HTTP timing: itemCount={} httpMs={}", group.requests().size(),
+                        (System.nanoTime() - requestStartedAt) / 1_000_000);
+            }
         } catch (MarketProtocolException ex) {
             throw ex;
         } catch (Exception ex) {
@@ -422,16 +432,28 @@ public class Wa55MarketOrderClient {
         }
         List<CancelRequest> distinctRequests = distinctCancelRequests(requests);
         distinctRequests.forEach(this::validateCancelRequest);
-        Session session = connect(credentials);
+        long sessionStartedAt = System.nanoTime();
+        boolean cachedSession = sessionCache.containsKey(sessionCacheKey(credentials));
+        Session session;
+        try {
+            session = connect(credentials);
+        } finally {
+            LOGGER.info("Lucky5 market cancel session timing: cached={} sessionMs={}", cachedSession,
+                    (System.nanoTime() - sessionStartedAt) / 1_000_000);
+        }
         String ids = distinctRequests.stream().map(item -> item.marketBetId() + "|" + item.betCount())
-                .reduce((left, right) -> left + "," + right).orElse("");
+                .collect(java.util.stream.Collectors.joining(","));
         JsonNode payload;
+        long requestStartedAt = System.nanoTime();
         try {
             payload = postForm(session, "/Member/CancelMemberBet", Map.of(
                     "ids", ids, "period_no", expectedPeriod));
         } catch (MarketProtocolException ex) {
             throw new MarketProtocolException("盘口退码结果不确定：" + ex.getMessage(), false, List.of(),
                     true, ex);
+        } finally {
+            LOGGER.info("Lucky5 market cancel request timing: references={} requestMs={}", distinctRequests.size(),
+                    (System.nanoTime() - requestStartedAt) / 1_000_000);
         }
         assertSuccess(payload, "盘口拒绝退码");
         return new CancelResult(true, text(first(payload, "Data", "data")));
@@ -471,8 +493,8 @@ public class Wa55MarketOrderClient {
         }
         return groups.entrySet().stream().map(entry -> {
             List<BetRequest> items = List.copyOf(entry.getValue());
-            String selections = items.stream().map(item -> item.selection().toUpperCase(Locale.ROOT))
-                    .reduce((left, right) -> left + "," + right).orElse("");
+            // Only /Member/Bet consumes the comma string. Building it for a large BatchBet costs quadratic copies.
+            String selections = items.size() == 1 ? items.get(0).selection().toUpperCase(Locale.ROOT) : "";
             BigDecimal total = entry.getKey().amount().multiply(BigDecimal.valueOf(items.size()));
             return new BetGroup(items, selections, entry.getKey().xian(), entry.getKey().amount(), total,
                     batchGuid(expectedPeriod, entry.getKey(), items));
