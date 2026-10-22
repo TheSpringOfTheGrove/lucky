@@ -677,15 +677,17 @@ public class LotteryMarketOrderStateService {
         member.setVersion(memberVersion + 1);
         balanceLedgerService.recordAppliedChange(member, before, after, LotteryBalanceLedgerService.BET_REFUND,
                 orderId, actor, reason);
-        String playerReply = failedSubmission
-                ? robotReplyTemplate.betFailed(member.getName(), order.getAmount())
-                : robotReplyTemplate.cancelSuccessReceipt(member.getName(), order.getPeriod(),
-                        value(order.getPeriodSequence(), 0), order.getContent(),
-                        value(order.getItemCount(), 0), order.getAmount(), after);
-        messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
-                .eq(MessageDO::getOrderId, orderId).set(MessageDO::getStatus, orderStatus)
-                .set(MessageDO::getReply, playerReply)
-                .set(MessageDO::getError, marketStatus.equals("FAILED") ? safe(reason) : ""));
+        LambdaUpdateWrapper<MessageDO> messageUpdate = new LambdaUpdateWrapper<MessageDO>()
+                .eq(MessageDO::getUserId, userId).eq(MessageDO::getOrderId, orderId)
+                .eq(MessageDO::getCommandType, "BET").set(MessageDO::getStatus, orderStatus)
+                .set(MessageDO::getError, marketStatus.equals("FAILED") ? safe(reason) : "");
+        if (failedSubmission) {
+            messageUpdate.set(MessageDO::getReply, robotReplyTemplate.betFailed(member.getName(), order.getAmount()));
+        }
+        messageMapper.update(null, messageUpdate);
+        if (!failedSubmission) {
+            LotteryCancelNoticePublisher.publish(messageMapper, robotReplyTemplate, order, member, after);
+        }
     }
 
     private OrderDO order(Long userId, String orderId) {

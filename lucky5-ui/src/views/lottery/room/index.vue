@@ -448,13 +448,15 @@ const chatMessages = computed<ChatItem[]>(() => {
       continue
     }
     if (message.commandType === 'DRAW_RESULT') continue
-    const order = message.orderId ? orderById.value[message.orderId] : undefined
+    const order = message.commandType === 'BET' && message.orderId
+      ? orderById.value[message.orderId]
+      : undefined
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
       message.own === false &&
-      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType) &&
+      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType) &&
       Boolean(message.reply)
-    if (!['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY'].includes(message.commandType)) {
+    if (!['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType)) {
       messages.push({
         id: `member-message-${message.id}`,
         kind: message.own === false ? 'other' : 'member',
@@ -470,7 +472,9 @@ const chatMessages = computed<ChatItem[]>(() => {
     const waitingForFinalResult = Boolean(order?.processing) && !message.reply
     const silentCancelCommand = message.commandType === 'CANCEL' && !message.reply
     const receiptAction =
-      message.commandType !== 'BET' ? undefined : parseReceiptAction(message.reply || '')
+      ['BET', 'CANCEL_SUCCESS'].includes(message.commandType)
+        ? parseReceiptAction(message.reply || '')
+        : undefined
     if (
       (message.own !== false || showSharedRobotReply) &&
       message.commandType !== 'CHAT' &&
@@ -478,7 +482,11 @@ const chatMessages = computed<ChatItem[]>(() => {
       !waitingForFinalResult
     ) {
       const robotReplyDelay =
-        message.commandType === 'PAYOUT_SUMMARY' ? 3 : message.commandType === 'SETTLEMENT' ? 2 : 1
+        message.commandType === 'PAYOUT_SUMMARY'
+          ? 3
+          : ['SETTLEMENT', 'CANCEL_SUCCESS'].includes(message.commandType)
+            ? 2
+            : 1
       messages.push({
         id: `robot-message-${message.id}`,
         kind: 'robot',
@@ -1429,7 +1437,7 @@ onBeforeUnmount(() => {
 
                 <template v-else-if="message.type === 'order' && message.order">
                   <CancelSuccessReceipt
-                    v-if="message.order.status === '已退码' || message.receiptAction === 'canceled'"
+                    v-if="message.receiptAction === 'canceled'"
                     :value="message.content"
                   />
                   <template v-else>

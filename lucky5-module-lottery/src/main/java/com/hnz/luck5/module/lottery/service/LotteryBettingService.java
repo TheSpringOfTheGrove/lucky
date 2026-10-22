@@ -555,7 +555,10 @@ public class LotteryBettingService {
             String upperDigits = hasUpper ? upper.group(1) : leadingUpper.group(1);
             int upperStart = hasUpper ? upper.start() : leadingUpper.start();
             Set<Character> allowed = chars(upperDigits);
-            Set<Integer> constrained = extractPositionGroups(expression.substring(0, upperStart)).keySet();
+            String beforeUpper = expression.substring(0, upperStart);
+            Set<Integer> constrained = (expression.contains("五位二定")
+                    ? extractFivePositionGroups(beforeUpper)
+                    : extractPositionGroups(beforeUpper)).keySet();
             // 上奖取的是未指定位置中至少一位命中号码池，而不是要求所有未指定位置都命中。
             result.removeIf(value -> {
                 for (int index = 0; index < value.length(); index++) {
@@ -645,6 +648,13 @@ public class LotteryBettingService {
             boolean take = "取".equals(attributes.group(1));
             String pattern = attributes.group(2);
             result.removeIf(value -> matchesAttributePattern(value, pattern) != take);
+        }
+
+        Matcher allSizes = Pattern.compile("(取|除)四([大小])(?![大小单双])").matcher(expression);
+        while (allSizes.find()) {
+            boolean take = "取".equals(allSizes.group(1));
+            boolean big = "大".equals(allSizes.group(2));
+            result.removeIf(value -> matchesAllSizes(value, big) != take);
         }
 
         Matcher wildcardPositions = Pattern.compile("(取|除)乘号位置((?:头|千|百|十|尾|个|五)+)").matcher(expression);
@@ -764,6 +774,17 @@ public class LotteryBettingService {
             if (!matches) return false;
         }
         return true;
+    }
+
+    private boolean matchesAllSizes(String value, boolean big) {
+        int count = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char digit = value.charAt(index);
+            if (digit == 'X') continue;
+            count++;
+            if ((digit >= '5') != big) return false;
+        }
+        return count == 4;
     }
 
     private RotatedFixed extractRotatedFixed(String expression) {

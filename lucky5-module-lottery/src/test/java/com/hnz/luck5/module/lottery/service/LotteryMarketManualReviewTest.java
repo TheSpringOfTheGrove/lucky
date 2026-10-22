@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 class LotteryMarketManualReviewTest {
 
@@ -108,6 +109,27 @@ class LotteryMarketManualReviewTest {
         assertThat(result.amount()).isEqualByComparingTo("0.20");
         assertThat(member.getBalance()).isEqualByComparingTo("10.20");
         verify(ledgerService).recordAppliedChange(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void confirmedMarketCancellationPublishesSeparateRobotNotice() {
+        OrderDO order = manualReviewOrder();
+        MemberDO member = member();
+        when(orderMapper.selectOne(any())).thenReturn(order);
+        when(orderMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(memberMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(routeMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        service.finalizeCancel(229L, "O-1", "玩家1", false);
+
+        ArgumentCaptor<MessageDO> notice = ArgumentCaptor.forClass(MessageDO.class);
+        verify(messageMapper).insert(notice.capture());
+        assertThat(notice.getValue().getCommandType()).isEqualTo("CANCEL_SUCCESS");
+        assertThat(notice.getValue().getReply()).contains("tui碼成功");
+        ArgumentCaptor<LambdaUpdateWrapper<MessageDO>> originalUpdate = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(messageMapper).update(any(), originalUpdate.capture());
+        assertThat(originalUpdate.getValue().getSqlSet()).doesNotContain("reply");
     }
 
     private OrderDO manualReviewOrder() {

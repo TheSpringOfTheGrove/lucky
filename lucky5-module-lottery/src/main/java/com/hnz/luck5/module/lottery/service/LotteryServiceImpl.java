@@ -621,7 +621,6 @@ public class LotteryServiceImpl implements LotteryService {
         }
         if (!"BET".equals(item.getCommandType())) return reply;
         reply = robotReplyTemplate.normalizeAcceptedReceipt(reply);
-        if ("已退码".equals(item.getStatus())) return robotReplyTemplate.cancelSucceeded(reply);
         if (StrUtil.isNotBlank(item.getOrderId()) && StrUtil.isNotBlank(reply)
                 && !reply.contains("下注失败") && !reply.contains("正在确认明细") && !reply.contains("提交中")
                 && !reply.contains("点击退码") && !reply.contains("已退码")
@@ -2129,10 +2128,8 @@ public class LotteryServiceImpl implements LotteryService {
         messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                 .eq(MessageDO::getOrderId, id).eq(MessageDO::getCommandType, "BET")
                 .set(MessageDO::getStatus, "已退码")
-                .set(MessageDO::getReply,
-                        robotReplyTemplate.cancelSuccessReceipt(member.getName(), order.getPeriod(),
-                                value(order.getPeriodSequence(), 0), order.getContent(),
-                                value(order.getItemCount(), 0), order.getAmount(), member.getBalance())));
+                .set(MessageDO::getError, ""));
+        LotteryCancelNoticePublisher.publish(messageMapper, robotReplyTemplate, order, member, member.getBalance());
         if (realMarketDelivery) {
             marketRouteItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                     .eq(MarketRouteItemDO::getUserId, order.getUserId())
@@ -2847,10 +2844,14 @@ public class LotteryServiceImpl implements LotteryService {
         java.util.regex.Matcher cancel = java.util.regex.Pattern.compile("^退(?:码)?\\s*([A-Za-z0-9_-]+)$").matcher(content);
         if (cancel.matches()) {
             String orderId = cancel.group(1);
+            MessageDO message = saveCommandMessage(member, reqVO, "CANCEL", "");
             CancelResult result = cancelOrderInternal(orderId, member.getId(), actor, true);
             String reply = Set.of("已退码", "退码处理中").contains(result.status())
                     ? "" : "@" + member.getName() + "\n" + result.status();
-            MessageDO message = saveCommandMessage(member, reqVO, "CANCEL", reply);
+            if (StrUtil.isNotBlank(reply)) {
+                message.setReply(roomDisplayText(reply));
+                messageMapper.updateById(message);
+            }
             return map("messageId", message.getId(), "orderId", orderId, "reply", reply, "commandType", "CANCEL",
                     "refunded", result.refunded());
         }
@@ -3317,7 +3318,8 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
                         .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
                         .in(MessageDO::getCommandType, "BET", "BET_REJECTED", "CHAT", COMMAND_SETTLEMENT,
-                                COMMAND_PERIOD_SUMMARY, COMMAND_PAYOUT_SUMMARY, COMMAND_DRAW_RESULT)
+                                COMMAND_PERIOD_SUMMARY, COMMAND_PAYOUT_SUMMARY, COMMAND_DRAW_RESULT,
+                                LotteryCancelNoticePublisher.COMMAND_TYPE)
                         .lt(beforeId != null, MessageDO::getId, beforeId)
                         .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
         return mergeMessages(ownMessages, sharedMessages, 100);
@@ -3384,7 +3386,9 @@ public class LotteryServiceImpl implements LotteryService {
         boolean sharedSettlement = COMMAND_SETTLEMENT.equals(item.getCommandType());
         boolean sharedPeriodSummary = COMMAND_PERIOD_SUMMARY.equals(item.getCommandType());
         boolean sharedDrawResult = COMMAND_DRAW_RESULT.equals(item.getCommandType());
+        boolean sharedCancelSuccess = LotteryCancelNoticePublisher.COMMAND_TYPE.equals(item.getCommandType());
         String sharedReply = sharedPayoutSummary || sharedSettlement || sharedPeriodSummary || sharedDrawResult
+                || sharedCancelSuccess
                 ? roomRobotReply(item) : "";
         String playerReply = roomRobotReply(item);
         if (playerReply.contains("盘口") || playerReply.contains("外盘")) {

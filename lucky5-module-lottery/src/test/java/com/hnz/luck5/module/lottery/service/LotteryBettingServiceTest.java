@@ -209,6 +209,32 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void excludesFourSmallNumbersInCompoundPositionCommand() {
+        String command = "千523167890百128456790十163245890个124567390"
+                + "千百十合241567890取千百十个合234567890两数合2846三数合124560"
+                + "含234789除四小除对数18除值21值21除单单单双除大大小单除三兄弟各1.1";
+        List<LotteryBettingService.ParsedBet> bets = service.parse(command, odds);
+
+        assertThat(bets).hasSize(2_856);
+        assertThat(service.parse("四定取四小各1", odds)).hasSize(625);
+        assertThat(service.parse("四定除四小各1", odds)).hasSize(9_375);
+        assertThat(service.parse("四定取四大各1", odds)).hasSize(625);
+    }
+
+    @Test
+    void fivePositionTwoUpperPrizeDoesNotCountTheConstrainedFifthDigit() {
+        List<LotteryBettingService.ParsedBet> bets = service.parse("五369五位二定上奖3569各15", odds);
+
+        assertThat(bets).hasSize(48);
+        assertThat(bets).allSatisfy(bet -> {
+            assertThat(bet.play()).isEqualTo("五位二定");
+            assertThat(bet.selection()).hasSize(5);
+            assertThat("369").contains(String.valueOf(bet.selection().charAt(4)));
+            assertThat("3569").contains(String.valueOf(bet.selection().replace("X", "").charAt(0)));
+        });
+    }
+
+    @Test
     void doesNotTurnVisualFiltersIntoStandaloneBigSmallBets() {
         List<LotteryBettingService.ParsedBet> bets = service.parse(
                 "112233445566778009倒四定配023578配234578千百合123456789两数合0248三数合234567含23456"

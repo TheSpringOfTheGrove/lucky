@@ -110,9 +110,9 @@ class LotteryMessageQueryTest {
     }
 
     @Test
-    void canceledRoomBetKeepsReceiptButNeverRestoresCancelLink() {
+    void canceledRoomBetKeepsOriginalReceiptAndSeparateRobotNotice() {
         MessageDO bet = message(4L, "玩家A", "20260810001", "大100",
-                "@玩家A\n[挂牌时间]001\n大100\n【户型审核成功】√√\n\n点击退码\n已退码");
+                "@玩家A\n[挂牌时间]001\n大100\n【户型审核成功】√√\n\n点击退码");
         bet.setCommandType("BET");
         bet.setStatus("已退码");
         bet.setOrderId("O-1");
@@ -126,11 +126,25 @@ class LotteryMessageQueryTest {
 
         assertThat(roomMessage).containsEntry("status", "已退码");
         assertThat(roomMessage.get("reply").toString())
-                .contains("[挂牌时间]001", "【户型审核成功】", "已退码")
-                .doesNotContain("点击退码");
+                .contains("[挂牌时间]001", "【户型审核成功】", "点击退码")
+                .doesNotContain("tui碼成功");
         when(messageMapper.selectList(any())).thenReturn(List.of(bet));
         Map<String, Object> auditReply = service.getMessages(new LotteryReqVO.MessagePage()).getList().get(0);
         assertThat(auditReply.get("content")).isEqualTo(roomMessage.get("reply"));
+
+        MessageDO notice = message(5L, "玩家A", "20260810001", "",
+                "@玩家A\n[挂牌时间]20260810001\n【编号】： 1\n大100\n【套内】：1"
+                        + "\n【退面积】：100.00\n【面积】：150.00\ntui碼成功");
+        notice.setCommandType(LotteryCancelNoticePublisher.COMMAND_TYPE);
+        notice.setMemberId("M-1");
+        notice.setOrderId("O-1");
+        MemberDO otherViewer = new MemberDO();
+        otherViewer.setId("M-2");
+        otherViewer.setName("玩家B");
+        Map<String, Object> sharedNotice = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                notice, otherViewer, Map.of(), Map.of());
+        assertThat(sharedNotice).containsEntry("own", false).containsEntry("content", "");
+        assertThat(sharedNotice.get("reply")).asString().contains("【退面积】：100.00", "tui碼成功");
     }
 
     @Test

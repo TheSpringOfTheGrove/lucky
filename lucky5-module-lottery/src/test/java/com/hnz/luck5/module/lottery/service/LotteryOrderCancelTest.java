@@ -38,7 +38,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -179,7 +178,14 @@ class LotteryOrderCancelTest {
         assertThat(result).containsEntry("status", "已退码");
         assertThat(member.getBalance()).isEqualByComparingTo("100.00");
         assertThat(member.getTotalBet()).isEqualByComparingTo("0.00");
-        verify(messageMapper, never()).insert(any(MessageDO.class));
+        ArgumentCaptor<MessageDO> notice = ArgumentCaptor.forClass(MessageDO.class);
+        verify(messageMapper).insert(notice.capture());
+        assertThat(notice.getValue()).satisfies(message -> {
+            assertThat(message.getCommandType()).isEqualTo("CANCEL_SUCCESS");
+            assertThat(message.getContent()).isEmpty();
+            assertThat(message.getExternalId()).isEqualTo("cancel-success:O-1");
+            assertThat(message.getReply()).contains("【退面积】：100.00", "tui碼成功");
+        });
         verify(messageMapper).update(any(), any(LambdaUpdateWrapper.class));
     }
 
