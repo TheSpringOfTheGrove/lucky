@@ -73,4 +73,18 @@ public class LotteryMarketAsyncConfiguration {
         executor.initialize();
         return executor;
     }
+
+    /** Owner summaries are independent, but must not consume draw, settlement or market-write workers. */
+    @Bean("lotteryPeriodSummaryExecutor")
+    public Executor lotteryPeriodSummaryExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("lottery-summary-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor;
+    }
 }

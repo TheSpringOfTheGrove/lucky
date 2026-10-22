@@ -249,7 +249,7 @@ public class LotteryMarketOrderDispatchService {
                     TenantUtils.execute(order.getTenantId(), () -> {
                         if ("SUBMITTING".equals(order.getMarketStatus())) {
                             stateService.markManualReview(order.getUserId(), order.getId(),
-                                    "服务重启时发现未完成的盘口提交，禁止自动重投，请人工核对");
+                                    "盘口提交结果不确定，禁止自动重投，请人工核对");
                         } else if ("CANCEL_PENDING".equals(order.getMarketStatus())) {
                             stateService.markCancelFailed(order.getUserId(), order.getId(),
                                     "服务重启时退码结果不确定，请人工核对后重试");

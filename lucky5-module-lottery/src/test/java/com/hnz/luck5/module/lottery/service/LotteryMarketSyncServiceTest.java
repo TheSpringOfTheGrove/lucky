@@ -25,10 +25,16 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
@@ -192,6 +198,30 @@ class LotteryMarketSyncServiceTest {
         java.util.Set<String> activeOwners = (java.util.Set<String>) ReflectionTestUtils.getField(service,
                 "settlingOwners");
         assertThat(activeOwners).containsExactlyInAnyOrder("1:229", "1:230");
+    }
+
+    @Test
+    void publishesDifferentOwnersSummariesConcurrently() {
+        LotteryPeriodSummaryService summaries = mock(LotteryPeriodSummaryService.class);
+        CountDownLatch bothStarted = new CountDownLatch(2);
+        AtomicInteger concurrentPublishes = new AtomicInteger();
+        doAnswer(invocation -> {
+            bothStarted.countDown();
+            if (bothStarted.await(2, TimeUnit.SECONDS)) concurrentPublishes.incrementAndGet();
+            return null;
+        }).when(summaries).publish(any(), any());
+        ReflectionTestUtils.setField(service, "periodSummaryService", summaries);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        ReflectionTestUtils.setField(service, "periodSummaryExecutor", workers);
+        try {
+            service.publishSummaries(List.of(
+                    new LotteryMarketSyncService.PeriodSummaryPublication(1L, 229L, "20261022250"),
+                    new LotteryMarketSyncService.PeriodSummaryPublication(1L, 244L, "20261022250")), "test");
+            assertThat(concurrentPublishes.get()).isEqualTo(2);
+            verify(summaries, times(2)).publish(any(), any());
+        } finally {
+            workers.shutdownNow();
+        }
     }
 
     @Test

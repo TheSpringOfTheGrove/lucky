@@ -1429,18 +1429,23 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private Map<String, Object> applyRebatesInternal(Long userId, String actor) {
+        long rebateStartedAt = System.nanoTime();
         lockOwnerFinance(userId);
+        long lockMs = elapsedMillis(rebateStartedAt);
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, userId).ne(OrderDO::getOrderType, TYPE_AUTO_PROXY)
                 .in(OrderDO::getStatus, "已中奖", "未中奖")));
+        long orderReadMs = elapsedMillis(rebateStartedAt) - lockMs;
         List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
         boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         List<BetItemDO> items = !separateDragonRebate || orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId).in(BetItemDO::getOrderId, orderIds)));
         Map<String, List<BetItemDO>> itemsByOrder = itemsByOrderWithExpandedSnapshots(items);
+        long itemReadMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs;
         List<RebateRecordDO> rebateRecords = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
                 new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)
                         .last("FOR UPDATE")));
+        long recordReadMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs - itemReadMs;
         BigDecimal total = ZERO;
         int count = 0;
         List<Map<String, Object>> paidMembers = new ArrayList<>();
@@ -1448,11 +1453,19 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
                         .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)
                         .last("FOR UPDATE")));
+        long memberReadMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs - itemReadMs - recordReadMs;
+        Map<String, List<OrderDO>> ordersByMember = orders.stream()
+                .filter(order -> order.getMemberId() != null)
+                .collect(Collectors.groupingBy(OrderDO::getMemberId));
+        Map<String, List<RebateRecordDO>> recordsByMember = rebateRecords.stream()
+                .filter(record -> record.getMemberId() != null)
+                .collect(Collectors.groupingBy(RebateRecordDO::getMemberId));
         Map<String, MemberDO> pullersByName = members.stream().filter(member -> "拉手".equals(member.getTag()))
                 .collect(Collectors.toMap(MemberDO::getName, Function.identity(), (first, ignored) -> first));
         for (MemberDO member : members) {
-            LotteryRebateCalculator.RebateResult rebate = rebateCalculator.calculate(member, orders, itemsByOrder,
-                    rebateRecords, separateDragonRebate);
+            LotteryRebateCalculator.RebateResult rebate = rebateCalculator.calculate(member,
+                    ordersByMember.getOrDefault(member.getId(), List.of()), itemsByOrder,
+                    recordsByMember.getOrDefault(member.getId(), List.of()), separateDragonRebate);
             BigDecimal ownAmount = rebate.totalAmount();
             MemberDO puller = pullersByName.get(member.getPartner());
             BigDecimal pullerAmount = puller == null || Objects.equals(puller.getId(), member.getId())
@@ -1495,7 +1508,13 @@ public class LotteryServiceImpl implements LotteryService {
             }
             total = total.add(amount);
         }
+        long calculationAndWriteMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs - itemReadMs
+                - recordReadMs - memberReadMs;
         logAs(userId, actor, "-", "发放返水 " + count + " 人，合计 " + money(total));
+        LOGGER.info("Lucky5 rebate completed user={} orders={} members={} records={} paid={} lockMs={} "
+                        + "orderReadMs={} itemReadMs={} recordReadMs={} memberReadMs={} calculationAndWriteMs={} totalMs={}",
+                userId, orders.size(), members.size(), rebateRecords.size(), count, lockMs, orderReadMs,
+                itemReadMs, recordReadMs, memberReadMs, calculationAndWriteMs, elapsedMillis(rebateStartedAt));
         return map("count", count, "amount", money(total), "totalAmount", money(total), "members", paidMembers);
     }
 
@@ -1742,6 +1761,17 @@ public class LotteryServiceImpl implements LotteryService {
         if (playType == 0 && hasDragonTiger || playType == 1 && hasNormal) throw exception(PLAY_TYPE_DISABLED);
         BigDecimal total = money(parsed.stream().map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
         if (value(member.getBalance(), ZERO).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
+        // A market capability rejection is shown as a normal robot reply by the room handler. Validate it
+        // before allocating a sequence, debiting the member or inserting an order; otherwise catching that
+        // rejection would commit an orphan order and its balance debit in the room transaction.
+        OrderDO order = new OrderDO();
+        order.setId(id());
+        order.setUserId(member.getUserId());
+        order.setPeriod(reqVO.getPeriod().trim());
+        List<BetItemDO> expandedMarketItems = realMarketOrder ? materializedBetItems(order, parsed) : List.of();
+        LotteryMarketRoutingService.CompactPlan marketPlan = realMarketOrder
+                ? marketRoutingService.planCompact(member.getUserId(), order.getPeriod(), member, expandedMarketItems)
+                : null;
         // Do not log in to the external market here just to re-check its balance.  That old preflight used a
         // second client session, evicted the write session and made a player wait through a full login handshake
         // immediately before dispatch.  The local account is debited atomically below; the authoritative market
@@ -1764,11 +1794,8 @@ public class LotteryServiceImpl implements LotteryService {
             throw exception(BET_STATE_CHANGED);
         }
 
-        OrderDO order = new OrderDO();
-        order.setId(id());
         order.setMemberId(member.getId());
         order.setMemberName(member.getName());
-        order.setPeriod(reqVO.getPeriod().trim());
         order.setContent(reqVO.getContent().trim());
         order.setAmount(total);
         order.setWin(ZERO);
@@ -1785,7 +1812,6 @@ public class LotteryServiceImpl implements LotteryService {
         order.setItemCount(parsed.size());
         order.setPeriodSequence(periodSequence);
         order.setVersion(0);
-        order.setUserId(member.getUserId());
         orderMapper.insert(order);
         member.setBalance(balance);
         member.setVersion(oldMemberVersion + 1);
@@ -1796,7 +1822,6 @@ public class LotteryServiceImpl implements LotteryService {
         // Every order type persists one compact row per original sub-command. Real-market dispatch receives a
         // separate in-memory expansion only; persisting it first used to create thousands of rows and delay the
         // BatchBet by seconds (and its state update by up to a minute).
-        List<BetItemDO> expandedMarketItems = realMarketOrder ? materializedBetItems(order, parsed) : List.of();
         List<BetItemDO> orderItems = compactSnapshotItems(order, parsedCommands);
         long itemBuildElapsedMs = elapsedMillis(itemBuildStartedAt);
         long itemInsertStartedAt = System.nanoTime();
@@ -1804,8 +1829,8 @@ public class LotteryServiceImpl implements LotteryService {
         long itemInsertElapsedMs = elapsedMillis(itemInsertStartedAt);
         long postInsertStartedAt = System.nanoTime();
         if (realMarketOrder) {
-            LotteryMarketRoutingService.RoutingResult routing = marketRoutingService.prepareCompact(member.getUserId(),
-                    order.getId(), order.getPeriod(), member, expandedMarketItems);
+            LotteryMarketRoutingService.RoutingResult routing = marketRoutingService.persistCompact(
+                    order.getId(), order.getPeriod(), marketPlan);
             order.setDeliveryMode(routing.deliveryMode());
             order.setMarketStatus(routing.marketStatus());
             orderMapper.updateById(order);

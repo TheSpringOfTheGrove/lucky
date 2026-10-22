@@ -96,7 +96,17 @@ public class LotteryMarketRoutingService {
      */
     public RoutingResult prepareCompact(Long userId, String orderId, String period, MemberDO member,
                                         List<BetItemDO> expandedItems) {
+        return persistCompact(orderId, period, planCompact(userId, period, member, expandedItems));
+    }
+
+    /** Plan and validate the entire external route before the caller changes any balance or order state. */
+    public CompactPlan planCompact(Long userId, String period, MemberDO member, List<BetItemDO> expandedItems) {
         AllocationPlan plan = allocationPlan(userId, period, member, expandedItems);
+        return new CompactPlan(userId, List.copyOf(plan.allocations()), plan.localTotal(), plan.marketTotal());
+    }
+
+    /** Persist exactly the validated plan while the caller still holds the owner's finance lock. */
+    public RoutingResult persistCompact(String orderId, String period, CompactPlan plan) {
         List<LotteryMarketRoutingPolicy.Allocation> allocations = plan.allocations();
         MarketRouteItemDO route = new MarketRouteItemDO();
         route.setId(detailId());
@@ -120,7 +130,7 @@ public class LotteryMarketRoutingService {
         route.setStatus(plan.marketTotal().signum() == 0 ? "LOCAL_CONFIRMED" : "PENDING");
         route.setAttempts(0);
         route.setLastError("");
-        route.setUserId(userId);
+        route.setUserId(plan.userId());
         insertRoutes(List.of(route));
         String deliveryMode = plan.marketTotal().signum() == 0 ? "LOCAL_EAT"
                 : plan.localTotal().signum() == 0 ? "MARKET_ADAPTER" : "MIXED_MARKET";
@@ -321,6 +331,9 @@ public class LotteryMarketRoutingService {
 
     public record RoutingResult(BigDecimal localAmount, BigDecimal marketAmount, String deliveryMode,
                                 String marketStatus) {}
+
+    public record CompactPlan(Long userId, List<LotteryMarketRoutingPolicy.Allocation> allocations,
+                              BigDecimal localTotal, BigDecimal marketTotal) {}
 
     private record AllocationPlan(List<LotteryMarketRoutingPolicy.Allocation> allocations,
                                   BigDecimal localTotal, BigDecimal marketTotal) {}

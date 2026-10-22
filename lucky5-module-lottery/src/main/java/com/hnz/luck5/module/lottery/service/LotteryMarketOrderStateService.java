@@ -72,6 +72,16 @@ public class LotteryMarketOrderStateService {
     public DispatchContext claimSubmit(Long userId, String orderId) {
         OrderDO order = order(userId, orderId);
         if (order == null || !SUBMITTABLE.contains(order.getMarketStatus())) return null;
+        List<MarketRouteItemDO> routes = routes(userId, orderId).stream()
+                .filter(item -> money(item.getMarketAmount()).signum() > 0)
+                .filter(item -> SUBMITTABLE.contains(item.getStatus()))
+                .toList();
+        if (routes.isEmpty()) {
+            // No upstream request can be built. Never claim SUBMITTING and later mislabel this as an
+            // interrupted network submission; retain it for an explicit, auditable reconciliation.
+            markManualReview(userId, orderId, "外盘订单缺少提交明细，未发起盘口请求，请人工核对");
+            return null;
+        }
         int version = value(order.getVersion(), 0);
         int attempts = value(order.getMarketAttempts(), 0) + 1;
         int changed = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>()
@@ -81,10 +91,6 @@ public class LotteryMarketOrderStateService {
                 .set(OrderDO::getMarketStatus, "SUBMITTING").set(OrderDO::getMarketAttempts, attempts)
                 .set(OrderDO::getVersion, version + 1).set(OrderDO::getMarketError, ""));
         if (changed != 1) return null;
-        List<MarketRouteItemDO> routes = routes(userId, orderId).stream()
-                .filter(item -> money(item.getMarketAmount()).signum() > 0)
-                .filter(item -> SUBMITTABLE.contains(item.getStatus()))
-                .toList();
         LocalDateTime now = LocalDateTime.now();
         // This must remain one SQL statement. Updating 4,967 rows one-by-one used to hold the market dispatch for
         // 30–60 seconds before the BatchBet was even sent.

@@ -43,6 +43,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Polls a market clock and independent read-only result sources, then distributes accepted results to every owner.
@@ -57,6 +59,7 @@ public class LotteryMarketSyncService {
     private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
     private final Set<String> settlingOwners = ConcurrentHashMap.newKeySet();
+    private final Map<String, ReentrantLock> summaryOwnerLocks = new ConcurrentHashMap<>();
     private final AtomicBoolean repairingPeriodSummaries = new AtomicBoolean();
     private final AtomicBoolean repairingDrawMessages = new AtomicBoolean();
     private final AtomicBoolean repairingMissingDraws = new AtomicBoolean();
@@ -91,6 +94,7 @@ public class LotteryMarketSyncService {
     @Resource private LotteryPeriodSummaryService periodSummaryService;
     @Resource private TransactionTemplate transactionTemplate;
     @Resource(name = "lotterySettlementExecutor") private Executor settlementExecutor;
+    @Resource(name = "lotteryPeriodSummaryExecutor") private Executor periodSummaryExecutor;
     @Lazy @Resource private LotteryService lotteryService;
 
     @Value("${lottery.market.draw-confirmation-delay-ms:5000}")
@@ -124,7 +128,7 @@ public class LotteryMarketSyncService {
     private record DrawDistribution(List<String> closedPeriods, List<String> newlyDrawnPeriods) {
     }
 
-    private record PeriodSummaryPublication(Long tenantId, Long userId, String period) {
+    record PeriodSummaryPublication(Long tenantId, Long userId, String period) {
     }
 
     @Scheduled(initialDelayString = "${lottery.market.initial-delay-ms:5000}",
@@ -324,6 +328,50 @@ public class LotteryMarketSyncService {
         }
     }
 
+    void publishSummaries(List<PeriodSummaryPublication> publications, String source) {
+        if (publications.isEmpty()) return;
+        Map<String, List<PeriodSummaryPublication>> byOwner = new LinkedHashMap<>();
+        for (PeriodSummaryPublication publication : publications) {
+            byOwner.computeIfAbsent(publication.tenantId() + ":" + publication.userId(),
+                    ignored -> new ArrayList<>()).add(publication);
+        }
+        long startedAt = System.nanoTime();
+        List<CompletableFuture<Void>> tasks = new ArrayList<>(byOwner.size());
+        byOwner.forEach((ownerKey, ownerPublications) -> {
+            Runnable task = () -> {
+                ReentrantLock lock = summaryOwnerLocks.computeIfAbsent(ownerKey, ignored -> new ReentrantLock());
+                lock.lock();
+                try {
+                    ownerPublications.stream().sorted(Comparator.comparing(PeriodSummaryPublication::period))
+                            .forEach(publication -> {
+                                long ownerStartedAt = System.nanoTime();
+                                try {
+                                    TenantUtils.execute(publication.tenantId(), () -> periodSummaryService.publish(
+                                            publication.userId(), publication.period()));
+                                    LOGGER.info("Lucky5 period summary published tenant={} user={} period={} elapsedMs={}",
+                                            publication.tenantId(), publication.userId(), publication.period(),
+                                            (System.nanoTime() - ownerStartedAt) / 1_000_000);
+                                } catch (RuntimeException ex) {
+                                    LOGGER.error("{}失败 tenant={} user={} period={}", source,
+                                            publication.tenantId(), publication.userId(), publication.period(), ex);
+                                }
+                            });
+                } finally {
+                    lock.unlock();
+                }
+            };
+            try {
+                tasks.add(CompletableFuture.runAsync(task, periodSummaryExecutor));
+            } catch (RejectedExecutionException ex) {
+                LOGGER.warn("期末汇总线程队列已满，改为当前线程处理 owner={}", ownerKey);
+                task.run();
+            }
+        });
+        tasks.forEach(CompletableFuture::join);
+        LOGGER.info("Lucky5 period summaries completed owners={} elapsedMs={}", byOwner.size(),
+                (System.nanoTime() - startedAt) / 1_000_000);
+    }
+
     @Scheduled(initialDelayString = "${lottery.market.period-summary-repair-initial-delay-ms:30000}",
             fixedDelayString = "${lottery.market.period-summary-repair-interval-ms:60000}")
     public void repairRecentPeriodSummaries() {
@@ -512,15 +560,7 @@ public class LotteryMarketSyncService {
         }
         // Publish summaries only after the shared issue/result snapshot has reached every owner. Summary formatting
         // and order reads must never delay another owner's draw display path.
-        for (PeriodSummaryPublication publication : summaryPublications) {
-            try {
-                TenantUtils.execute(publication.tenantId(), () ->
-                        periodSummaryService.publish(publication.userId(), publication.period()));
-            } catch (RuntimeException ex) {
-                LOGGER.error("期末成功订单汇总失败 tenant={} user={} period={}", publication.tenantId(),
-                        publication.userId(), publication.period(), ex);
-            }
-        }
+        publishSummaries(summaryPublications, "期末成功订单汇总");
         // A newly confirmed result starts settlement after its snapshot transaction commits. The scheduled sweep
         // remains a recovery path for failed or interrupted dispatches.
         return snapshot;
@@ -606,15 +646,7 @@ public class LotteryMarketSyncService {
                         LOGGER.error("备用开奖结果分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
                     }
                 }
-                for (PeriodSummaryPublication publication : publications) {
-                    try {
-                        TenantUtils.execute(publication.tenantId(), () ->
-                                periodSummaryService.publish(publication.userId(), publication.period()));
-                    } catch (RuntimeException ex) {
-                        LOGGER.error("备用开奖期末汇总失败 tenant={} user={} period={}", publication.tenantId(),
-                                publication.userId(), publication.period(), ex);
-                    }
-                }
+                publishSummaries(publications, "备用开奖期末汇总");
             } catch (RuntimeException ex) {
                 LOGGER.warn("by123 备用开奖源本轮不可用: {}", rootMessage(ex));
             } finally {

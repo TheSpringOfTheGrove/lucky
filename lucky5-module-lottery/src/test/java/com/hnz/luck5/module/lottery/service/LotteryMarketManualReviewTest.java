@@ -91,6 +91,21 @@ class LotteryMarketManualReviewTest {
     }
 
     @Test
+    void missingRouteNeverClaimsAnUpstreamSubmission() {
+        OrderDO order = manualReviewOrder();
+        order.setMarketStatus("PENDING");
+        when(orderMapper.selectOne(any())).thenReturn(order);
+        when(routeMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.claimSubmit(229L, "O-1")).isNull();
+
+        ArgumentCaptor<LambdaUpdateWrapper<OrderDO>> update = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(orderMapper).update(org.mockito.ArgumentMatchers.isNull(), update.capture());
+        assertThat(update.getValue().getParamNameValuePairs().values()).contains("MANUAL_REVIEW")
+                .doesNotContain("SUBMITTING");
+    }
+
+    @Test
     void notAcceptedDecisionRefundsOnlyAfterManualReviewClaim() {
         OrderDO order = manualReviewOrder();
         MemberDO member = member();

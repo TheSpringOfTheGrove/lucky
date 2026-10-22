@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -58,6 +59,35 @@ class LotteryMarketRoutingServiceTest {
         assertThat(service.previewMarketAmount(142L, "20260811266", member, List.of(item)))
                 .isEqualByComparingTo("9.00");
         verify(routeItemMapper, never()).insert(any(MarketRouteItemDO.class));
+    }
+
+    @Test
+    void rejectsUnsupportedFivePositionSelectionBeforePersistingAnyRoute() {
+        MemberDO member = new MemberDO();
+        member.setEatEnabled(false);
+        BetItemDO item = item("五位二定", "0XXX3");
+        item.setAmount(new BigDecimal("15.00"));
+        item.setOdds(new BigDecimal("96"));
+
+        assertThatThrownBy(() -> service.planCompact(229L, "20261022250", member, List.of(item)))
+                .hasMessageContaining("五位二定");
+        verifyNoInteractions(batchInsertService);
+    }
+
+    @Test
+    void persistsTheValidatedCompactPlanWithoutReplanningAfterFinancialWrites() {
+        MemberDO member = new MemberDO();
+        member.setEatEnabled(false);
+        BetItemDO item = item("二定位", "12XX");
+        item.setAmount(new BigDecimal("9.00"));
+        item.setOdds(new BigDecimal("96"));
+
+        LotteryMarketRoutingService.CompactPlan plan = service.planCompact(142L, "20260811266",
+                member, List.of(item));
+        service.persistCompact("order-1", "20260811266", plan);
+
+        verify(routeItemMapper, times(1)).selectList(any());
+        verify(batchInsertService).insertMarketRoutes(eq(1L), any());
     }
 
     @Test
