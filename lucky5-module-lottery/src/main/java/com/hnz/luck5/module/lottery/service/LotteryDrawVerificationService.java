@@ -2,7 +2,6 @@ package com.hnz.luck5.module.lottery.service;
 
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Set;
 
@@ -32,14 +31,13 @@ public class LotteryDrawVerificationService {
     }
 
     public Decision evaluate(String currentStatus, String currentResult, Integer currentConfirmations,
-                             LocalDateTime currentFirstSeenAt, String apiResult, LocalDateTime now,
-                             Duration confirmationDelay) {
+                             LocalDateTime currentFirstSeenAt, String apiResult, LocalDateTime now) {
         String normalized = apiResult == null ? "" : apiResult.trim();
         if (!normalized.matches("\\d{5}") || ZERO_RESULT.equals(normalized)) {
-            if ("SETTLED".equals(currentStatus) || "SETTLING".equals(currentStatus)) {
+            if (IN_PROGRESS.contains(currentStatus) || "SETTLED".equals(currentStatus)) {
                 return new Decision(Outcome.CONFLICT, currentStatus, value(currentResult),
                         value(currentConfirmations), currentFirstSeenAt,
-                        "开奖API返回异常号码 " + display(normalized) + "，已结算结果保持不变");
+                        "开奖API返回异常号码 " + display(normalized) + "，首次有效结果保持不变");
             }
             return new Decision(Outcome.ABNORMAL, STATUS_ABNORMAL, normalized, 0, null,
                     "开奖API返回异常号码 " + display(normalized) + "，已暂停自动结算");
@@ -48,37 +46,32 @@ public class LotteryDrawVerificationService {
         if ("SETTLED".equals(currentStatus)) {
             if (normalized.equals(value(currentResult))) {
                 return new Decision(Outcome.UNCHANGED, currentStatus, normalized,
-                        Math.max(2, value(currentConfirmations)), currentFirstSeenAt, "");
+                        Math.max(1, value(currentConfirmations)), currentFirstSeenAt, "");
             }
             return new Decision(Outcome.CONFLICT, currentStatus, value(currentResult),
                     value(currentConfirmations), currentFirstSeenAt,
                     "开奖API号码 " + normalized + " 与已结算号码 " + display(currentResult) + " 不一致");
         }
 
-        if (IN_PROGRESS.contains(currentStatus) && normalized.equals(value(currentResult))) {
-            return new Decision(Outcome.UNCHANGED, currentStatus, normalized,
-                    Math.max(2, value(currentConfirmations)), currentFirstSeenAt, "");
-        }
-        if ("SETTLING".equals(currentStatus)) {
+        if (IN_PROGRESS.contains(currentStatus)) {
+            if (normalized.equals(value(currentResult))) {
+                return new Decision(Outcome.UNCHANGED, currentStatus, normalized,
+                        Math.max(1, value(currentConfirmations)), currentFirstSeenAt, "");
+            }
             return new Decision(Outcome.CONFLICT, currentStatus, value(currentResult),
                     value(currentConfirmations), currentFirstSeenAt,
-                    "结算过程中开奖API号码发生变化，保持原号码并等待人工复核");
+                    "首次有效开奖号码发生变化，保持原号码并等待人工复核");
         }
-
-        int confirmations = value(currentConfirmations);
-        boolean sameCandidate = STATUS_PENDING.equals(currentStatus) && normalized.equals(value(currentResult))
-                && confirmations >= 1 && currentFirstSeenAt != null;
-        Duration delay = confirmationDelay == null || confirmationDelay.isNegative() ? Duration.ZERO : confirmationDelay;
-        if (sameCandidate && !now.isBefore(currentFirstSeenAt.plus(delay))) {
-            return new Decision(Outcome.VERIFIED, STATUS_VERIFIED, normalized, confirmations + 1,
-                    currentFirstSeenAt, "");
+        // Preserve a pre-upgrade candidate: the first valid result has already won that period.
+        if (STATUS_PENDING.equals(currentStatus) && isTrusted(currentResult)
+                && !normalized.equals(value(currentResult))) {
+            return new Decision(Outcome.CONFLICT, currentStatus, value(currentResult),
+                    value(currentConfirmations), currentFirstSeenAt,
+                    "首次有效开奖号码发生变化，保持原号码并等待人工复核");
         }
-        if (sameCandidate) {
-            return new Decision(Outcome.CANDIDATE, STATUS_PENDING, normalized, confirmations,
-                    currentFirstSeenAt, "等待开奖API二次确认");
-        }
-        return new Decision(Outcome.CANDIDATE, STATUS_PENDING, normalized, 1, now,
-                "等待开奖API二次确认");
+        return new Decision(Outcome.VERIFIED, STATUS_VERIFIED, normalized,
+                Math.max(1, value(currentConfirmations)),
+                currentFirstSeenAt == null ? now : currentFirstSeenAt, "");
     }
 
     public boolean isTrusted(String result) {

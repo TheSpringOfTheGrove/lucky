@@ -60,6 +60,20 @@ public class LotteryMarketAsyncConfiguration {
         return executor;
     }
 
+    /** Distribute the shared result to owners without making the last owner wait for every preceding one. */
+    @Bean("lotteryDrawDistributionExecutor")
+    public Executor lotteryDrawDistributionExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("lottery-draw-distribution-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor;
+    }
+
     /** Settle different owners independently without sharing the market write or read queues. */
     @Bean("lotterySettlementExecutor")
     public Executor lotterySettlementExecutor() {
@@ -70,6 +84,20 @@ public class LotteryMarketAsyncConfiguration {
         executor.setThreadNamePrefix("lottery-settlement-");
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);
+        executor.initialize();
+        return executor;
+    }
+
+    /** Coordinate background summary batches without blocking the draw polling thread. */
+    @Bean("lotteryPeriodSummaryCoordinatorExecutor")
+    public Executor lotteryPeriodSummaryCoordinatorExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(1);
+        executor.setQueueCapacity(32);
+        executor.setThreadNamePrefix("lottery-summary-coordinator-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
         executor.initialize();
         return executor;
     }

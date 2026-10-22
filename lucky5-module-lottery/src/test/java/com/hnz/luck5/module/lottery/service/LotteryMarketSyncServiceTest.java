@@ -108,7 +108,7 @@ class LotteryMarketSyncServiceTest {
         assertThat(LotteryMarketSyncService.isRecoverableStaleSettlement(stale, staleBefore)).isFalse();
 
         stale.setSettlementStartedAt(staleBefore.minusSeconds(1));
-        stale.setDrawConfirmations(1);
+        stale.setDrawConfirmations(0);
         assertThat(LotteryMarketSyncService.isRecoverableStaleSettlement(stale, staleBefore)).isFalse();
 
         stale.setDrawConfirmations(2);
@@ -467,7 +467,7 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
-    void onlyNewlyConfirmedDrawRequestsImmediateSettlement() {
+    void legacyPendingResultRequestsSettlementOnlyOnce() {
         IssueMapper issueMapper = mock(IssueMapper.class);
         IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
         LotteryService lotteryService = mock(LotteryService.class);
@@ -517,6 +517,92 @@ class LotteryMarketSyncServiceTest {
                 .hasSize(1);
         assertThat((List<?>) ReflectionTestUtils.invokeMethod(service, "acceptedDraws", "系统开奖", List.of(draw)))
                 .isEmpty();
+        Wa55MarketClient.Draw correctedByWinner = new Wa55MarketClient.Draw(draw.period(), "82144",
+                draw.drawTime(), draw.updatedAt(), "{}");
+        assertThat((List<?>) ReflectionTestUtils.invokeMethod(service, "acceptedDraws", "by123开奖",
+                List.of(correctedByWinner))).isEmpty();
+    }
+
+    @Test
+    void firstValidResultImmediatelyQueuesSettlementForTheOwner() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        LotteryService lotteryService = mock(LotteryService.class);
+        IssueDO issue = new IssueDO();
+        issue.setUserId(229L);
+        issue.setPeriod("20261023250");
+        issue.setStatus("CLOSED");
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
+        ReflectionTestUtils.setField(service, "lotteryService", lotteryService);
+        LocalDateTime seenAt = LocalDateTime.of(2026, 10, 23, 20, 0, 10);
+        Wa55MarketClient.Draw draw = new Wa55MarketClient.Draw(issue.getPeriod(), "62845",
+                seenAt, seenAt, "{}");
+        Set<String> newlyDrawn = new LinkedHashSet<>();
+
+        ReflectionTestUtils.invokeMethod(service, "upsertDrawIssue", 229L, draw, "系统开奖", seenAt, newlyDrawn);
+
+        assertThat(issue.getStatus()).isEqualTo("DRAWN");
+        assertThat(issue.getDrawConfirmations()).isEqualTo(1);
+        assertThat(issue.getDrawFirstSeenAt()).isEqualTo(seenAt);
+        assertThat(newlyDrawn).containsExactly(issue.getPeriod());
+        verify(lotteryService).publishVerifiedDrawForUser(229L, issue.getPeriod(), "62845");
+    }
+
+    @Test
+    void drawArrivingBeforeClockClosureStillRecordsStopBeforeSettlement() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        LotteryService lotteryService = mock(LotteryService.class);
+        IssueDO issue = openIssue(250L, "20261023250");
+        issue.setOpenedAt(LocalDateTime.of(2026, 10, 23, 19, 55));
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
+        ReflectionTestUtils.setField(service, "lotteryService", lotteryService);
+        LocalDateTime seenAt = LocalDateTime.of(2026, 10, 23, 20, 0, 10);
+        Wa55MarketClient.Draw draw = new Wa55MarketClient.Draw(issue.getPeriod(), "62845",
+                seenAt, seenAt, "{}");
+
+        ReflectionTestUtils.invokeMethod(service, "upsertDrawIssue", 229L, draw, "系统开奖",
+                seenAt, new LinkedHashSet<String>());
+
+        assertThat(issue.getClosedAt()).isEqualTo(seenAt);
+        ArgumentCaptor<IssueTransitionDO> transitions = ArgumentCaptor.forClass(IssueTransitionDO.class);
+        verify(transitionMapper, times(2)).insert(transitions.capture());
+        assertThat(transitions.getAllValues()).extracting(IssueTransitionDO::getToStatus)
+                .containsExactly("CLOSED", "DRAWN");
+    }
+
+    @Test
+    void laterDifferentResultDoesNotOverwriteTheFirstAcceptedIssue() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        IssueDO issue = new IssueDO();
+        issue.setUserId(229L);
+        issue.setPeriod("20261023250");
+        issue.setStatus("DRAWN");
+        issue.setSource("系统开奖");
+        issue.setResult("62845");
+        issue.setDrawConfirmations(1);
+        issue.setDrawFirstSeenAt(LocalDateTime.of(2026, 10, 23, 20, 0, 10));
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
+
+        ReflectionTestUtils.invokeMethod(service, "upsertDrawIssue", 229L,
+                new Wa55MarketClient.Draw(issue.getPeriod(), "62846", issue.getDrawFirstSeenAt(),
+                        issue.getDrawFirstSeenAt().plusSeconds(1), "{}"),
+                "系统开奖", issue.getDrawFirstSeenAt().plusSeconds(1));
+
+        assertThat(issue.getStatus()).isEqualTo("DRAWN");
+        assertThat(issue.getResult()).isEqualTo("62845");
+        verify(issueMapper, never()).updateById(any(IssueDO.class));
+        verify(transitionMapper).insert(any(IssueTransitionDO.class));
     }
 
     @Test
@@ -584,7 +670,7 @@ class LotteryMarketSyncServiceTest {
         assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
                 List.of(market, by123), null)).isNull();
         market.setResult("31146");
-        market.setDrawConfirmations(1);
+        market.setDrawConfirmations(0);
         assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
                 List.of(market, by123), null)).isSameAs(by123);
     }

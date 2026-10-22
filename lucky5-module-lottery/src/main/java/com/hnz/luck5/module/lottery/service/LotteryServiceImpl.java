@@ -2210,7 +2210,7 @@ public class LotteryServiceImpl implements LotteryService {
     public Map<String, Object> settlePeriodForUser(Long userId, String period, String result, String actor) {
         LotteryReqVO.Settle reqVO = new LotteryReqVO.Settle();
         reqVO.setResult(result);
-        reqVO.setReason("开奖API二次确认后自动结算");
+        reqVO.setReason("首次有效开奖号自动结算");
         Map<String, Object> settled = settlePeriodInternal(userId, period, reqVO, actor);
         eventPublisher.publishEvent(new LotteryIssueSettledEvent(
                 TenantContextHolder.getRequiredTenantId(), userId, period));
@@ -2235,7 +2235,7 @@ public class LotteryServiceImpl implements LotteryService {
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
                         .eq(IssueDO::getPeriod, period).last("LIMIT 1")));
         boolean unopenedHistory = issue != null && issue.getOpenedAt() == null
-                && value(issue.getDrawConfirmations(), 0) >= 2
+                && value(issue.getDrawConfirmations(), 0) >= 1
                 && Objects.equals(issue.getResult(), normalizedResult)
                 && ("DRAWN".equals(issue.getStatus())
                         || ("SETTLED".equals(issue.getStatus())
@@ -2249,7 +2249,7 @@ public class LotteryServiceImpl implements LotteryService {
                     new LambdaUpdateWrapper<IssueDO>().eq(IssueDO::getId, issue.getId())
                             .eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
                             .isNull(IssueDO::getOpenedAt).eq(IssueDO::getResult, normalizedResult)
-                            .ge(IssueDO::getDrawConfirmations, 2)
+                            .ge(IssueDO::getDrawConfirmations, 1)
                             .set(IssueDO::getStatus, "SETTLED").set(IssueDO::getSettledAt, settledAt)
                             .set(IssueDO::getError, "")));
             historicalWithoutOrders = updated == 1;
@@ -2261,7 +2261,7 @@ public class LotteryServiceImpl implements LotteryService {
         // A previously settled issue is authoritative even if its draw row was inserted or left
         // pending by an older release. Do not reopen the result merely because this is an opened period.
         boolean settledIssue = issue != null && "SETTLED".equals(issue.getStatus())
-                && issue.getSettledAt() != null && value(issue.getDrawConfirmations(), 0) >= 2
+                && issue.getSettledAt() != null && value(issue.getDrawConfirmations(), 0) >= 1
                 && Objects.equals(issue.getResult(), normalizedResult);
         boolean settledDraw = historicalWithoutOrders || settledIssue;
         if (record == null) {
@@ -2323,7 +2323,7 @@ public class LotteryServiceImpl implements LotteryService {
             IssueDO verified = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                     .eq(IssueDO::getUserId, userId).eq(IssueDO::getPeriod, period).last("LIMIT 1")));
             if (verified == null || !"SETTLING".equals(verified.getStatus())
-                    || value(verified.getDrawConfirmations(), 0) < 2
+                    || value(verified.getDrawConfirmations(), 0) < 1
                     || !Objects.equals(verified.getResult(), normalizedResult)) {
                 throw exception(DRAW_RESULT_NOT_VERIFIED);
             }
@@ -2353,7 +2353,7 @@ public class LotteryServiceImpl implements LotteryService {
                     transitionIssue(issue, "SETTLED", "自动结算幂等确认",
                             map("reason", reason, "result", normalizedResult));
                     issue.setResult(normalizedResult);
-                    issue.setDrawConfirmations(Math.max(2, value(issue.getDrawConfirmations(), 0)));
+                    issue.setDrawConfirmations(Math.max(1, value(issue.getDrawConfirmations(), 0)));
                     issue.setSettledAt(LocalDateTime.now());
                     issueMapper.updateById(issue);
                 }
@@ -2525,9 +2525,9 @@ public class LotteryServiceImpl implements LotteryService {
         }
         if (!"SETTLED".equals(issue.getStatus())) {
             transitionIssue(issue, "SETTLED", "system".equals(actor) ? "自动结算" : "手动结算",
-                    map("reason", StrUtil.blankToDefault(reason, "开奖API二次确认"), "result", normalizedResult));
+                    map("reason", StrUtil.blankToDefault(reason, "首次有效开奖号"), "result", normalizedResult));
             issue.setResult(normalizedResult);
-            issue.setDrawConfirmations("system".equals(actor) ? Math.max(2, value(issue.getDrawConfirmations(), 0)) : 0);
+            issue.setDrawConfirmations("system".equals(actor) ? Math.max(1, value(issue.getDrawConfirmations(), 0)) : 0);
             issue.setSettledAt(LocalDateTime.now());
             issueMapper.updateById(issue);
         }
@@ -2560,7 +2560,7 @@ public class LotteryServiceImpl implements LotteryService {
                     money(settlementTotals.roomPayout()));
             logAs(userId, actor, "-", "结算期号 " + period + "，真实订单 " + details.size() + " 笔，投额 "
                     + money(settlementTotals.realBet()) + "，派彩 " + money(settlementTotals.realPayout()) + "，原因 "
-                    + StrUtil.blankToDefault(reason, "开奖API二次确认"));
+                    + StrUtil.blankToDefault(reason, "首次有效开奖号"));
         }
         publishDrawResultMessage(userId, record);
         Map<String, Object> result = map("period", period, "result", record.getResult(), "bigSmall", record.getBigSmall(),
@@ -2621,7 +2621,7 @@ public class LotteryServiceImpl implements LotteryService {
                 .eq(IssueDO::getUserId, userId).in(IssueDO::getStatus, "DRAWN", "SETTLING")
                 .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
                 .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
-                .ge(IssueDO::getDrawConfirmations, 2)
+                .ge(IssueDO::getDrawConfirmations, 1)
                 .orderByAsc(IssueDO::getPeriod).last("LIMIT 10")));
         int count = 0;
         for (IssueDO issue : issues) {

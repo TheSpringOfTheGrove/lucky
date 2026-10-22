@@ -281,6 +281,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_order` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_order_sequence` (`tenant_id`,`user_id`,`period`,`period_sequence`),
   KEY `idx_lucky5_order_period` (`tenant_id`,`user_id`,`period`,`status`), KEY `idx_lucky5_order_member` (`tenant_id`,`user_id`,`member_id`),
   KEY `idx_lucky5_order_member_time` (`tenant_id`,`user_id`,`member_id`,`create_time`),
+  KEY `idx_lucky5_order_period_summary` (`tenant_id`,`user_id`,`period`,`deleted`,`create_time`,`id`),
   KEY `idx_lucky5_order_follow` (`tenant_id`,`user_id`,`follow_id`,`period`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 订单';
 
@@ -503,6 +504,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_message_legacy` (`tenant_id`,`user_id`,`legacy_id`),
   UNIQUE KEY `uk_lucky5_message_external` (`tenant_id`,`user_id`,`external_id`), KEY `idx_lucky5_message_time` (`tenant_id`,`user_id`,`channel`,`create_time`),
   KEY `idx_lucky5_message_order` (`tenant_id`,`user_id`,`order_id`,`deleted`),
+  KEY `idx_lucky5_message_period_command` (`tenant_id`,`user_id`,`period`,`command_type`,`deleted`),
   KEY `idx_lucky5_message_member_time` (`tenant_id`,`user_id`,`member_id`,`channel`,`create_time`),
   KEY `idx_lucky5_message_legacy_member_time` (`tenant_id`,`user_id`,`member`,`channel`,`create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Lucky5 消息';

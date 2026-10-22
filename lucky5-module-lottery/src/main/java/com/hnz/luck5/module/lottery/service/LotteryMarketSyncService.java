@@ -31,6 +31,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -59,6 +60,7 @@ public class LotteryMarketSyncService {
     private final AtomicBoolean syncingConnections = new AtomicBoolean();
     private final AtomicBoolean settlingAll = new AtomicBoolean();
     private final Set<String> settlingOwners = ConcurrentHashMap.newKeySet();
+    private final Map<String, ReentrantLock> drawOwnerLocks = new ConcurrentHashMap<>();
     private final Map<String, ReentrantLock> summaryOwnerLocks = new ConcurrentHashMap<>();
     private final AtomicBoolean repairingPeriodSummaries = new AtomicBoolean();
     private final AtomicBoolean repairingDrawMessages = new AtomicBoolean();
@@ -66,6 +68,7 @@ public class LotteryMarketSyncService {
     private final AtomicBoolean syncingBackupDraws = new AtomicBoolean();
     private final AtomicInteger fallbackClockCursor = new AtomicInteger();
     private final Map<String, String> drawSourceClaims = new ConcurrentHashMap<>();
+    private final Set<String> loggedDrawConflicts = ConcurrentHashMap.newKeySet();
     private static final String MARKET_DRAW_SOURCE = "系统开奖";
     private static final String BY123_DRAW_SOURCE = "by123开奖";
     // Scheduler threads have no tenant context before a mapper call. Keep the polling cadence in memory and let
@@ -94,11 +97,10 @@ public class LotteryMarketSyncService {
     @Resource private LotteryPeriodSummaryService periodSummaryService;
     @Resource private TransactionTemplate transactionTemplate;
     @Resource(name = "lotterySettlementExecutor") private Executor settlementExecutor;
+    @Resource(name = "lotteryDrawDistributionExecutor") private Executor drawDistributionExecutor;
     @Resource(name = "lotteryPeriodSummaryExecutor") private Executor periodSummaryExecutor;
+    @Resource(name = "lotteryPeriodSummaryCoordinatorExecutor") private Executor periodSummaryCoordinatorExecutor;
     @Lazy @Resource private LotteryService lotteryService;
-
-    @Value("${lottery.market.draw-confirmation-delay-ms:5000}")
-    private long drawConfirmationDelayMs;
 
     @Value("${lottery.market.settlement-recovery-seconds:120}")
     private long settlementRecoverySeconds;
@@ -198,7 +200,7 @@ public class LotteryMarketSyncService {
                                                     .or().le(IssueDO::getSettlementStartedAt, staleSettlementBefore))))
                             .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
                             .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
-                            .ge(IssueDO::getDrawConfirmations, 2)
+                            .ge(IssueDO::getDrawConfirmations, 1)
                             // Select every affected owner once. A LIMIT on issue rows lets a pile of old or
                             // externally-blocked rows starve newer owners forever.
                             .groupBy(IssueDO::getTenantId, IssueDO::getUserId))));
@@ -214,7 +216,7 @@ public class LotteryMarketSyncService {
 
     /**
      * A result can fall out of the upstream's short history before every owner receives it. A previously settled
-     * owner is a durable, twice-confirmed reference for the same shared draw; replay it only to owners whose last
+     * owner is a durable first-valid reference for the same shared draw; replay it only to owners whose last
      * formally opened period is blocking their current preview. Normal draw verification and settlement still apply.
      */
     @Scheduled(initialDelayString = "${lottery.market.missing-draw-repair-initial-delay-ms:45000}",
@@ -241,7 +243,7 @@ public class LotteryMarketSyncService {
                         List<IssueDO> references = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
                                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getPeriod, blocker.getPeriod())
                                         .eq(IssueDO::getStatus, "SETTLED")
-                                        .ge(IssueDO::getDrawConfirmations, 2)));
+                                        .ge(IssueDO::getDrawConfirmations, 1)));
                         IssueDO reference = trustedSharedReference(references,
                                 blocker.getDrawFirstSeenAt() == null ? null : blocker.getSource());
                         if (reference == null || !blocker.getPeriod().equals(reference.getPeriod())) return null;
@@ -291,7 +293,7 @@ public class LotteryMarketSyncService {
         IssueDO selected = null;
         for (IssueDO candidate : references) {
             if (!"SETTLED".equals(candidate.getStatus()) || candidate.getDrawConfirmations() == null
-                    || candidate.getDrawConfirmations() < 2
+                    || candidate.getDrawConfirmations() < 1
                     || !(MARKET_DRAW_SOURCE.equals(candidate.getSource())
                             || BY123_DRAW_SOURCE.equals(candidate.getSource()))
                     || !drawVerificationService.isTrusted(candidate.getResult())) continue;
@@ -370,6 +372,16 @@ public class LotteryMarketSyncService {
         tasks.forEach(CompletableFuture::join);
         LOGGER.info("Lucky5 period summaries completed owners={} elapsedMs={}", byOwner.size(),
                 (System.nanoTime() - startedAt) / 1_000_000);
+    }
+
+    private void scheduleSummaries(List<PeriodSummaryPublication> publications, String source) {
+        if (publications.isEmpty()) return;
+        try {
+            periodSummaryCoordinatorExecutor.execute(() -> publishSummaries(List.copyOf(publications), source));
+        } catch (RejectedExecutionException ex) {
+            // The settlement path publishes its own summary before payout; the repair sweep also retries.
+            LOGGER.error("期末汇总队列已满，等待结算或定时补偿 source={} owners={}", source, publications.size(), ex);
+        }
     }
 
     @Scheduled(initialDelayString = "${lottery.market.period-summary-repair-initial-delay-ms:30000}",
@@ -511,16 +523,24 @@ public class LotteryMarketSyncService {
     }
 
     private Wa55MarketClient.Snapshot syncGlobalDraws(List<LotteryConfigDO> configs) {
+        long syncStartedAt = System.nanoTime();
         List<LotteryConfigDO> sources = clockCandidates(configs);
         Wa55MarketClient.Snapshot snapshot = null;
         for (LotteryConfigDO source : sources) {
             try {
                 Wa55MarketClient.Snapshot fetched = TenantUtils.execute(source.getTenantId(),
                         () -> readDrawSnapshot(source));
-                TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "已连接",
-                        fetched.lineUrl(), null, null, "", true));
+                // Claim results immediately after the HTTP response, before the unrelated connection write.
+                List<Wa55MarketClient.Draw> accepted = acceptedDraws(MARKET_DRAW_SOURCE, fetched.draws());
+                snapshot = new Wa55MarketClient.Snapshot(fetched.lineUrl(), fetched.account(), fetched.issue(), accepted);
+                try {
+                    TenantUtils.execute(source.getTenantId(), () -> updateConnection(source.getUserId(), "已连接",
+                            fetched.lineUrl(), null, null, "", true));
+                } catch (RuntimeException ex) {
+                    LOGGER.warn("开奖时钟连接状态更新失败 tenant={} user={}: {}", source.getTenantId(),
+                            source.getUserId(), rootMessage(ex));
+                }
                 preferredClockOwnerKey = ownerRefreshKey(source);
-                snapshot = fetched;
                 break;
             } catch (RuntimeException ex) {
                 LOGGER.warn("开奖时钟读取失败 tenant={} user={}: {}", source.getTenantId(), source.getUserId(),
@@ -531,36 +551,51 @@ public class LotteryMarketSyncService {
             LOGGER.warn("没有可用的已登录会员网址，暂停更新下注期号；备用开奖历史仍可补充开奖结果");
             return null;
         }
-        // Claim a valid period as soon as its source responds. A concurrent backup response can win another period.
-        List<Wa55MarketClient.Draw> acceptedDraws = acceptedDraws(MARKET_DRAW_SOURCE, snapshot.draws());
-        snapshot = new Wa55MarketClient.Snapshot(snapshot.lineUrl(), snapshot.account(), snapshot.issue(), acceptedDraws);
         Wa55MarketClient.Snapshot sharedSnapshot = snapshot;
-        List<PeriodSummaryPublication> summaryPublications = new ArrayList<>();
+        List<PeriodSummaryPublication> summaryPublications = Collections.synchronizedList(new ArrayList<>());
+        List<CompletableFuture<Void>> distributions = new ArrayList<>(configs.size());
         for (LotteryConfigDO target : configs) {
-            try {
-                TenantUtils.execute(target.getTenantId(), () -> {
-                    SnapshotPersistence persistence = transactionTemplate.execute(status ->
-                            persistSharedSnapshot(target.getUserId(), sharedSnapshot));
-                    if (persistence != null) {
-                        persistence.closedPeriods().stream()
-                                .filter(period -> !persistence.newlyDrawnPeriods().contains(period))
-                                .forEach(period -> summaryPublications.add(
-                                        new PeriodSummaryPublication(target.getTenantId(), target.getUserId(), period)));
-                        if (!persistence.newlyDrawnPeriods().isEmpty()) {
-                            dispatchSettlement(target.getTenantId(), target.getUserId());
+            Runnable distribute = () -> {
+                ReentrantLock ownerLock = drawOwnerLocks.computeIfAbsent(ownerRefreshKey(target),
+                        ignored -> new ReentrantLock());
+                ownerLock.lock();
+                try {
+                    TenantUtils.execute(target.getTenantId(), () -> {
+                        SnapshotPersistence persistence = transactionTemplate.execute(status ->
+                                persistSharedSnapshot(target.getUserId(), sharedSnapshot));
+                        if (persistence != null) {
+                            persistence.closedPeriods().stream()
+                                    .filter(period -> !persistence.newlyDrawnPeriods().contains(period))
+                                    .forEach(period -> summaryPublications.add(
+                                            new PeriodSummaryPublication(target.getTenantId(), target.getUserId(), period)));
+                            if (!persistence.newlyDrawnPeriods().isEmpty()) {
+                                dispatchSettlement(target.getTenantId(), target.getUserId());
+                            }
                         }
-                    }
-                    if (persistence != null && persistence.newlyOpened()) {
-                        lotteryService.handleMarketIssueOpened(target.getUserId(), sharedSnapshot.issue().period());
-                    }
-                });
-            } catch (RuntimeException ex) {
-                LOGGER.error("共享开奖分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
+                        if (persistence != null && persistence.newlyOpened()) {
+                            lotteryService.handleMarketIssueOpened(target.getUserId(), sharedSnapshot.issue().period());
+                        }
+                    });
+                } catch (RuntimeException ex) {
+                    LOGGER.error("共享开奖分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
+                } finally {
+                    ownerLock.unlock();
+                }
+            };
+            try {
+                distributions.add(CompletableFuture.runAsync(distribute, drawDistributionExecutor));
+            } catch (RejectedExecutionException ex) {
+                LOGGER.warn("开奖分发线程队列已满，改为当前线程处理 tenant={} user={}",
+                        target.getTenantId(), target.getUserId());
+                distribute.run();
             }
         }
+        distributions.forEach(CompletableFuture::join);
+        LOGGER.info("Lucky5 market draw distributed owners={} elapsedMs={} acceptedDraws={}",
+                configs.size(), (System.nanoTime() - syncStartedAt) / 1_000_000, sharedSnapshot.draws().size());
         // Publish summaries only after the shared issue/result snapshot has reached every owner. Summary formatting
         // and order reads must never delay another owner's draw display path.
-        publishSummaries(summaryPublications, "期末成功订单汇总");
+        scheduleSummaries(summaryPublications, "期末成功订单汇总");
         // A newly confirmed result starts settlement after its snapshot transaction commits. The scheduled sweep
         // remains a recovery path for failed or interrupted dispatches.
         return snapshot;
@@ -614,39 +649,58 @@ public class LotteryMarketSyncService {
     private void startBackupDrawSync(List<LotteryConfigDO> configs) {
         if (configs.isEmpty() || !syncingBackupDraws.compareAndSet(false, true)) return;
         CompletableFuture.runAsync(() -> {
+            long syncStartedAt = System.nanoTime();
             try {
                 List<Wa55MarketClient.Draw> draws = acceptedDraws(BY123_DRAW_SOURCE, by123DrawClient.readDraws());
                 if (draws.isEmpty()) return;
-                List<PeriodSummaryPublication> publications = new ArrayList<>();
+                List<PeriodSummaryPublication> publications = Collections.synchronizedList(new ArrayList<>());
+                List<CompletableFuture<Void>> distributions = new ArrayList<>(configs.size());
                 for (LotteryConfigDO target : configs) {
-                    try {
-                        TenantUtils.execute(target.getTenantId(), () -> {
-                            DrawDistribution distribution = transactionTemplate.execute(status -> {
-                                List<String> periods = new ArrayList<>();
-                                LinkedHashSet<String> newlyDrawnPeriods = new LinkedHashSet<>();
-                                for (Wa55MarketClient.Draw draw : draws) {
-                                    if (upsertDrawIssue(target.getUserId(), draw, BY123_DRAW_SOURCE,
-                                            LocalDateTime.now(), newlyDrawnPeriods)) {
-                                        periods.add(draw.period());
+                    Runnable distribute = () -> {
+                        ReentrantLock ownerLock = drawOwnerLocks.computeIfAbsent(ownerRefreshKey(target),
+                                ignored -> new ReentrantLock());
+                        ownerLock.lock();
+                        try {
+                            TenantUtils.execute(target.getTenantId(), () -> {
+                                DrawDistribution distribution = transactionTemplate.execute(status -> {
+                                    List<String> periods = new ArrayList<>();
+                                    LinkedHashSet<String> newlyDrawnPeriods = new LinkedHashSet<>();
+                                    for (Wa55MarketClient.Draw draw : draws) {
+                                        if (upsertDrawIssue(target.getUserId(), draw, BY123_DRAW_SOURCE,
+                                                LocalDateTime.now(), newlyDrawnPeriods)) {
+                                            periods.add(draw.period());
+                                        }
+                                    }
+                                    return new DrawDistribution(periods, List.copyOf(newlyDrawnPeriods));
+                                });
+                                if (distribution != null) {
+                                    distribution.closedPeriods().stream()
+                                            .filter(period -> !distribution.newlyDrawnPeriods().contains(period))
+                                            .forEach(period -> publications.add(new PeriodSummaryPublication(
+                                                    target.getTenantId(), target.getUserId(), period)));
+                                    if (!distribution.newlyDrawnPeriods().isEmpty()) {
+                                        dispatchSettlement(target.getTenantId(), target.getUserId());
                                     }
                                 }
-                                return new DrawDistribution(periods, List.copyOf(newlyDrawnPeriods));
                             });
-                            if (distribution != null) {
-                                distribution.closedPeriods().stream()
-                                        .filter(period -> !distribution.newlyDrawnPeriods().contains(period))
-                                        .forEach(period -> publications.add(new PeriodSummaryPublication(
-                                                target.getTenantId(), target.getUserId(), period)));
-                                if (!distribution.newlyDrawnPeriods().isEmpty()) {
-                                    dispatchSettlement(target.getTenantId(), target.getUserId());
-                                }
-                            }
-                        });
-                    } catch (RuntimeException ex) {
-                        LOGGER.error("备用开奖结果分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
+                        } catch (RuntimeException ex) {
+                            LOGGER.error("备用开奖结果分发失败 tenant={} user={}", target.getTenantId(), target.getUserId(), ex);
+                        } finally {
+                            ownerLock.unlock();
+                        }
+                    };
+                    try {
+                        distributions.add(CompletableFuture.runAsync(distribute, drawDistributionExecutor));
+                    } catch (RejectedExecutionException ex) {
+                        LOGGER.warn("备用开奖分发线程队列已满，改为当前线程处理 tenant={} user={}",
+                                target.getTenantId(), target.getUserId());
+                        distribute.run();
                     }
                 }
-                publishSummaries(publications, "备用开奖期末汇总");
+                distributions.forEach(CompletableFuture::join);
+                LOGGER.info("Lucky5 backup draw distributed owners={} elapsedMs={} acceptedDraws={}",
+                        configs.size(), (System.nanoTime() - syncStartedAt) / 1_000_000, draws.size());
+                scheduleSummaries(publications, "备用开奖期末汇总");
             } catch (RuntimeException ex) {
                 LOGGER.warn("by123 备用开奖源本轮不可用: {}", rootMessage(ex));
             } finally {
@@ -660,23 +714,37 @@ public class LotteryMarketSyncService {
         for (Wa55MarketClient.Draw draw : draws) {
             if (draw.period() == null || !draw.period().matches("\\d{8,20}")
                     || !drawVerificationService.isTrusted(draw.result())) continue;
+            String result = draw.result().trim().replace(",", "");
+            String claim = source + "|" + result;
             try {
                 String winner = drawSourceClaims.computeIfAbsent(draw.period(), period -> {
-                    String key = "lucky5:draw-source:" + period;
+                    String key = "lucky5:draw-result:" + period;
                     String existing = stringRedisTemplate.opsForValue().get(key);
                     if (existing != null) return existing;
-                    // On upgrade/restart, an already persisted candidate must keep its original source. Otherwise
-                    // the new Redis key could accidentally pin a different feed and strand DRAW_PENDING forever.
+                    // The persisted first observation wins across restarts and deployments as well.
                     IssueDO persisted = TenantUtils.executeIgnore(() -> DataPermissionUtils.executeIgnore(() ->
                             issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
                                     .eq(IssueDO::getPeriod, period).isNotNull(IssueDO::getDrawFirstSeenAt)
                                     .orderByAsc(IssueDO::getDrawFirstSeenAt).last("LIMIT 1"))));
                     String preferred = persisted != null && Set.of(MARKET_DRAW_SOURCE, BY123_DRAW_SOURCE)
-                            .contains(persisted.getSource()) ? persisted.getSource() : source;
+                            .contains(persisted.getSource()) && drawVerificationService.isTrusted(persisted.getResult())
+                            ? persisted.getSource() + "|" + persisted.getResult().replace(",", "") : claim;
                     Boolean claimed = stringRedisTemplate.opsForValue().setIfAbsent(key, preferred, Duration.ofDays(3));
+                    if (Boolean.TRUE.equals(claimed)) {
+                        LOGGER.info("Lucky5 first valid draw claimed period={} source={} result={}",
+                                period, preferred.substring(0, preferred.indexOf('|')),
+                                preferred.substring(preferred.indexOf('|') + 1));
+                    }
                     return Boolean.TRUE.equals(claimed) ? preferred : stringRedisTemplate.opsForValue().get(key);
                 });
-                if (source.equals(winner)) accepted.add(draw);
+                if (claim.equals(winner)) {
+                    accepted.add(new Wa55MarketClient.Draw(draw.period(), result, draw.drawTime(),
+                            draw.updatedAt(), draw.raw()));
+                } else if (winner != null && !winner.endsWith("|" + result)
+                        && loggedDrawConflicts.add(draw.period() + ":" + claim)) {
+                    LOGGER.error("开奖号码冲突，保持首次有效结果 period={} winner={} incoming={}",
+                            draw.period(), winner, claim);
+                }
             } catch (RuntimeException ex) {
                 // Failing closed is safer than letting two app instances settle from different sources.
                 LOGGER.error("开奖源锁定失败 period={} source={}", draw.period(), source, ex);
@@ -686,6 +754,7 @@ public class LotteryMarketSyncService {
             drawSourceClaims.keySet().stream().sorted().limit(drawSourceClaims.size() - 256)
                     .forEach(drawSourceClaims::remove);
         }
+        if (loggedDrawConflicts.size() > 512) loggedDrawConflicts.clear();
         return accepted;
     }
 
@@ -907,10 +976,18 @@ public class LotteryMarketSyncService {
         }
         String oldStatus = issue == null ? "NEW" : issue.getStatus();
         boolean formallyOpened = issue != null && issue.getOpenedAt() != null;
+        boolean closeForDraw = formallyOpened && "OPEN".equals(oldStatus);
         LotteryDrawVerificationService.Decision decision = drawVerificationService.evaluate(oldStatus,
-                issue == null ? "" : issue.getResult(), issue == null ? 0 : issue.getDrawConfirmations(),
-                issue == null ? null : issue.getDrawFirstSeenAt(), draw.result(), now,
-                Duration.ofMillis(Math.max(0, drawConfirmationDelayMs)));
+                issue == null ? "" : issue.getResult(),
+                issue == null || issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations(),
+                issue == null ? null : issue.getDrawFirstSeenAt(), draw.result(), now);
+        if (decision.outcome() == LotteryDrawVerificationService.Outcome.CONFLICT) {
+            transition(userId, draw.period(), oldStatus, oldStatus, transitionSource(decision.outcome()),
+                    "{\"apiResult\":\"" + jsonValue(draw.result()) + "\"}");
+            LOGGER.error("开奖号码冲突，保留首次有效结果 user={} period={} source={} accepted={} incoming={}",
+                    userId, draw.period(), source, issue == null ? "" : issue.getResult(), draw.result());
+            return false;
+        }
         if (issue == null) {
             issue = new IssueDO();
             issue.setUserId(userId);
@@ -929,6 +1006,7 @@ public class LotteryMarketSyncService {
             issue.setDrawUpdatedAt(draw.updatedAt());
             issueMapper.insert(issue);
         } else {
+            if (closeForDraw) issue.setClosedAt(now);
             issue.setStatus(decision.status());
             issue.setResult(decision.result());
             issue.setDrawConfirmations(decision.confirmations());
@@ -940,8 +1018,12 @@ public class LotteryMarketSyncService {
             issue.setDrawUpdatedAt(draw.updatedAt());
             issueMapper.updateById(issue);
         }
-        if (!Objects.equals(oldStatus, decision.status()) || decision.outcome() == LotteryDrawVerificationService.Outcome.CONFLICT) {
-            transition(userId, draw.period(), oldStatus, decision.status(), transitionSource(decision.outcome()),
+        if (closeForDraw) {
+            transition(userId, draw.period(), "OPEN", "CLOSED", "系统开奖封盘", "");
+        }
+        if (!Objects.equals(oldStatus, decision.status())) {
+            transition(userId, draw.period(), closeForDraw ? "CLOSED" : oldStatus,
+                    decision.status(), transitionSource(decision.outcome()),
                     "{\"apiResult\":\"" + jsonValue(draw.result()) + "\",\"confirmations\":"
                             + decision.confirmations() + "}");
         }
@@ -972,7 +1054,7 @@ public class LotteryMarketSyncService {
     }
 
     private void publishVerifiedDrawIfReady(Long userId, IssueDO issue) {
-        if (issue == null || (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) < 2
+        if (issue == null || (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) < 1
                 || !List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus())
                 || !drawVerificationService.isTrusted(issue.getResult())) {
             return;
@@ -1000,7 +1082,7 @@ public class LotteryMarketSyncService {
                 int claimed = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
                         .eq(IssueDO::getId, issue.getId()).eq(IssueDO::getUserId, userId)
                         .eq(IssueDO::getStatus, "DRAWN")
-                        .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 2)
+                        .eq(IssueDO::getResult, issue.getResult()).ge(IssueDO::getDrawConfirmations, 1)
                         .set(IssueDO::getStatus, "SETTLING").set(IssueDO::getSettlementStartedAt, LocalDateTime.now())
                         .set(IssueDO::getError, ""));
                 if (claimed != 1) continue;
@@ -1125,7 +1207,7 @@ public class LotteryMarketSyncService {
                         .eq(IssueDO::getStatus, "DRAWN").isNotNull(IssueDO::getError).ne(IssueDO::getError, "")
                         .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
                         .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
-                        .ge(IssueDO::getDrawConfirmations, 2).orderByAsc(IssueDO::getPeriod)));
+                        .ge(IssueDO::getDrawConfirmations, 1).orderByAsc(IssueDO::getPeriod)));
         return candidates.stream().filter(issue -> allPeriodOrdersAreLocal(userId, issue.getPeriod())).findFirst()
                 .orElse(null);
     }
@@ -1155,7 +1237,7 @@ public class LotteryMarketSyncService {
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).in(IssueDO::getPeriod, periods)
                         .eq(IssueDO::getStatus, "DRAWN").isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
                         .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
-                        .ge(IssueDO::getDrawConfirmations, 2).orderByAsc(IssueDO::getPeriod).last("LIMIT 1")));
+                        .ge(IssueDO::getDrawConfirmations, 1).orderByAsc(IssueDO::getPeriod).last("LIMIT 1")));
         return candidates.isEmpty() ? null : candidates.get(0);
     }
 
@@ -1163,14 +1245,14 @@ public class LotteryMarketSyncService {
         return issue != null && "DRAWN".equals(issue.getStatus())
                 && issue.getResult() != null && !issue.getResult().isBlank()
                 && !LotteryDrawVerificationService.ZERO_RESULT.equals(issue.getResult())
-                && (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) >= 2;
+                && (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) >= 1;
     }
 
     static boolean isRecoverableStaleSettlement(IssueDO issue, LocalDateTime staleBefore) {
         return issue != null && "SETTLING".equals(issue.getStatus())
                 && issue.getResult() != null && !issue.getResult().isBlank()
                 && !LotteryDrawVerificationService.ZERO_RESULT.equals(issue.getResult())
-                && (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) >= 2
+                && (issue.getDrawConfirmations() == null ? 0 : issue.getDrawConfirmations()) >= 1
                 && (issue.getSettlementStartedAt() == null
                 || !issue.getSettlementStartedAt().isAfter(staleBefore));
     }

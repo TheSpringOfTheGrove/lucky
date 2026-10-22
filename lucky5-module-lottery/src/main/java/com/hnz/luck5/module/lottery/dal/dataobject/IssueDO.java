@@ -29,6 +29,7 @@ public class IssueDO extends LotteryUserBaseDO {
     private LocalDateTime drawTime;
     private LocalDateTime drawUpdatedAt;
     private String result;
+    // Legacy column name: one accepted first-valid observation is sufficient for automatic settlement.
     private Integer drawConfirmations;
     private LocalDateTime drawFirstSeenAt;
     private String source;

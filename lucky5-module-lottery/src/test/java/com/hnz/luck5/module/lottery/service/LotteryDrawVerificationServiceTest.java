@@ -2,7 +2,6 @@ package com.hnz.luck5.module.lottery.service;
 
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,7 +14,7 @@ class LotteryDrawVerificationServiceTest {
     @Test
     void blocksAllZeroResultWithoutMakingItSettleable() {
         LotteryDrawVerificationService.Decision decision = service.evaluate(
-                "CLOSED", "", 0, null, "00000", now, Duration.ofSeconds(5));
+                "CLOSED", "", 0, null, "00000", now);
 
         assertThat(decision.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.ABNORMAL);
         assertThat(decision.status()).isEqualTo(LotteryDrawVerificationService.STATUS_ABNORMAL);
@@ -23,51 +22,59 @@ class LotteryDrawVerificationServiceTest {
         assertThat(decision.error()).contains("暂停自动结算");
 
         LotteryDrawVerificationService.Decision malformed = service.evaluate(
-                "CLOSED", "", 0, null, "", now, Duration.ofSeconds(5));
+                "CLOSED", "", 0, null, "", now);
         assertThat(malformed.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.ABNORMAL);
         assertThat(malformed.status()).isEqualTo(LotteryDrawVerificationService.STATUS_ABNORMAL);
     }
 
     @Test
-    void requiresASecondObservationAfterTheSafetyDelay() {
+    void firstValidObservationImmediatelyBecomesSettleable() {
         LotteryDrawVerificationService.Decision first = service.evaluate(
-                "CLOSED", "", 0, null, "17254", now, Duration.ofSeconds(5));
-        LotteryDrawVerificationService.Decision tooSoon = service.evaluate(
+                "CLOSED", "", 0, null, "17254", now);
+        LotteryDrawVerificationService.Decision repeated = service.evaluate(
                 first.status(), first.result(), first.confirmations(), first.firstSeenAt(),
-                "17254", now.plusSeconds(2), Duration.ofSeconds(5));
-        LotteryDrawVerificationService.Decision verified = service.evaluate(
-                tooSoon.status(), tooSoon.result(), tooSoon.confirmations(), tooSoon.firstSeenAt(),
-                "17254", now.plusSeconds(6), Duration.ofSeconds(5));
+                "17254", now.plusSeconds(2));
 
-        assertThat(first.status()).isEqualTo(LotteryDrawVerificationService.STATUS_PENDING);
+        assertThat(first.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.VERIFIED);
+        assertThat(first.status()).isEqualTo(LotteryDrawVerificationService.STATUS_VERIFIED);
         assertThat(first.confirmations()).isEqualTo(1);
-        assertThat(tooSoon.status()).isEqualTo(LotteryDrawVerificationService.STATUS_PENDING);
-        assertThat(verified.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.VERIFIED);
-        assertThat(verified.status()).isEqualTo(LotteryDrawVerificationService.STATUS_VERIFIED);
-        assertThat(verified.confirmations()).isEqualTo(2);
+        assertThat(first.firstSeenAt()).isEqualTo(now);
+        assertThat(repeated.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.UNCHANGED);
+        assertThat(repeated.confirmations()).isEqualTo(1);
     }
 
     @Test
-    void changedApiResultRestartsConfirmation() {
+    void preUpgradeCandidateKeepsItsFirstValidResult() {
         LotteryDrawVerificationService.Decision decision = service.evaluate(
                 LotteryDrawVerificationService.STATUS_PENDING, "17254", 1, now,
-                "60929", now.plusSeconds(30), Duration.ofSeconds(5));
+                "60929", now.plusSeconds(30));
 
+        assertThat(decision.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.CONFLICT);
         assertThat(decision.status()).isEqualTo(LotteryDrawVerificationService.STATUS_PENDING);
-        assertThat(decision.result()).isEqualTo("60929");
+        assertThat(decision.result()).isEqualTo("17254");
         assertThat(decision.confirmations()).isEqualTo(1);
-        assertThat(decision.firstSeenAt()).isEqualTo(now.plusSeconds(30));
+        assertThat(decision.firstSeenAt()).isEqualTo(now);
     }
 
     @Test
     void settledResultIsNeverSilentlyOverwritten() {
         LotteryDrawVerificationService.Decision decision = service.evaluate(
-                "SETTLED", "17254", 2, now, "60929", now.plusMinutes(1), Duration.ofSeconds(5));
+                "SETTLED", "17254", 2, now, "60929", now.plusMinutes(1));
 
         assertThat(decision.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.CONFLICT);
         assertThat(decision.status()).isEqualTo("SETTLED");
         assertThat(decision.result()).isEqualTo("17254");
         assertThat(decision.error()).contains("不一致");
+    }
+
+    @Test
+    void newlyVerifiedResultCannotChangeBeforeSettlement() {
+        LotteryDrawVerificationService.Decision decision = service.evaluate(
+                "DRAWN", "17254", 1, now, "60929", now.plusSeconds(1));
+
+        assertThat(decision.outcome()).isEqualTo(LotteryDrawVerificationService.Outcome.CONFLICT);
+        assertThat(decision.status()).isEqualTo("DRAWN");
+        assertThat(decision.result()).isEqualTo("17254");
     }
 
     @Test
