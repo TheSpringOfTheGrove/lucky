@@ -18,6 +18,19 @@ class LotteryRebateCalculatorTest {
     private final LotteryRebateCalculator calculator = new LotteryRebateCalculator();
 
     @Test
+    void skipsHistoryOnlyWhenEveryPlayerAndPullerRateIsZero() {
+        MemberDO member = member(null);
+        member.setNormalRate(BigDecimal.ZERO);
+        member.setLhhRate(BigDecimal.ZERO);
+        member.setPartnerNormalRate(BigDecimal.ZERO);
+        member.setPartnerLhhRate(BigDecimal.ZERO);
+        assertThat(calculator.hasAnyConfiguredRate(member)).isFalse();
+
+        member.setPartnerLhhRate(new BigDecimal("0.5"));
+        assertThat(calculator.hasAnyConfiguredRate(member)).isTrue();
+    }
+
+    @Test
     void calculatesNormalAndDragonRebatesSeparatelyAndSubtractsPaidBases() {
         MemberDO member = member(null);
         OrderDO normal = order("O-1", LocalDateTime.now());

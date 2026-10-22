@@ -23,6 +23,13 @@ public class LotteryRebateCalculator {
         return new RebateResult(ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO);
     }
 
+    public boolean hasAnyConfiguredRate(MemberDO member) {
+        return value(member.getNormalRate()).signum() != 0
+                || value(member.getLhhRate()).signum() != 0
+                || value(member.getPartnerNormalRate()).signum() != 0
+                || value(member.getPartnerLhhRate()).signum() != 0;
+    }
+
     public RebateResult calculate(MemberDO member, List<OrderDO> orders,
                                   Map<String, List<BetItemDO>> itemsByOrder,
                                   List<RebateRecordDO> rebateRecords, boolean separateDragonRebate) {

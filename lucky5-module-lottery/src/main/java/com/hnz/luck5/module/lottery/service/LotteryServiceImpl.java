@@ -1432,28 +1432,36 @@ public class LotteryServiceImpl implements LotteryService {
         long rebateStartedAt = System.nanoTime();
         lockOwnerFinance(userId);
         long lockMs = elapsedMillis(rebateStartedAt);
+        List<MemberDO> members = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
+                new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
+                        .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)
+                        .last("FOR UPDATE")));
+        long memberReadMs = elapsedMillis(rebateStartedAt) - lockMs;
+        if (members.stream().noneMatch(rebateCalculator::hasAnyConfiguredRate)) {
+            // No configured rate can produce a rebate. Avoid reading and expanding every historical bet
+            // on each draw; large compact snapshots made this no-op path take several seconds per owner.
+            logAs(userId, actor, "-", "发放返水 0 人，合计 0.00");
+            LOGGER.info("Lucky5 rebate skipped zero rates user={} members={} lockMs={} memberReadMs={} totalMs={}",
+                    userId, members.size(), lockMs, memberReadMs, elapsedMillis(rebateStartedAt));
+            return map("count", 0, "amount", ZERO, "totalAmount", ZERO, "members", List.of());
+        }
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, userId).ne(OrderDO::getOrderType, TYPE_AUTO_PROXY)
                 .in(OrderDO::getStatus, "已中奖", "未中奖")));
-        long orderReadMs = elapsedMillis(rebateStartedAt) - lockMs;
+        long orderReadMs = elapsedMillis(rebateStartedAt) - lockMs - memberReadMs;
         List<String> orderIds = orders.stream().map(OrderDO::getId).toList();
         boolean separateDragonRebate = enabled("dragonTigerSeparateRebate", userId);
         List<BetItemDO> items = !separateDragonRebate || orderIds.isEmpty() ? List.of() : DataPermissionUtils.executeIgnore(() -> betItemMapper.selectList(
                 new LambdaQueryWrapper<BetItemDO>().eq(BetItemDO::getUserId, userId).in(BetItemDO::getOrderId, orderIds)));
         Map<String, List<BetItemDO>> itemsByOrder = itemsByOrderWithExpandedSnapshots(items);
-        long itemReadMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs;
+        long itemReadMs = elapsedMillis(rebateStartedAt) - lockMs - memberReadMs - orderReadMs;
         List<RebateRecordDO> rebateRecords = DataPermissionUtils.executeIgnore(() -> rebateRecordMapper.selectList(
                 new LambdaQueryWrapper<RebateRecordDO>().eq(RebateRecordDO::getUserId, userId)
                         .last("FOR UPDATE")));
-        long recordReadMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs - itemReadMs;
+        long recordReadMs = elapsedMillis(rebateStartedAt) - lockMs - memberReadMs - orderReadMs - itemReadMs;
         BigDecimal total = ZERO;
         int count = 0;
         List<Map<String, Object>> paidMembers = new ArrayList<>();
-        List<MemberDO> members = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
-                new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, userId)
-                        .ne(MemberDO::getMemberType, MEMBER_BOT).eq(MemberDO::getAutoProxy, false)
-                        .last("FOR UPDATE")));
-        long memberReadMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs - itemReadMs - recordReadMs;
         Map<String, List<OrderDO>> ordersByMember = orders.stream()
                 .filter(order -> order.getMemberId() != null)
                 .collect(Collectors.groupingBy(OrderDO::getMemberId));
@@ -1508,8 +1516,8 @@ public class LotteryServiceImpl implements LotteryService {
             }
             total = total.add(amount);
         }
-        long calculationAndWriteMs = elapsedMillis(rebateStartedAt) - lockMs - orderReadMs - itemReadMs
-                - recordReadMs - memberReadMs;
+        long calculationAndWriteMs = elapsedMillis(rebateStartedAt) - lockMs - memberReadMs - orderReadMs
+                - itemReadMs - recordReadMs;
         logAs(userId, actor, "-", "发放返水 " + count + " 人，合计 " + money(total));
         LOGGER.info("Lucky5 rebate completed user={} orders={} members={} records={} paid={} lockMs={} "
                         + "orderReadMs={} itemReadMs={} recordReadMs={} memberReadMs={} calculationAndWriteMs={} totalMs={}",
