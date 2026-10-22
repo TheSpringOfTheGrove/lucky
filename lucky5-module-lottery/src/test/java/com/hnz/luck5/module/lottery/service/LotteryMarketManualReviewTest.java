@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
 
@@ -142,9 +143,7 @@ class LotteryMarketManualReviewTest {
         verify(messageMapper).insert(notice.capture());
         assertThat(notice.getValue().getCommandType()).isEqualTo("CANCEL_SUCCESS");
         assertThat(notice.getValue().getReply()).contains("tui碼成功");
-        ArgumentCaptor<LambdaUpdateWrapper<MessageDO>> originalUpdate = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
-        verify(messageMapper).update(any(), originalUpdate.capture());
-        assertThat(originalUpdate.getValue().getSqlSet()).doesNotContain("reply");
+        verify(messageMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
     }
 
     private OrderDO manualReviewOrder() {

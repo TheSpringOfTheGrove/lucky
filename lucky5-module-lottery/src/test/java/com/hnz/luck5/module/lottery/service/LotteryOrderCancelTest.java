@@ -39,6 +39,7 @@ import org.mockito.ArgumentCaptor;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -186,7 +187,7 @@ class LotteryOrderCancelTest {
             assertThat(message.getExternalId()).isEqualTo("cancel-success:O-1");
             assertThat(message.getReply()).contains("【退面积】：100.00", "tui碼成功");
         });
-        verify(messageMapper).update(any(), any(LambdaUpdateWrapper.class));
+        verify(messageMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
     }
 
     @Test

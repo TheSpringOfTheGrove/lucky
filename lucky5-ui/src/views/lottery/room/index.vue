@@ -456,7 +456,10 @@ const chatMessages = computed<ChatItem[]>(() => {
       message.own === false &&
       ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType) &&
       Boolean(message.reply)
-    if (!['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType)) {
+    if (
+      message.content?.trim() &&
+      !['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType)
+    ) {
       messages.push({
         id: `member-message-${message.id}`,
         kind: message.own === false ? 'other' : 'member',

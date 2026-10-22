@@ -2158,10 +2158,6 @@ public class LotteryServiceImpl implements LotteryService {
         if (refunded != 1) throw exception(BET_STATE_CHANGED);
         balanceLedgerService.recordAppliedChange(member, balanceBefore, member.getBalance(),
                 LotteryBalanceLedgerService.BET_REFUND, order.getId(), actor, "退码订单 " + order.getId());
-        messageMapper.update(null, new LambdaUpdateWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                .eq(MessageDO::getOrderId, id).eq(MessageDO::getCommandType, "BET")
-                .set(MessageDO::getStatus, "已退码")
-                .set(MessageDO::getError, ""));
         LotteryCancelNoticePublisher.publish(messageMapper, robotReplyTemplate, order, member, member.getBalance());
         if (realMarketDelivery) {
             marketRouteItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
