@@ -162,12 +162,16 @@ const parseTransferAmount = (value: string): number | undefined => {
   return cents / 100
 }
 
-const toggleEat = (row: any) =>
-  store.saveMember({
+const toggleEat = async (row: any) => {
+  if (store.saving) return
+  const eatEnabled = !row.eatEnabled
+  if (!window.confirm(eatEnabled ? '是否设为吃？' : '是否取消吃？')) return
+  await store.saveMember({
     ...row,
-    eatEnabled: !row.eatEnabled,
+    eatEnabled,
     autoBetEnabled: Boolean(row.autoProxy)
   })
+}
 
 const submitMember = async () => {
   const saved = await store.saveMember(memberForm)
