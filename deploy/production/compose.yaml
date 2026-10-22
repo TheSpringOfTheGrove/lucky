@@ -42,6 +42,11 @@ services:
   server:
     image: lucky5-server:production
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "25m"
+        max-file: "5"
     environment:
       TZ: Asia/Shanghai
       JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:--Xms256m -Xmx768m -Djava.security.egd=file:/dev/./urandom}

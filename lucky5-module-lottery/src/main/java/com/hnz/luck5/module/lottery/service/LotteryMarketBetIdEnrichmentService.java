@@ -110,20 +110,24 @@ public class LotteryMarketBetIdEnrichmentService {
 
     private boolean matchAndSave(Long userId, String orderId,
                                  LotteryMarketOrderStateService.VerificationContext context) {
-        Wa55MarketOrderClient.VerificationBatch details = marketClient.verifyAccepted(
-                context.credentials(), context.period(), context.requests(),
+        Wa55MarketOrderClient.VerificationBatch details = marketClient.verifyAcceptedPreferSerial(
+                context.credentials(), context.period(), context.requests(), context.acceptedSerialNos(),
                 stateService.claimedMarketBetIds(userId, context.period(), orderId));
         if (!details.unresolvedBatches().isEmpty() || details.confirmations().size() != context.requests().size()) {
-            LOGGER.warn("盘口退码编号补查未匹配 user={} order={} matched={} expected={} diagnostics={}",
-                    userId, orderId, details.confirmations().size(), context.requests().size(),
+            LOGGER.warn("盘口退码编号补查未匹配 user={} order={} strategy={} serialAttempts={} "
+                            + "matched={} expected={} diagnostics={}",
+                    userId, orderId, details.lookupStrategy(), details.serialAttempts(),
+                    details.confirmations().size(), context.requests().size(),
                     details.diagnostics());
             return false;
         }
         boolean saved = stateService.attachAcceptedCancelReferences(userId, orderId, details.confirmations());
         if (saved) {
-            LOGGER.info("盘口退码编号已补齐 tenant={} user={} order={} count={}",
+            LOGGER.info("盘口退码编号已补齐 tenant={} user={} order={} strategy={} "
+                            + "serialAttempts={} matched={} expected={}",
                     com.hnz.luck5.framework.tenant.core.context.TenantContextHolder.getRequiredTenantId(),
-                    userId, orderId, details.confirmations().size());
+                    userId, orderId, details.lookupStrategy(), details.serialAttempts(),
+                    details.confirmations().size(), context.requests().size());
         } else if (!stateService.hasCompleteCancelReferences(userId, orderId)) {
             LOGGER.warn("盘口退码编号补查已匹配但未保存 user={} order={} reason=STATE_CHANGED_OR_VALIDATION_FAILED",
                     userId, orderId);

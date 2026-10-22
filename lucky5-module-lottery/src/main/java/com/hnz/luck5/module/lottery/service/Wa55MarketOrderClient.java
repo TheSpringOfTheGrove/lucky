@@ -2,6 +2,7 @@ package com.hnz.luck5.module.lottery.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -52,7 +53,6 @@ public class Wa55MarketOrderClient {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern NORMAL_SELECTION = Pattern.compile("(?i)[0-9X]{4}");
     private static final Pattern XIAN_SELECTION = Pattern.compile("[0-9]{2,4}");
-    private static final int MAX_BATCH_DETAIL_PAGES = 300;
 
     /**
      * A market login requires several round trips before a batch can be submitted.  Owner operations are already
@@ -69,6 +69,10 @@ public class Wa55MarketOrderClient {
 
     @Value("${lottery.market.real-writes-enabled:true}")
     private boolean realWritesEnabled;
+
+    @Value("${lottery.market.serial-lookup-log-enabled:false}")
+    private boolean serialLookupLogEnabled;
+
 
     public boolean isRealWritesEnabled() {
         return realWritesEnabled;
@@ -99,6 +103,11 @@ public class Wa55MarketOrderClient {
             } catch (MarketProtocolException ex) {
                 throw new MarketProtocolException("盘口提交结果不确定（批次 " + group.guid() + "）："
                         + ex.getMessage(), false, confirmations, true, ex);
+            }
+            if (group.requests().size() > 1) {
+                // Keep the complete upstream receipt for diagnosis; credentials and session tokens are never logged.
+                LOGGER.info("Lucky5 market batch receipt: batchGuid={}, itemCount={}, response={}",
+                        group.guid(), group.requests().size(), marketReceiptForLog(payload));
             }
             try {
                 assertSuccess(payload, "盘口拒绝下注");
@@ -142,7 +151,7 @@ public class Wa55MarketOrderClient {
             } else {
                 // Exact count and amount make the write result definite. External identifiers are recovered later
                 // through the read-only detail endpoint so the player response is not blocked by paged polling.
-                acceptedBatches.add(acceptedBatch(group));
+                acceptedBatches.add(acceptedBatch(group, text(first(data, "SerialNo", "serial_no"))));
             }
         }
         // The room receipt uses the local ledger balance. Avoid a separate external balance HTTP round-trip here;
@@ -189,7 +198,7 @@ public class Wa55MarketOrderClient {
             if (incompleteScan || match.confirmations().isEmpty()) {
                 unresolved.add(acceptedBatch(group));
                 String reason = scan.unstablePages() ? "UNSTABLE_PAGES"
-                        : scan.reportedPages() > scan.fetchedPages() ? "PAGE_LIMIT"
+                        : scan.reportedPages() > scan.fetchedPages() ? "INCOMPLETE_SCAN"
                         : scan.missingRowsPages() > 0 ? "MISSING_ROWS_PAGE"
                         : scan.rows().isEmpty() ? "NO_VALID_ROWS" : match.reason();
                 diagnostics.add(new VerificationDiagnostic(reason, group.requests().size(),
@@ -205,6 +214,124 @@ public class Wa55MarketOrderClient {
         }
         return new VerificationBatch(List.copyOf(confirmations), List.copyOf(unresolved),
                 List.copyOf(diagnostics));
+    }
+
+    /** Prefer the exact accepted serials; an incomplete or untrusted answer falls back to the existing page scan. */
+    public VerificationBatch verifyAcceptedPreferSerial(Credentials credentials, String period,
+                                                        List<BetRequest> requests, List<String> acceptedSerialNos,
+                                                        java.util.Set<String> alreadyClaimedIds) {
+        if (requests == null || requests.isEmpty()) return new VerificationBatch(List.of(), List.of(), List.of());
+        List<String> serials = acceptedSerialNos == null ? List.of() : acceptedSerialNos.stream()
+                .filter(value -> value != null && !value.isBlank()).distinct().toList();
+        if (serials.isEmpty()) return verifyAccepted(credentials, period, requests, alreadyClaimedIds);
+        requests.forEach(request -> validateRequest(period, request));
+        int attemptsPerformed = 0;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            attemptsPerformed = attempt;
+            long startedAt = System.nanoTime();
+            try {
+                Session session = connect(credentials);
+                List<ExternalBetRow> rows = new ArrayList<>(requests.size());
+                java.util.Set<String> seenIds = new java.util.HashSet<>();
+                boolean valid = true;
+                for (String serial : serials) {
+                    JsonNode payload = getJson(session, "/Member/GetBetsBySerialNo?serial_no="
+                            + encode(serial) + "&_=" + System.currentTimeMillis());
+                    if (serialLookupLogEnabled) {
+                        LOGGER.info("Lucky5 market serial lookup response: period={}, serialNo={}, attempt={}, response={}",
+                                period, serial, attempt, marketReceiptForLog(payload));
+                    }
+                    assertSuccess(payload, "盘口流水号明细读取失败");
+                    JsonNode data = first(payload, "Data", "data");
+                    if (data == null || !data.isArray()) {
+                        valid = false;
+                        break;
+                    }
+                    for (JsonNode row : data) {
+                        String betId = text(first(row, "bet_id", "BetId", "id"));
+                        String rowSerial = text(first(row, "serial_no", "SerialNo"));
+                        String selection = text(first(row, "bet_no", "BetNo", "selection"))
+                                .toUpperCase(Locale.ROOT);
+                        int type = number(first(row, "dict_no_type_id", "DictNoTypeId"), -1);
+                        BigDecimal amount = decimal(first(row, "bet_money", "BetMoney", "money", "Money"));
+                        int count = number(first(row, "BetCount", "bet_count"), 1);
+                        if (betId.isBlank() || !seenIds.add(betId) || !rowSerial.isBlank()
+                                && !serial.equals(rowSerial) || type <= 0 || amount == null || count != 1
+                                || !(NORMAL_SELECTION.matcher(selection).matches()
+                                        || XIAN_SELECTION.matcher(selection).matches())
+                                || explicitlyCancelled(row)) {
+                            valid = false;
+                            break;
+                        }
+                        rows.add(new ExternalBetRow(betId, serial,
+                                text(first(row, "guid", "Guid", "bet_guid", "BetGuid")),
+                                type, selection, amount, count, decimal(first(row, "odds", "Odds")), false));
+                    }
+                    if (!valid) break;
+                }
+                VerificationBatch matched = valid && rows.size() == requests.size()
+                        ? matchSerialRows(period, requests, rows, alreadyClaimedIds) : null;
+                LOGGER.info("Lucky5 market serial verification: period={} serials={} attempt={} expected={} rows={} "
+                                + "matched={} elapsedMs={}", period, serials.size(), attempt, requests.size(),
+                        rows.size(), matched != null, (System.nanoTime() - startedAt) / 1_000_000);
+                if (matched != null) {
+                    LOGGER.info("Lucky5 market reference match success: period={} strategy=SERIAL_NO "
+                                    + "serialAttempts={} matched={} expected={} elapsedMs={}",
+                            period, attempt, matched.confirmations().size(), requests.size(),
+                            (System.nanoTime() - startedAt) / 1_000_000);
+                    return new VerificationBatch(matched.confirmations(), matched.unresolvedBatches(),
+                            matched.diagnostics(), "SERIAL_NO", attempt);
+                }
+            } catch (MarketSessionExpiredException ex) {
+                invalidateSession(credentials);
+                LOGGER.warn("Lucky5 market serial verification session expired: period={} attempt={}", period, attempt);
+            } catch (RuntimeException ex) {
+                LOGGER.warn("Lucky5 market serial verification failed: period={} attempt={} errorType={}",
+                        period, attempt, ex.getClass().getSimpleName());
+            }
+            if (attempt < 3) {
+                try {
+                    Thread.sleep(150L * attempt);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        LOGGER.info("Lucky5 market serial verification fallback: period={} serials={} expected={}",
+                period, serials.size(), requests.size());
+        VerificationBatch fallback = verifyAccepted(credentials, period, requests, alreadyClaimedIds);
+        LOGGER.info("Lucky5 market reference match result: period={} strategy=PERIOD_SCAN_FALLBACK "
+                        + "serialAttempts={} matched={} expected={} unresolved={}",
+                period, attemptsPerformed, fallback.confirmations().size(), requests.size(),
+                fallback.unresolvedBatches().size());
+        return new VerificationBatch(fallback.confirmations(), fallback.unresolvedBatches(),
+                fallback.diagnostics(), "PERIOD_SCAN_FALLBACK", attemptsPerformed);
+    }
+
+    private VerificationBatch matchSerialRows(String period, List<BetRequest> requests, List<ExternalBetRow> rows,
+                                              java.util.Set<String> alreadyClaimedIds) {
+        List<BetConfirmation> confirmations = new ArrayList<>(requests.size());
+        java.util.Set<String> claimed = new java.util.HashSet<>(
+                alreadyClaimedIds == null ? java.util.Set.of() : alreadyClaimedIds);
+        List<MarketBetReferenceMatcher.Candidate> candidates = rows.stream()
+                .map(row -> new MarketBetReferenceMatcher.Candidate(row.betId(), row.serialNo(), row.guid(),
+                        row.dictNoTypeId(), row.selection(), row.amount(), row.betCount(), row.odds(), row.cancelled()))
+                .toList();
+        for (BetGroup group : groupRequests(period, requests)) {
+            MarketBetReferenceMatcher.Result match = MarketBetReferenceMatcher.match(
+                    group.requests().stream().map(request -> new MarketBetReferenceMatcher.Expected(
+                            request.routeItemId(), group.guid(), dictNoTypeId(request), request.selection(),
+                            money(request.amount()))).toList(), candidates, claimed);
+            if (match.confirmations().size() != group.requests().size()) return null;
+            for (MarketBetReferenceMatcher.Reference reference : match.confirmations()) {
+                confirmations.add(new BetConfirmation(reference.routeItemId(), reference.guid(), reference.betId(),
+                        reference.serialNo(), reference.betCount(), reference.amount(), reference.odds()));
+                claimed.add(reference.betId());
+            }
+        }
+        return confirmations.size() == requests.size()
+                ? new VerificationBatch(List.copyOf(confirmations), List.of(), List.of()) : null;
     }
 
     private Preflight preflight(Credentials credentials, String expectedPeriod) {
@@ -232,6 +359,37 @@ public class Wa55MarketOrderClient {
                 betId, serialNo, betCount, money(request.amount()), odds)).toList();
     }
 
+    private String marketReceiptForLog(JsonNode payload) {
+        if (payload == null) return "null";
+        JsonNode copy = payload.deepCopy();
+        redactMarketSecrets(copy);
+        return copy.toString();
+    }
+
+    private void redactMarketSecrets(JsonNode node) {
+        if (node == null) return;
+        if (node.isArray()) {
+            node.forEach(this::redactMarketSecrets);
+        } else if (node.isObject()) {
+            ObjectNode object = (ObjectNode) node;
+            List<String> fields = new ArrayList<>();
+            object.fieldNames().forEachRemaining(fields::add);
+            for (String field : fields) {
+                String normalized = field.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+                if (normalized.contains("password") || normalized.contains("passwd")
+                        || normalized.contains("pwd") || normalized.contains("secret")
+                        || normalized.contains("token") || normalized.contains("cookie")
+                        || normalized.contains("session") || normalized.contains("authorization")
+                        || normalized.contains("apikey") || normalized.contains("accesskey")
+                        || normalized.contains("privatekey") || normalized.contains("authkey")) {
+                    object.put(field, "[REDACTED]");
+                } else {
+                    redactMarketSecrets(object.get(field));
+                }
+            }
+        }
+    }
+
     private DetailScan memberBetRows(Session session, String period) {
         long startedAt = System.nanoTime();
         List<ExternalBetRow> result = new ArrayList<>();
@@ -249,11 +407,14 @@ public class Wa55MarketOrderClient {
         java.util.Set<String> seenBetIds = new java.util.HashSet<>();
         Map<Integer, CompletableFuture<JsonNode>> prefetched = new LinkedHashMap<>();
         String pathPrefix = "/Member/GetMemberBetList?period_number=" + encode(period) + "&pageindex=";
-        for (int page = 1; page <= pageCount && page <= MAX_BATCH_DETAIL_PAGES; page++) {
+        // Read every page the market reports. A partial period scan cannot prove that a matching
+        // serial group is unique, so a fixed page cap must never silently strand cancel references.
+        for (int page = 1; page <= pageCount; page++) {
             JsonNode payload;
             try {
                 if (page > 1 && detailPageExecutor != null && prefetched.isEmpty()) {
-                    for (int next = page; next <= Math.min(pageCount, Math.min(MAX_BATCH_DETAIL_PAGES, page + 3)); next++) {
+                    int prefetchThrough = (int) Math.min((long) pageCount, (long) page + 3);
+                    for (int next = page; next <= prefetchThrough; next++) {
                         int requestedPage = next;
                         prefetched.put(next, CompletableFuture.supplyAsync(() -> getJson(session,
                                 pathPrefix + requestedPage + "&_=" + System.currentTimeMillis()),
@@ -347,7 +508,7 @@ public class Wa55MarketOrderClient {
         try {
             return submitGroupRequest(session, expectedPeriod, group);
         } finally {
-            // Only counts and elapsed time: never log request bodies, credentials or external identifiers.
+            // Timing stays compact; the sanitized full batch receipt is logged after the response arrives.
             LOGGER.info("Lucky5 market batch timing: itemCount={}, requestMs={}", group.requests().size(),
                     (System.nanoTime() - startedAt) / 1_000_000);
         }
@@ -502,8 +663,12 @@ public class Wa55MarketOrderClient {
     }
 
     private AcceptedBatch acceptedBatch(BetGroup group) {
+        return acceptedBatch(group, "");
+    }
+
+    private AcceptedBatch acceptedBatch(BetGroup group, String serialNo) {
         return new AcceptedBatch(group.guid(), group.requests().stream().map(BetRequest::routeItemId).toList(),
-                group.requests().size(), money(group.totalAmount()));
+                group.requests().size(), money(group.totalAmount()), serialNo);
     }
 
     private List<CancelRequest> distinctCancelRequests(List<CancelRequest> requests) {
@@ -764,6 +929,10 @@ public class Wa55MarketOrderClient {
         this.realWritesEnabled = enabled;
     }
 
+    void setSerialLookupLogForTest(boolean enabled) {
+        this.serialLookupLogEnabled = enabled;
+    }
+
     public record Credentials(String url, String account, String password) {}
 
     public record BetRequest(String routeItemId, String period, String play, String selection,
@@ -772,7 +941,12 @@ public class Wa55MarketOrderClient {
     public record BetConfirmation(String routeItemId, String guid, String marketBetId, String serialNo,
                                   int betCount, BigDecimal acceptedAmount, BigDecimal odds) {}
 
-    public record AcceptedBatch(String guid, List<String> routeItemIds, int betCount, BigDecimal acceptedAmount) {}
+    public record AcceptedBatch(String guid, List<String> routeItemIds, int betCount, BigDecimal acceptedAmount,
+                                String serialNo) {
+        public AcceptedBatch(String guid, List<String> routeItemIds, int betCount, BigDecimal acceptedAmount) {
+            this(guid, routeItemIds, betCount, acceptedAmount, "");
+        }
+    }
 
     public record SubmissionBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> acceptedBatches,
                                   BigDecimal balance) {
@@ -782,7 +956,12 @@ public class Wa55MarketOrderClient {
     }
 
     public record VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches,
-                                    List<VerificationDiagnostic> diagnostics) {
+                                    List<VerificationDiagnostic> diagnostics, String lookupStrategy,
+                                    int serialAttempts) {
+        public VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches,
+                                 List<VerificationDiagnostic> diagnostics) {
+            this(confirmations, unresolvedBatches, diagnostics, "PERIOD_SCAN", 0);
+        }
         public VerificationBatch(List<BetConfirmation> confirmations, List<AcceptedBatch> unresolvedBatches) {
             this(confirmations, unresolvedBatches, List.of());
         }

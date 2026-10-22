@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew short-lived HTTPS certificate for Lucky5 IP test entry
+
+[Service]
+Type=oneshot
+ExecStart=/opt/certbot-ip/bin/certbot renew --cert-name 119.29.205.24 --quiet --deploy-hook "/usr/bin/systemctl reload nginx"

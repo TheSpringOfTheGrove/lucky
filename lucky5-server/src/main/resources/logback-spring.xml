@@ -25,6 +25,7 @@
             <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.%i.log</fileNamePattern> <!-- 日志文件输出的文件名 -->
             <maxHistory>30</maxHistory> <!-- 日志文件的保留天数 -->
             <maxFileSize>10MB</maxFileSize> <!-- 日志文件，到达多少容量，进行滚动 -->
+            <totalSizeCap>250MB</totalSizeCap> <!-- 限制容器内历史日志的总容量 -->
         </rollingPolicy>
     </appender>
     <!-- 异步写入日志，提升性能 -->

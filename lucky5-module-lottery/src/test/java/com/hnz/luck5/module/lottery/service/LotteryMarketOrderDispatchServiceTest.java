@@ -142,7 +142,8 @@ class LotteryMarketOrderDispatchServiceTest {
         when(stateService.verificationContext(9L, "order-1")).thenReturn(context);
         when(stateService.claimedMarketBetIds(9L, "20260811001", "order-1"))
                 .thenReturn(java.util.Set.of());
-        when(marketClient.verifyAccepted(credentials, "20260811001", List.of(request), java.util.Set.of())).thenReturn(
+        when(marketClient.verifyAcceptedPreferSerial(credentials, "20260811001", List.of(request),
+                List.of(), java.util.Set.of())).thenReturn(
                 new Wa55MarketOrderClient.VerificationBatch(List.of(confirmation), List.of()));
         when(stateService.applyConfirmations(9L, "order-1", List.of(confirmation))).thenReturn(true);
 
@@ -167,7 +168,7 @@ class LotteryMarketOrderDispatchServiceTest {
         service.verify(9L, "order-1");
 
         verify(stateService).confirmAcceptedDetailsWithoutIdentifiers(9L, "order-1");
-        verify(marketClient, never()).verifyAccepted(any(), any(), any(), any());
+        verify(marketClient, never()).verifyAcceptedPreferSerial(any(), any(), any(), any(), any());
         verify(stateService, never()).markManualReview(anyLong(), any(), any());
     }
 

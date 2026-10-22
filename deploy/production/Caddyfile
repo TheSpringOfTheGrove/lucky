@@ -1,4 +1,4 @@
-lucky555.930i.xyz {
+453400.80908.cn, lucky5.930i.xyz {
     encode zstd gzip
     reverse_proxy frontend:80
 
@@ -9,4 +9,33 @@ lucky555.930i.xyz {
         Referrer-Policy "strict-origin-when-cross-origin"
         -Server
     }
+}
+
+origin.lucky5.internal {
+    tls internal
+    @new_edge remote_ip 119.29.205.24
+
+    encode zstd gzip
+
+    handle @new_edge {
+        reverse_proxy frontend:80
+    }
+
+    handle {
+        respond 404
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
+
+# Temporary plain-HTTP connectivity probe for the new server's IP.
+# Do not proxy the login application over unencrypted HTTP.
+http://43.133.33.106 {
+    respond "Lucky5 IP HTTP probe OK" 200
 }

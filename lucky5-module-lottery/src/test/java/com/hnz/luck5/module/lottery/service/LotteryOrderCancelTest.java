@@ -258,6 +258,7 @@ class LotteryOrderCancelTest {
         OrderDO order = pendingOrder("PLAYER", "网页群");
         order.setDeliveryMode("MARKET_ADAPTER");
         order.setMarketStatus("CONFIRMED");
+        order.setMarketError("已受理但未取得逐注编号");
         MemberDO member = new MemberDO();
         member.setId("M-1");
         member.setName("玩家A");
@@ -285,6 +286,30 @@ class LotteryOrderCancelTest {
 
         assertThat(member.getBalance()).isEqualByComparingTo("50");
         assertThat(member.getTotalBet()).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void repeatCancelDuringMarketProcessingReportsProcessingWithoutRefund() {
+        OrderDO order = pendingOrder("PLAYER", "网页群");
+        order.setDeliveryMode("MARKET_ADAPTER");
+        order.setMarketStatus("CANCEL_REQUESTED");
+        MemberDO member = new MemberDO();
+        member.setId("M-1");
+        member.setUserId(142L);
+        member.setBalance(new BigDecimal("50"));
+        Wa55MarketOrderClient marketClient = mock(Wa55MarketOrderClient.class);
+        LotteryMarketOrderStateService stateService = mock(LotteryMarketOrderStateService.class);
+        ReflectionTestUtils.setField(service, "marketOrderClient", marketClient);
+        ReflectionTestUtils.setField(service, "marketOrderStateService", stateService);
+        when(orderMapper.selectById("O-1")).thenReturn(order);
+        when(memberMapper.selectById("M-1")).thenReturn(member);
+        when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
+        when(marketClient.isRealWritesEnabled()).thenReturn(true);
+        when(stateService.hasCompleteCancelReferences(142L, "O-1")).thenReturn(true);
+
+        assertThat(service.cancelOrder("O-1")).containsEntry("status", "退码处理中");
+        assertThat(member.getBalance()).isEqualByComparingTo("50");
+        verifyNoInteractions(messageMapper);
     }
 
     @Test

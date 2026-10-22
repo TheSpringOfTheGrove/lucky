@@ -481,13 +481,17 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private boolean isOrderCancelable(OrderDO order, IssueDO issue) {
-        return order != null && "未开奖".equals(order.getStatus())
-                && issue != null && "OPEN".equals(issue.getStatus())
-                && !issueFreshnessPolicy.isStale(issue) && !issueFreshnessPolicy.isBettingClosed(issue)
+        return isCancellationWindowOpen(order, issue)
                 && !Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING", "MANUAL_REVIEW",
                         "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
                 .contains(value(order.getMarketStatus(), ""))
                 && StrUtil.isBlank(order.getMarketError());
+    }
+
+    private boolean isCancellationWindowOpen(OrderDO order, IssueDO issue) {
+        return order != null && "未开奖".equals(order.getStatus())
+                && issue != null && "OPEN".equals(issue.getStatus())
+                && !issueFreshnessPolicy.isStale(issue) && !issueFreshnessPolicy.isBettingClosed(issue);
     }
 
     private Map<String, IssueDO> issuesForOrders(Long userId, List<OrderDO> orders) {
@@ -2107,7 +2111,7 @@ public class LotteryServiceImpl implements LotteryService {
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, order.getUserId())
                         .eq(IssueDO::getPeriod, order.getPeriod()).last("LIMIT 1")));
-        if (!isOrderCancelable(order, issue) || hasDrawResult(order.getUserId(), order.getPeriod())) {
+        if (!isCancellationWindowOpen(order, issue) || hasDrawResult(order.getUserId(), order.getPeriod())) {
             throw exception(ORDER_CAN_NOT_CANCEL);
         }
         boolean realMarketDelivery = Set.of("MARKET_ADAPTER", "MIXED_MARKET").contains(order.getDeliveryMode());
@@ -2136,8 +2140,10 @@ public class LotteryServiceImpl implements LotteryService {
                     LotteryMarketOrderDispatchEvent.Action.CANCEL));
             return new CancelResult(id, "退码处理中", ZERO);
         }
-        if (realMarketDelivery && Set.of("SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING", "MANUAL_REVIEW")
-                .contains(order.getMarketStatus())) throw exception(MARKET_ORDER_RECONCILING);
+        if (Set.of("PENDING", "SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING", "MANUAL_REVIEW",
+                "CANCEL_REQUESTED", "CANCEL_PENDING", "CANCEL_FAILED")
+                .contains(value(order.getMarketStatus(), ""))) throw exception(MARKET_ORDER_RECONCILING);
+        if (StrUtil.isNotBlank(order.getMarketError())) throw exception(MARKET_ORDER_RECONCILING);
         order.setStatus("已退码");
         order.setCancelledAt(LocalDateTime.now());
         if (realMarketDelivery) order.setMarketStatus("CANCELLED");
@@ -2174,8 +2180,12 @@ public class LotteryServiceImpl implements LotteryService {
     private void prepareCancelReferences(OrderDO order, boolean requireCancelEnabled) {
         if (order == null || !"未开奖".equals(order.getStatus())
                 || !"CONFIRMED".equals(order.getMarketStatus())
-                || !Set.of("MARKET_ADAPTER", "MIXED_MARKET").contains(order.getDeliveryMode())
-                || StrUtil.isBlank(order.getMarketError())) return;
+                || !Set.of("MARKET_ADAPTER", "MIXED_MARKET").contains(order.getDeliveryMode())) return;
+        if (StrUtil.isBlank(order.getMarketError())) {
+            LOGGER.info("Lucky5 market cancel reference path: user={} order={} strategy=ALREADY_COMPLETE "
+                    + "serialAttempts=0", order.getUserId(), order.getId());
+            return;
+        }
         if (requireCancelEnabled && !enabled("openCancel", order.getUserId())) return;
         betIdEnrichmentService.resolveNow(TenantContextHolder.getRequiredTenantId(), order.getUserId(), order.getId());
     }

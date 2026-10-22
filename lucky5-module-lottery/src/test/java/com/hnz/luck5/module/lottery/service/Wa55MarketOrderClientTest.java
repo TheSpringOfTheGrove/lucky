@@ -1,5 +1,8 @@
 package com.hnz.luck5.module.lottery.service;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.sun.net.httpserver.HttpExchange;
@@ -7,6 +10,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -30,6 +34,7 @@ class Wa55MarketOrderClientTest {
     private final AtomicInteger memberPrintCalls = new AtomicInteger();
     private final AtomicInteger betCalls = new AtomicInteger();
     private final AtomicInteger detailCalls = new AtomicInteger();
+    private final AtomicInteger serialLookupCalls = new AtomicInteger();
     private final List<Map<String, String>> betForms = new ArrayList<>();
     private final List<Map<String, Object>> marketRows = new ArrayList<>();
     private Map<String, String> cancelForm;
@@ -41,6 +46,11 @@ class Wa55MarketOrderClientTest {
     private int malformedAtCall = -1;
     private int rejectAtCall = -1;
     private boolean batchResponseWithIds;
+    private boolean batchResponseWithSecret;
+    private boolean batchResponseWithSerialOnly;
+    private int serialVisibleAfterCall;
+    private boolean serialLookupWrongSelection;
+    private boolean serialLookupWrongBetCount;
     private boolean memberPrintSessionExpiredOnce;
     private boolean batchSessionExpired;
     private boolean includeSummaryRow;
@@ -140,6 +150,150 @@ class Wa55MarketOrderClientTest {
             assertThat(item.serialNo()).isEqualTo("BATCH-SERIAL-1");
             assertThat(item.betCount()).isEqualTo(2);
         });
+    }
+
+    @Test
+    void logsCompleteBatchReceiptWhileRedactingAuthenticationSecrets() {
+        batchResponseWithIds = true;
+        batchResponseWithSecret = true;
+        Logger logger = (Logger) LoggerFactory.getLogger(Wa55MarketOrderClient.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            client(true).submit(credentials(), issuePeriod, List.of(
+                    request("route-1", "四定位", "5874", "1", "guid-1", false),
+                    request("route-2", "四定位", "8888", "1", "guid-2", false)));
+            List<String> messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.startsWith("Lucky5 market batch receipt:"))
+                    .toList();
+            assertThat(messages).singleElement().satisfies(message -> assertThat(message)
+                    .contains("itemCount=2", "\"FinalBetCount\":2", "\"FinalMoney\":2",
+                            "\"BetId\":\"BATCH-BET-1\"", "\"SerialNo\":\"BATCH-SERIAL-1\"",
+                            "\"AccessToken\":\"[REDACTED]\"", "\"Password\":\"[REDACTED]\"")
+                    .doesNotContain("sample-token", "sample-password"));
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    @Test
+    void confirmsFromSerialLookupOnFirstCompleteResponseWithoutPeriodScan() {
+        batchResponseWithSerialOnly = true;
+        Logger logger = (Logger) LoggerFactory.getLogger(Wa55MarketOrderClient.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Wa55MarketOrderClient client = client(true);
+            client.setSerialLookupLogForTest(true);
+            List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                    request("route-1", "四定位", "5874", "1", "guid-1", false),
+                    request("route-2", "四定位", "8888", "1", "guid-2", false));
+            Wa55MarketOrderClient.SubmissionBatch result = client.submit(credentials(), issuePeriod, requests);
+            assertThat(result.confirmations()).isEmpty();
+            assertThat(result.acceptedBatches()).hasSize(1);
+            assertThat(result.acceptedBatches().get(0).serialNo()).isEqualTo("BATCH-SERIAL-1");
+            Wa55MarketOrderClient.VerificationBatch verified = client.verifyAcceptedPreferSerial(
+                    credentials(), issuePeriod, requests, List.of("BATCH-SERIAL-1"), java.util.Set.of());
+            assertThat(verified.confirmations()).hasSize(2);
+            assertThat(verified.unresolvedBatches()).isEmpty();
+            assertThat(verified.lookupStrategy()).isEqualTo("SERIAL_NO");
+            assertThat(verified.serialAttempts()).isEqualTo(1);
+            assertThat(detailCalls).hasValue(0);
+            assertThat(serialLookupCalls).hasValue(1);
+            assertThat(appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.startsWith("Lucky5 market serial lookup response:"))).hasSize(1)
+                    .allSatisfy(message -> assertThat(message)
+                            .contains("serialNo=BATCH-SERIAL-1", "\"bet_id\":\"BET-1-1\"")
+                            .contains("\"AccessToken\":\"[REDACTED]\"")
+                            .doesNotContain("sample-token"));
+            assertThat(appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.startsWith("Lucky5 market reference match success:")))
+                    .singleElement().asString().contains("strategy=SERIAL_NO", "serialAttempts=1", "matched=2");
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    @Test
+    void retriesOnlyUntilSerialRowsBecomeComplete() {
+        batchResponseWithSerialOnly = true;
+        serialVisibleAfterCall = 1;
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false));
+        client.submit(credentials(), issuePeriod, requests);
+
+        var verified = client.verifyAcceptedPreferSerial(credentials(), issuePeriod, requests,
+                List.of("BATCH-SERIAL-1"), java.util.Set.of());
+
+        assertThat(verified.confirmations()).hasSize(2);
+        assertThat(verified.lookupStrategy()).isEqualTo("SERIAL_NO");
+        assertThat(verified.serialAttempts()).isEqualTo(2);
+        assertThat(serialLookupCalls).hasValue(2);
+        assertThat(detailCalls).hasValue(0);
+    }
+
+    @Test
+    void fallsBackToExistingPeriodScanAfterThreeIncompleteSerialLookups() {
+        batchResponseWithSerialOnly = true;
+        serialVisibleAfterCall = Integer.MAX_VALUE;
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false));
+        client.submit(credentials(), issuePeriod, requests);
+
+        var verified = client.verifyAcceptedPreferSerial(credentials(), issuePeriod, requests,
+                List.of("BATCH-SERIAL-1"), java.util.Set.of());
+
+        assertThat(verified.confirmations()).hasSize(2);
+        assertThat(verified.lookupStrategy()).isEqualTo("PERIOD_SCAN_FALLBACK");
+        assertThat(verified.serialAttempts()).isEqualTo(3);
+        assertThat(serialLookupCalls).hasValue(3);
+        assertThat(detailCalls).hasValue(1);
+        assertThat(betCalls).hasValue(1);
+    }
+
+    @Test
+    void rejectsSerialRowsWithWrongSelectionBeforeFallingBack() {
+        batchResponseWithSerialOnly = true;
+        serialLookupWrongSelection = true;
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false));
+        client.submit(credentials(), issuePeriod, requests);
+
+        var verified = client.verifyAcceptedPreferSerial(credentials(), issuePeriod, requests,
+                List.of("BATCH-SERIAL-1"), java.util.Set.of());
+
+        assertThat(verified.confirmations()).hasSize(2);
+        assertThat(serialLookupCalls).hasValue(3);
+        assertThat(detailCalls).hasValue(1);
+    }
+
+    @Test
+    void rejectsSerialRowsWithWrongBetCountBeforeFallingBack() {
+        batchResponseWithSerialOnly = true;
+        serialLookupWrongBetCount = true;
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false));
+        client.submit(credentials(), issuePeriod, requests);
+
+        var verified = client.verifyAcceptedPreferSerial(credentials(), issuePeriod, requests,
+                List.of("BATCH-SERIAL-1"), java.util.Set.of());
+
+        assertThat(verified.confirmations()).hasSize(2);
+        assertThat(verified.lookupStrategy()).isEqualTo("PERIOD_SCAN_FALLBACK");
+        assertThat(serialLookupCalls).hasValue(3);
+        assertThat(detailCalls).hasValue(1);
     }
 
     @Test
@@ -251,6 +405,31 @@ class Wa55MarketOrderClientTest {
             assertThat(verified.unresolvedBatches()).isEmpty();
             assertThat(verified.confirmations()).hasSize(21);
             assertThat(detailCalls).hasValue(21);
+        } finally {
+            pageExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void verifiesAcceptedBatchUsingAllReportedPagesBeyondOneThousand() {
+        detailPageSize = 1;
+        Wa55MarketOrderClient client = client(true);
+        java.util.concurrent.ExecutorService pageExecutor = java.util.concurrent.Executors.newFixedThreadPool(4);
+        client.setDetailPageExecutorForTest(pageExecutor);
+        List<Wa55MarketOrderClient.BetRequest> requests = new ArrayList<>();
+        for (int index = 0; index < 1005; index++) {
+            requests.add(request("route-" + index, "四定位", String.format("%04d", index),
+                    "1", "guid-" + index, false));
+        }
+
+        try {
+            assertThat(client.submit(credentials(), issuePeriod, requests).acceptedBatches()).hasSize(1);
+            Wa55MarketOrderClient.VerificationBatch verified = client.verifyAccepted(
+                    credentials(), issuePeriod, requests);
+
+            assertThat(verified.unresolvedBatches()).isEmpty();
+            assertThat(verified.confirmations()).hasSize(1005);
+            assertThat(detailCalls).hasValue(1005);
         } finally {
             pageExecutor.shutdownNow();
         }
@@ -536,6 +715,7 @@ class Wa55MarketOrderClientTest {
             case "/drawno/GetCurrentPeriodStatus" -> json(exchange, "{\"Status\":1,"
                     + "\"PERIOD_NO\":\"" + issuePeriod + "\",\"OPEN_STATUS\":" + openStatus + "}");
             case "/Member/GetMemberBetList" -> handleMemberBetList(exchange);
+            case "/Member/GetBetsBySerialNo" -> handleSerialLookup(exchange);
             case "/Member/Bet" -> handleBet(exchange);
             case "/Member/BatchBet" -> handleBatchBet(exchange);
             case "/Member/CancelMemberBet" -> {
@@ -609,7 +789,7 @@ class Wa55MarketOrderClientTest {
             Map<String, Object> bet = bets.get(i);
             marketRows.add(Map.of(
                     "bet_id", "BET-" + call + "-" + (i + 1),
-                    "serial_no", "SERIAL-" + call,
+                    "serial_no", (batchResponseWithSerialOnly ? "BATCH-SERIAL-" : "SERIAL-") + call,
                     "dict_no_type_id", bet.get("dict_no_type_id"),
                     "bet_no", bet.get("bet_no"),
                     "bet_money", bet.get("bet_money"),
@@ -626,11 +806,41 @@ class Wa55MarketOrderClientTest {
             json(exchange, "{\"Status\":1,\"Data\":{" +
                     "\"FinalBetCount\":" + bets.size() + ",\"FinalMoney\":" + money + "," +
                     "\"BetId\":\"BATCH-BET-" + call + "\",\"SerialNo\":\"BATCH-SERIAL-" + call
-                    + "\",\"Odds\":99.6}}");
+                    + "\",\"Odds\":99.6" + (batchResponseWithSecret
+                    ? ",\"Meta\":{\"AccessToken\":\"sample-token\",\"Password\":\"sample-password\"}" : "")
+                    + "}}");
+            return;
+        }
+        if (batchResponseWithSerialOnly) {
+            json(exchange, "{\"Status\":1,\"Data\":{\"FinalBetCount\":" + bets.size()
+                    + ",\"FinalMoney\":" + money + ",\"SerialNo\":\"BATCH-SERIAL-" + call + "\"}}");
             return;
         }
         json(exchange, "{\"Status\":1,\"Data\":{" +
                 "\"FinalBetCount\":" + bets.size() + ",\"FinalMoney\":" + money + ",\"Odds\":99.6}}");
+    }
+
+    private void handleSerialLookup(HttpExchange exchange) throws IOException {
+        int call = serialLookupCalls.incrementAndGet();
+        String serial = "";
+        for (String parameter : exchange.getRequestURI().getRawQuery().split("&")) {
+            if (parameter.startsWith("serial_no=")) {
+                serial = URLDecoder.decode(parameter.substring(10), StandardCharsets.UTF_8);
+            }
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (call > serialVisibleAfterCall) {
+            for (Map<String, Object> marketRow : marketRows) {
+                if (!serial.equals(marketRow.get("serial_no"))) continue;
+                rows.add(Map.of("bet_id", marketRow.get("bet_id"),
+                        "bet_no", serialLookupWrongSelection ? "9999" : marketRow.get("bet_no"),
+                        "bet_money", marketRow.get("bet_money"),
+                        "dict_no_type_id", marketRow.get("dict_no_type_id"),
+                        "BetCount", serialLookupWrongBetCount ? 2 : 1,
+                        "AccessToken", "sample-token"));
+            }
+        }
+        json(exchange, new ObjectMapper().writeValueAsString(Map.of("Status", 1, "Data", rows)));
     }
 
     private void handleMemberBetList(HttpExchange exchange) throws IOException {

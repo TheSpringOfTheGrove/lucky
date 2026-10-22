@@ -67,7 +67,6 @@ public class LotteryMarketOrderStateService {
         return issue != null && "OPEN".equals(issue.getStatus())
                 && !issueFreshnessPolicy.isStale(issue) && !issueFreshnessPolicy.isBettingClosed(issue);
     }
-
     @Transactional(rollbackFor = Exception.class)
     public DispatchContext claimSubmit(Long userId, String orderId) {
         OrderDO order = order(userId, orderId);
@@ -164,6 +163,8 @@ public class LotteryMarketOrderStateService {
             return false;
         }
         Wa55MarketOrderClient.BetConfirmation first = confirmations.get(0);
+        String confirmedSerials = confirmations.stream().map(Wa55MarketOrderClient.BetConfirmation::serialNo)
+                .distinct().collect(Collectors.joining(","));
         LocalDateTime now = LocalDateTime.now();
         int changed = routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                 .eq(MarketRouteItemDO::getId, route.getId()).eq(MarketRouteItemDO::getUserId, userId)
@@ -178,7 +179,7 @@ public class LotteryMarketOrderStateService {
         if (changed != 1) return false;
         int orderChanged = orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                 .eq(OrderDO::getUserId, userId).in(OrderDO::getMarketStatus, CONFIRMABLE)
-                .set(OrderDO::getMarketStatus, "CONFIRMED").set(OrderDO::getMarketOrderId, first.serialNo())
+                .set(OrderDO::getMarketStatus, "CONFIRMED").set(OrderDO::getMarketOrderId, confirmedSerials)
                 .set(OrderDO::getMarketError, ""));
         if (orderChanged == 1) updateConfirmedMessage(userId, orderId);
         OrderDO current = orderChanged == 1 ? null : order(userId, orderId);
@@ -194,6 +195,10 @@ public class LotteryMarketOrderStateService {
                                              List<Wa55MarketOrderClient.AcceptedBatch> batches,
                                              LocalDateTime nextVerifyAt) {
         if (batches == null || batches.isEmpty()) return;
+        OrderDO current = order(userId, orderId);
+        java.util.LinkedHashSet<String> serials = new java.util.LinkedHashSet<>(acceptedSerialNos(current));
+        batches.stream().map(Wa55MarketOrderClient.AcceptedBatch::serialNo)
+                .filter(StrUtil::isNotBlank).forEach(serials::add);
         // A compact route represents the whole accepted batch, while historical orders still have one row per
         // selection. At this point every batch in the result was accepted, so one order-level update is correct for
         // both layouts and avoids looking up thousands of synthetic compact-route ids.
@@ -206,6 +211,7 @@ public class LotteryMarketOrderStateService {
         orderMapper.update(null, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, orderId)
                 .eq(OrderDO::getUserId, userId).in(OrderDO::getMarketStatus, "SUBMITTING", "VERIFYING")
                 .set(OrderDO::getMarketStatus, "VERIFYING")
+                .set(!serials.isEmpty(), OrderDO::getMarketOrderId, String.join(",", serials))
                 .set(OrderDO::getMarketError, "盘口已明确受理，等待下注明细标识"));
         updateBetReceiptMessage(userId, orderId, false);
     }
@@ -224,7 +230,8 @@ public class LotteryMarketOrderStateService {
                 .filter(java.util.Objects::nonNull).min(LocalDateTime::compareTo).orElse(order.getCreateTime());
         return new VerificationContext(orderId, order.getPeriod(), submittedAt,
                 new Wa55MarketOrderClient.Credentials(config.getUpstreamUrl(), config.getUpstreamAccount(),
-                        credentialService.decrypt(config.getMarketPasswordEncrypted())), requests);
+                        credentialService.decrypt(config.getMarketPasswordEncrypted())), requests,
+                acceptedSerialNos(order));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -414,7 +421,7 @@ public class LotteryMarketOrderStateService {
         return new VerificationContext(orderId, order.getPeriod(), marketRoutes.get(0).getSubmittedAt(),
                 new Wa55MarketOrderClient.Credentials(config.getUpstreamUrl(), config.getUpstreamAccount(),
                         credentialService.decrypt(config.getMarketPasswordEncrypted())),
-                marketRoutingService.expandMarketRequests(marketRoutes));
+                marketRoutingService.expandMarketRequests(marketRoutes), acceptedSerialNos(order));
     }
 
     /** Known IDs from this owner's other orders in the same period, including already cancelled orders. */
@@ -469,6 +476,8 @@ public class LotteryMarketOrderStateService {
         List<Map<String, Object>> references = counts.entrySet().stream()
                 .map(item -> Map.<String, Object>of("betId", item.getKey(), "count", item.getValue())).toList();
         Wa55MarketOrderClient.BetConfirmation first = confirmations.get(0);
+        String confirmedSerials = confirmations.stream().map(Wa55MarketOrderClient.BetConfirmation::serialNo)
+                .distinct().collect(Collectors.joining(","));
         int changed = routeItemMapper.update(null, new LambdaUpdateWrapper<MarketRouteItemDO>()
                 .eq(MarketRouteItemDO::getId, route.getId()).eq(MarketRouteItemDO::getUserId, userId)
                 .eq(MarketRouteItemDO::getStatus, "CONFIRMED")
@@ -483,7 +492,7 @@ public class LotteryMarketOrderStateService {
                 .eq(OrderDO::getUserId, userId).eq(OrderDO::getStatus, "未开奖")
                 .eq(OrderDO::getMarketStatus, "CONFIRMED")
                 .eq(OrderDO::getMarketError, ACCEPTED_WITHOUT_IDS_NOTE)
-                .set(OrderDO::getMarketError, "").set(OrderDO::getMarketOrderId, first.serialNo()));
+                .set(OrderDO::getMarketError, "").set(OrderDO::getMarketOrderId, confirmedSerials));
         if (orderChanged != 1) throw new IllegalStateException("订单状态已变化，退码编号未写入");
         return true;
     }
@@ -774,17 +783,29 @@ public class LotteryMarketOrderStateService {
         return value.length() <= 1000 ? value : value.substring(0, 1000);
     }
 
+    private List<String> acceptedSerialNos(OrderDO order) {
+        if (order == null || StrUtil.isBlank(order.getMarketOrderId())) return List.of();
+        return java.util.Arrays.stream(order.getMarketOrderId().split(","))
+                .map(String::trim).filter(StrUtil::isNotBlank).distinct().toList();
+    }
+
     public record DispatchContext(String orderId, String period, int attempts,
                                   Wa55MarketOrderClient.Credentials credentials,
                                   List<Wa55MarketOrderClient.BetRequest> requests) {}
 
     public record VerificationContext(String orderId, String period, LocalDateTime submittedAt,
                                       Wa55MarketOrderClient.Credentials credentials,
-                                      List<Wa55MarketOrderClient.BetRequest> requests) {}
+                                      List<Wa55MarketOrderClient.BetRequest> requests,
+                                      List<String> acceptedSerialNos) {
+        public VerificationContext(String orderId, String period, LocalDateTime submittedAt,
+                                   Wa55MarketOrderClient.Credentials credentials,
+                                   List<Wa55MarketOrderClient.BetRequest> requests) {
+            this(orderId, period, submittedAt, credentials, requests, List.of());
+        }
+    }
 
     public record CancelContext(String orderId, String period, boolean rejectedSubmission,
                                 Wa55MarketOrderClient.Credentials credentials,
                                 List<Wa55MarketOrderClient.CancelRequest> requests) {}
-
     public record ManualReviewResult(int routeCount, BigDecimal amount, String marketStatus) {}
 }

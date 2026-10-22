@@ -146,13 +146,15 @@ public class LotteryMarketOrderDispatchService {
             return;
         }
         try {
-            Wa55MarketOrderClient.VerificationBatch result = marketClient.verifyAccepted(
-                    context.credentials(), context.period(), context.requests(),
+            Wa55MarketOrderClient.VerificationBatch result = marketClient.verifyAcceptedPreferSerial(
+                    context.credentials(), context.period(), context.requests(), context.acceptedSerialNos(),
                     stateService.claimedMarketBetIds(userId, context.period(), orderId));
             if (result.unresolvedBatches().isEmpty()) {
-                LOGGER.info("盘口批量明细自动确认完成 user={} order={} routes={}", userId, orderId,
-                        result.confirmations().size());
-                applySuccessfulConfirmations(userId, orderId, result.confirmations());
+                boolean applied = applySuccessfulConfirmations(userId, orderId, result.confirmations());
+                LOGGER.info("盘口批量明细自动确认结果 user={} order={} strategy={} serialAttempts={} "
+                                + "matched={} expected={} applied={}",
+                        userId, orderId, result.lookupStrategy(), result.serialAttempts(),
+                        result.confirmations().size(), context.requests().size(), applied);
                 return;
             }
             if (!result.confirmations().isEmpty()) {
