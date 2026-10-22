@@ -926,7 +926,7 @@ public class LotteryBettingService {
         if (matcher.matches()) {
             return matcher.group(1) + "倒" + matcher.group(2) + "定" + matcher.group(3);
         }
-        Matcher implicitFour = Pattern.compile("^([0-9]+)倒(?![一二三四]定)(.*各\\d+(?:\\.\\d+)?)$").matcher(content);
+        Matcher implicitFour = Pattern.compile("^([0-9]+)(?:全)?倒(?![一二三四]定)(.*各\\d+(?:\\.\\d+)?)$").matcher(content);
         if (implicitFour.matches()) {
             return implicitFour.group(1) + "倒四定" + implicitFour.group(2);
         }

@@ -1053,7 +1053,10 @@ public class LotteryMarketSyncService {
             // A newer answering period must not block recovery of a previously failed local-only settlement.
             // The recovery method remains deliberately scoped to local orders, so no external-market uncertainty is
             // retried while the live period is open.
-            if (latest.getOpenedAt() != null) return findFailedHistoricalLocalCandidate(userId);
+            if (latest.getOpenedAt() != null) {
+                IssueDO failedLocal = findFailedHistoricalLocalCandidate(userId);
+                return failedLocal == null ? findRecoverableHistoricalDraw(latest.getTenantId(), userId) : failedLocal;
+            }
             candidate = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                     new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
                             .lt(IssueDO::getPeriod, latest.getPeriod())
@@ -1063,7 +1066,14 @@ public class LotteryMarketSyncService {
         if (isRecoverableStaleSettlement(candidate, staleBefore)) return candidate;
         IssueDO localRecovery = findFailedHistoricalLocalCandidate(userId);
         if (localRecovery != null) return localRecovery;
-        return findAcceptedWithoutIdentifiersHistoricalCandidate(userId);
+        IssueDO acceptedMarket = findAcceptedWithoutIdentifiersHistoricalCandidate(userId);
+        return acceptedMarket == null ? findRecoverableHistoricalDraw(latest.getTenantId(), userId) : acceptedMarket;
+    }
+
+    private IssueDO findRecoverableHistoricalDraw(Long tenantId, Long userId) {
+        if (tenantId == null) return null;
+        return DataPermissionUtils.executeIgnore(() -> issueMapper.selectRecoverableHistoricalDraw(
+                tenantId, userId));
     }
 
     /**

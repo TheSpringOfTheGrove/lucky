@@ -115,6 +115,27 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesImplicitFullReverseAsFourPositionMultiset() {
+        String command = "1133557799全倒各1";
+        List<LotteryBettingService.ParsedBet> bets = service.parse(command, odds);
+
+        assertThat(bets).hasSize(540)
+                .containsExactlyElementsOf(service.parse("1133557799倒四定各1", odds))
+                .allSatisfy(bet -> {
+                    assertThat(bet.play()).isEqualTo("四定位");
+                    assertThat(bet.amount()).isEqualByComparingTo("1");
+                    assertThat(bet.odds()).isEqualByComparingTo("9600");
+                });
+        assertThat(service.parseCommands(command, odds).get(0).content()).isEqualTo(command);
+        LotteryBettingService.ParsedBet exactFour = bets.stream()
+                .filter(bet -> "1133".equals(bet.selection())).findFirst().orElseThrow();
+        assertThat(service.isWinning(exactFour, service.deriveDraw("11330"))).isTrue();
+        assertThat(service.isWinning(exactFour, service.deriveDraw("11303"))).isFalse();
+        assertThat(service.parse("1111全倒各1", odds)).hasSize(1);
+        assertThat(service.parse("1234全倒各1", odds)).hasSize(24);
+    }
+
+    @Test
     void parsesReverseFixedAmountSlashAliasWithoutChangingBasicSlashSyntax() {
         Map<String, Integer> expectedSizes = Map.of(
                 "一", 28,

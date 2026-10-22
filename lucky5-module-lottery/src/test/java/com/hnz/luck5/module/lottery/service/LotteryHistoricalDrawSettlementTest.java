@@ -111,6 +111,40 @@ class LotteryHistoricalDrawSettlementTest {
         verify(issueMapper, never()).update(isNull(), any());
     }
 
+    @Test
+    void repairsPendingDrawWhenAnOpenedIssueWasAlreadySettled() {
+        IssueDO issue = verifiedIssue();
+        issue.setStatus("SETTLED");
+        issue.setOpenedAt(LocalDateTime.now().minusMinutes(5));
+        issue.setSettledAt(LocalDateTime.now().minusMinutes(1));
+        DrawDO pending = pendingDraw(issue);
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        when(drawMapper.selectOne(any())).thenReturn(pending);
+
+        service.publishVerifiedDrawForUser(229L, issue.getPeriod(), issue.getResult());
+
+        assertThat(pending.getStatus()).isEqualTo("已结算");
+        assertThat(pending.getSettledAt()).isEqualTo(issue.getSettledAt());
+        verify(drawMapper).updateById(pending);
+        verify(orderMapper, never()).selectCount(any());
+    }
+
+    @Test
+    void createsSettledDrawWhenAnOpenedIssueWasAlreadySettled() {
+        IssueDO issue = verifiedIssue();
+        issue.setStatus("SETTLED");
+        issue.setOpenedAt(LocalDateTime.now().minusMinutes(5));
+        issue.setSettledAt(LocalDateTime.now().minusMinutes(1));
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+
+        service.publishVerifiedDrawForUser(229L, issue.getPeriod(), issue.getResult());
+
+        ArgumentCaptor<DrawDO> saved = ArgumentCaptor.forClass(DrawDO.class);
+        verify(drawMapper).insert(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo("已结算");
+        assertThat(saved.getValue().getSettledAt()).isEqualTo(issue.getSettledAt());
+    }
+
     private IssueDO verifiedIssue() {
         IssueDO issue = new IssueDO();
         issue.setId(41L);

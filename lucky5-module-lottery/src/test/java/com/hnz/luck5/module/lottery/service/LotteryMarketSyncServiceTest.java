@@ -126,6 +126,28 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
+    void recoversVerifiedHistoricalLocalDrawAfterLiveIssueIsOpen() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueDO latest = openIssue(208L, "20261022208");
+        latest.setTenantId(1L);
+        latest.setOpenedAt(LocalDateTime.of(2026, 10, 22, 17, 15));
+        IssueDO historical = openIssue(160L, "20261013160");
+        historical.setStatus("DRAWN");
+        historical.setOpenedAt(LocalDateTime.of(2026, 10, 13, 13, 15));
+        historical.setResult("12345");
+        historical.setDrawConfirmations(2);
+        when(issueMapper.selectOne(any())).thenReturn(latest);
+        when(issueMapper.selectRecoverableHistoricalDraw(1L, 229L)).thenReturn(historical);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+
+        IssueDO candidate = ReflectionTestUtils.invokeMethod(service, "findLiveSettlementCandidate", 229L,
+                LocalDateTime.of(2026, 10, 22, 17, 14));
+
+        assertThat(candidate).isSameAs(historical);
+        verify(issueMapper).selectRecoverableHistoricalDraw(1L, 229L);
+    }
+
+    @Test
     void settlesTheImmediatePreviousDrawnIssueBehindAnUnopenedPreview() {
         IssueMapper issueMapper = mock(IssueMapper.class);
         IssueDO preview = openIssue(209L, "20260906209");

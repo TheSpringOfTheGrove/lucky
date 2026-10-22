@@ -2228,6 +2228,12 @@ public class LotteryServiceImpl implements LotteryService {
                 issue.setSettledAt(settledAt);
             }
         }
+        // A previously settled issue is authoritative even if its draw row was inserted or left
+        // pending by an older release. Do not reopen the result merely because this is an opened period.
+        boolean settledIssue = issue != null && "SETTLED".equals(issue.getStatus())
+                && issue.getSettledAt() != null && value(issue.getDrawConfirmations(), 0) >= 2
+                && Objects.equals(issue.getResult(), normalizedResult);
+        boolean settledDraw = historicalWithoutOrders || settledIssue;
         if (record == null) {
             record = new DrawDO();
             record.setUserId(userId);
@@ -2237,8 +2243,8 @@ public class LotteryServiceImpl implements LotteryService {
             record.setOddEven(draw.oddEven());
             record.setDragonTiger(draw.dragonTiger());
             record.setDrawTime(issue == null ? null : issue.getDrawTime());
-            record.setStatus(historicalWithoutOrders ? "已结算" : "待结算");
-            if (historicalWithoutOrders) record.setSettledAt(issue.getSettledAt());
+            record.setStatus(settledDraw ? "已结算" : "待结算");
+            if (settledDraw) record.setSettledAt(issue.getSettledAt());
             drawMapper.insert(record);
             return;
         }
@@ -2247,7 +2253,7 @@ public class LotteryServiceImpl implements LotteryService {
             record.setDrawTime(issue.getDrawTime());
             updateRecord = true;
         }
-        if (historicalWithoutOrders && (!"已结算".equals(record.getStatus()) || record.getSettledAt() == null)) {
+        if (settledDraw && (!"已结算".equals(record.getStatus()) || record.getSettledAt() == null)) {
             record.setStatus("已结算");
             record.setSettledAt(issue.getSettledAt() == null ? LocalDateTime.now() : issue.getSettledAt());
             updateRecord = true;
