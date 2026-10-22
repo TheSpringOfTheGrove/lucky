@@ -2204,6 +2204,30 @@ public class LotteryServiceImpl implements LotteryService {
         IssueDO issue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
                         .eq(IssueDO::getPeriod, period).last("LIMIT 1")));
+        boolean unopenedHistory = issue != null && issue.getOpenedAt() == null
+                && value(issue.getDrawConfirmations(), 0) >= 2
+                && Objects.equals(issue.getResult(), normalizedResult)
+                && ("DRAWN".equals(issue.getStatus())
+                        || ("SETTLED".equals(issue.getStatus())
+                                && (record == null || !"已结算".equals(record.getStatus()))));
+        boolean historicalWithoutOrders = unopenedHistory && Objects.equals(0L, DataPermissionUtils.executeIgnore(() ->
+                orderMapper.selectCount(new LambdaQueryWrapper<OrderDO>().eq(OrderDO::getUserId, userId)
+                        .eq(OrderDO::getPeriod, period))));
+        if (historicalWithoutOrders && "DRAWN".equals(issue.getStatus())) {
+            LocalDateTime settledAt = LocalDateTime.now();
+            int updated = DataPermissionUtils.executeIgnore(() -> issueMapper.update(null,
+                    new LambdaUpdateWrapper<IssueDO>().eq(IssueDO::getId, issue.getId())
+                            .eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "DRAWN")
+                            .isNull(IssueDO::getOpenedAt).eq(IssueDO::getResult, normalizedResult)
+                            .ge(IssueDO::getDrawConfirmations, 2)
+                            .set(IssueDO::getStatus, "SETTLED").set(IssueDO::getSettledAt, settledAt)
+                            .set(IssueDO::getError, "")));
+            historicalWithoutOrders = updated == 1;
+            if (historicalWithoutOrders) {
+                transitionIssue(issue, "SETTLED", "无订单历史开奖自动完成");
+                issue.setSettledAt(settledAt);
+            }
+        }
         if (record == null) {
             record = new DrawDO();
             record.setUserId(userId);
@@ -2213,12 +2237,22 @@ public class LotteryServiceImpl implements LotteryService {
             record.setOddEven(draw.oddEven());
             record.setDragonTiger(draw.dragonTiger());
             record.setDrawTime(issue == null ? null : issue.getDrawTime());
-            record.setStatus("待结算");
+            record.setStatus(historicalWithoutOrders ? "已结算" : "待结算");
+            if (historicalWithoutOrders) record.setSettledAt(issue.getSettledAt());
             drawMapper.insert(record);
             return;
         }
+        boolean updateRecord = false;
         if (record.getDrawTime() == null && issue != null && issue.getDrawTime() != null) {
             record.setDrawTime(issue.getDrawTime());
+            updateRecord = true;
+        }
+        if (historicalWithoutOrders && (!"已结算".equals(record.getStatus()) || record.getSettledAt() == null)) {
+            record.setStatus("已结算");
+            record.setSettledAt(issue.getSettledAt() == null ? LocalDateTime.now() : issue.getSettledAt());
+            updateRecord = true;
+        }
+        if (updateRecord) {
             drawMapper.updateById(record);
         }
     }
