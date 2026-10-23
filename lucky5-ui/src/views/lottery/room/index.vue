@@ -25,6 +25,7 @@ import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
 import logo from '@/assets/imgs/logo.png'
 import robotAvatar from '@/assets/lottery/robot-avatar.png'
 import scratchButton from '@/assets/lottery/scratch-button.jpg'
+import { useRoomChatViewport } from './useRoomChatViewport'
 
 type ChatKind = 'member' | 'other' | 'robot'
 type ChatType = 'text' | 'order' | 'amount' | 'draw'
@@ -60,11 +61,10 @@ const saving = ref(false)
 const error = ref('')
 const composer = ref('')
 const chatRef = ref<HTMLElement>()
+const chatContentRef = ref<HTMLElement>()
 const composerRef = ref<HTMLTextAreaElement>()
 const composerFormRef = ref<HTMLFormElement>()
-const composerHeight = ref(49)
 const composerPanelRef = ref<HTMLElement>()
-let composerResizeObserver: ResizeObserver | undefined
 const bottomPanel = ref<'keyboard' | 'commands' | ''>('')
 const quickPickerVisible = ref(false)
 const localMessages = ref<ChatItem[]>([])
@@ -87,6 +87,19 @@ const betReplyFastPollUntilMs = ref(0)
 const trackedBetMessageIds = ref<number[]>([])
 const sessionStartedAt = ref(new Date().toISOString())
 const autoFollowMessages = ref(true)
+const {
+  composerHeight,
+  viewportHeight,
+  viewportStyle,
+  scrollToBottom,
+  handleScroll: updateChatScroll
+} = useRoomChatViewport(
+  chatRef,
+  chatContentRef,
+  composerFormRef,
+  autoFollowMessages,
+  () => clearUnreadMessages()
+)
 const unreadMessageKeys = ref<string[]>([])
 const scratchVisible = ref(false)
 const scratchRemaining = ref(0)
@@ -743,19 +756,12 @@ const messageTime = (value: string) =>
     ? dayjs(value).format('HH:mm')
     : dayjs(value).format('MM-DD HH:mm')
 const bubbleTime = (value: string) => dayjs(value).format('HH:mm:ss')
-const scrollToBottom = async (behavior: ScrollBehavior = 'auto') => {
-  await nextTick()
-  chatRef.value?.scrollTo({ top: chatRef.value.scrollHeight, behavior })
-  autoFollowMessages.value = true
-  clearUnreadMessages()
-}
-
 const handleChatScroll = () => {
+  updateChatScroll()
   const stream = chatRef.value
-  if (!stream) return
-  autoFollowMessages.value = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= 80
-  if (stream.scrollTop <= 48) void loadOlderRoomMessages()
-  if (autoFollowMessages.value) clearUnreadMessages()
+  if (stream && !autoFollowMessages.value && stream.scrollTop <= 48) {
+    void loadOlderRoomMessages()
+  }
 }
 
 const loadOlderRoomMessages = async () => {
@@ -763,9 +769,6 @@ const loadOlderRoomMessages = async () => {
   const oldestMessage = visibleRoomMessages.value[0]
   if (!oldestMessage) return
 
-  const stream = chatRef.value
-  const previousHeight = stream?.scrollHeight || 0
-  const previousTop = stream?.scrollTop || 0
   loadingOlderMessages.value = true
   try {
     const result = await getRoomMessageHistoryApi(credential.value, oldestMessage.id)
@@ -773,10 +776,15 @@ const loadOlderRoomMessages = async () => {
       [...historicalMessages.value, ...(session.value?.messages || [])].map((message) => message.id)
     )
     const olderMessages = result.messages.filter((message) => !existingIds.has(message.id))
+    const stream = chatRef.value
+    const previousHeight = stream?.scrollHeight || 0
+    const previousTop = stream?.scrollTop || 0
     historicalMessages.value = [...olderMessages, ...historicalMessages.value]
     hasOlderMessages.value = Boolean(result.hasMore) && olderMessages.length > 0
     await nextTick()
-    if (stream) stream.scrollTop = previousTop + stream.scrollHeight - previousHeight
+    if (stream && !autoFollowMessages.value) {
+      stream.scrollTop = previousTop + stream.scrollHeight - previousHeight
+    }
   } catch (reason: any) {
     ElMessage.error(reason?.message || '历史消息加载失败')
   } finally {
@@ -989,21 +997,21 @@ const updateAutoScratch = (value: boolean) => {
 
 const clampScratchLauncherTop = (value: number) => {
   const minimum = 12
-  const maximum = Math.max(minimum, window.innerHeight - 66 - 92)
+  const maximum = Math.max(minimum, viewportHeight.value - composerHeight.value - 50 - 12)
   return Math.min(Math.max(minimum, value), maximum)
 }
 
 const restoreScratchLauncherTop = () => {
   const storedValue = localStorage.getItem('lucky5-scratch-launcher-top')
   const stored = storedValue === null ? Number.NaN : Number(storedValue)
-  const fallback = window.innerHeight * 0.4 - 20
+  const fallback = viewportHeight.value * 0.4 - 20
   scratchLauncherTop.value = clampScratchLauncherTop(Number.isFinite(stored) ? stored : fallback)
 }
 
 const beginScratchLauncherDrag = (clientY: number) => {
   scratchLauncherDragActive = true
   scratchLauncherStartY = clientY
-  scratchLauncherStartTop = scratchLauncherTop.value ?? window.innerHeight * 0.4 - 20
+  scratchLauncherStartTop = scratchLauncherTop.value ?? viewportHeight.value * 0.4 - 20
   scratchLauncherDragging.value = false
 }
 
@@ -1065,6 +1073,12 @@ const handleRoomResize = () => {
   resizeComposer()
 }
 
+watch([viewportHeight, composerHeight], () => {
+  if (scratchLauncherTop.value !== null) {
+    scratchLauncherTop.value = clampScratchLauncherTop(scratchLauncherTop.value)
+  }
+})
+
 const resizeComposer = () => {
   const textarea = composerRef.value
   if (!textarea) return
@@ -1121,7 +1135,7 @@ const submitChat = async () => {
     optimisticMessage,
     ...(optimisticRobotMessage ? [optimisticRobotMessage] : [])
   ]
-  await scrollToBottom('smooth')
+  await scrollToBottom()
   try {
     const result = await sendRoomMessageApi(credential.value, {
       period: session.value.issue.status === 'OPEN' ? session.value.suggestedPeriod : undefined,
@@ -1182,8 +1196,7 @@ const submitChat = async () => {
   } finally {
     saving.value = false
     if (!optimisticMessage.serverMessageId) await loadSession(true)
-    await scrollToBottom('smooth')
-    composerRef.value?.focus()
+    if (autoFollowMessages.value) await scrollToBottom()
   }
 }
 
@@ -1209,7 +1222,7 @@ const togglePanel = async (panel: 'keyboard' | 'commands') => {
   bottomPanel.value = bottomPanel.value === panel ? '' : panel
   if (bottomPanel.value === 'keyboard') composerRef.value?.blur()
   if (bottomPanel.value === 'commands') await loadSession(true)
-  if (bottomPanel.value === '') composerRef.value?.focus()
+  if (bottomPanel.value === '') composerRef.value?.focus({ preventScroll: true })
   void scrollToBottom()
 }
 
@@ -1225,7 +1238,7 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
 const useHistory = (content: string) => {
   composer.value = content
   bottomPanel.value = ''
-  composerRef.value?.focus()
+  composerRef.value?.focus({ preventScroll: true })
 }
 
 let longPressTimer: number | undefined
@@ -1239,7 +1252,7 @@ const beginMessageLongPress = (callback: () => void) => {
   longPressTimer = window.setTimeout(() => {
     suppressMessageClickUntil = Date.now() + 400
     callback()
-    composerRef.value?.focus()
+    composerRef.value?.focus({ preventScroll: true })
   }, 500)
 }
 const appendMention = (message: ChatItem) => {
@@ -1345,7 +1358,7 @@ watch(
     bettingCutoffAtMs.value = null
     await loadSession()
     await scrollToBottom()
-    composerRef.value?.focus()
+    composerRef.value?.focus({ preventScroll: true })
   }
 )
 
@@ -1358,19 +1371,7 @@ onMounted(async () => {
   await scrollToBottom()
   await nextTick()
   resizeComposer()
-  if (composerFormRef.value) {
-    composerResizeObserver = new ResizeObserver(() => {
-      const height = Math.ceil(composerFormRef.value?.getBoundingClientRect().height || 49)
-      if (height === composerHeight.value) return
-      const shouldFollow = autoFollowMessages.value
-      composerHeight.value = height
-      if (shouldFollow) {
-        void nextTick(() => chatRef.value?.scrollTo({ top: chatRef.value.scrollHeight }))
-      }
-    })
-    composerResizeObserver.observe(composerFormRef.value)
-  }
-  composerRef.value?.focus()
+  composerRef.value?.focus({ preventScroll: true })
   scheduleSessionRefresh()
   scheduleDrawStateRefresh()
   countdownTimer = window.setInterval(() => {
@@ -1389,7 +1390,6 @@ onBeforeUnmount(() => {
   sessionRequestSequence++
   if (betReplyTimer) window.clearTimeout(betReplyTimer)
   if (cancelReceiptTimer) window.clearTimeout(cancelReceiptTimer)
-  composerResizeObserver?.disconnect()
   window.removeEventListener('resize', handleRoomResize)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   window.removeEventListener('mousemove', moveScratchLauncherByMouse)
@@ -1401,7 +1401,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="chat-room" :style="{ '--composer-height': `${composerHeight}px` }">
+  <div class="chat-room" :style="viewportStyle">
     <div v-if="loading" class="room-state-page">
       <span class="room-loader"></span>
     </div>
@@ -1441,6 +1441,7 @@ onBeforeUnmount(() => {
       />
 
       <main ref="chatRef" class="chat-stream" aria-live="polite" @scroll.passive="handleChatScroll">
+        <div ref="chatContentRef" class="chat-content">
         <article
           v-for="message in chatMessages"
           :key="message.id"
@@ -1539,6 +1540,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </article>
+        </div>
       </main>
 
       <button
@@ -1546,7 +1548,7 @@ onBeforeUnmount(() => {
         class="new-message-tip"
         type="button"
         :aria-label="`回到最新消息，${unreadMessageKeys.length} 条未读`"
-        @click="scrollToBottom('smooth')"
+        @click="scrollToBottom()"
       >
         <span aria-hidden="true">▼</span>{{ unreadMessageKeys.length }}条新消息
       </button>
@@ -1577,6 +1579,7 @@ onBeforeUnmount(() => {
             class="send-button"
             type="button"
             :disabled="saving || !composer.trim()"
+            @pointerdown.prevent
             @click="submitChat"
           >
             {{ saving ? '处理中' : '发送' }}
@@ -1650,7 +1653,7 @@ onBeforeUnmount(() => {
   color: #333;
   color-scheme: light;
   background: #f5f5f7;
-  inset: 0;
+  inset: 0 0 auto;
 }
 
 .room-overview {
@@ -2041,13 +2044,18 @@ onBeforeUnmount(() => {
   position: absolute;
   padding: 8px 0 24px;
   overflow: hidden auto;
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
   box-sizing: border-box;
   inset: calc(var(--room-overview-height) + env(safe-area-inset-top)) 0 var(--composer-height);
-  -webkit-overflow-scrolling: touch;
+}
+
+.chat-content {
+  display: flow-root;
 }
 
 .new-message-tip {
-  position: fixed;
+  position: absolute;
   right: 30px;
   bottom: calc(var(--composer-height) + 6px);
   z-index: 7;
@@ -2318,7 +2326,7 @@ onBeforeUnmount(() => {
 }
 
 .chat-composer {
-  position: fixed;
+  position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
@@ -2628,7 +2636,7 @@ onBeforeUnmount(() => {
 }
 
 .scratch-launcher {
-  position: fixed;
+  position: absolute;
   z-index: 8;
   right: 0;
   width: 50px;
