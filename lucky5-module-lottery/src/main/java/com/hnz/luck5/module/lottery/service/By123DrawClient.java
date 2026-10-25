@@ -20,6 +20,7 @@ import java.util.List;
 public class By123DrawClient {
 
     static final URI HISTORY_URI = URI.create("https://w1.by123123b.com/History/Query?lotteryCode=614&size=5");
+    static final URI RECOVERY_HISTORY_URI = URI.create("https://w1.by123123b.com/History/Query?lotteryCode=614&size=500");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Resource private ObjectMapper objectMapper;
@@ -27,7 +28,16 @@ public class By123DrawClient {
             .connectTimeout(Duration.ofSeconds(2)).followRedirects(HttpClient.Redirect.NORMAL).build();
 
     public List<Wa55MarketClient.Draw> readDraws() {
-        HttpRequest request = HttpRequest.newBuilder(HISTORY_URI).timeout(Duration.ofSeconds(3))
+        return readDraws(HISTORY_URI);
+    }
+
+    /** Wider history is used only when an old missing result blocks the live room. */
+    public List<Wa55MarketClient.Draw> readRecoveryDraws() {
+        return readDraws(RECOVERY_HISTORY_URI);
+    }
+
+    private List<Wa55MarketClient.Draw> readDraws(URI uri) {
+        HttpRequest request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3))
                 .header("Accept", "application/json")
                 .header("User-Agent", "Mozilla/5.0")
                 .GET().build();

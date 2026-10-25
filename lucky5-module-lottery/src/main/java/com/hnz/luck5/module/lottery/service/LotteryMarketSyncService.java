@@ -228,6 +228,16 @@ public class LotteryMarketSyncService {
                     issueMapper.selectList(new LambdaQueryWrapper<IssueDO>()
                             .eq(IssueDO::getStatus, "OPEN").isNull(IssueDO::getOpenedAt)
                             .orderByDesc(IssueDO::getPeriod).last("LIMIT 100"))));
+            if (waiting.isEmpty()) return;
+            List<Wa55MarketClient.Draw> recoveryHistory;
+            try {
+                // The normal five-row feed is deliberately small. Only blocked rooms need a wider read.
+                recoveryHistory = by123DrawClient.readRecoveryDraws();
+            } catch (RuntimeException ex) {
+                LOGGER.warn("历史开奖回查不可用: {}", rootMessage(ex));
+                recoveryHistory = List.of();
+            }
+            final List<Wa55MarketClient.Draw> historicalDraws = recoveryHistory;
             Set<String> visitedOwners = new LinkedHashSet<>();
             for (IssueDO preview : waiting) {
                 String ownerKey = preview.getTenantId() + ":" + preview.getUserId();
@@ -245,11 +255,25 @@ public class LotteryMarketSyncService {
                                         .eq(IssueDO::getStatus, "SETTLED")
                                         .ge(IssueDO::getDrawConfirmations, 1)));
                         IssueDO reference = trustedSharedReference(references,
-                                blocker.getDrawFirstSeenAt() == null ? null : blocker.getSource());
-                        if (reference == null || !blocker.getPeriod().equals(reference.getPeriod())) return null;
-                        Wa55MarketClient.Draw draw = new Wa55MarketClient.Draw(reference.getPeriod(),
-                                reference.getResult(), reference.getDrawTime(), reference.getDrawUpdatedAt(),
-                                reference.getRawSnapshot());
+                                blocker.getDrawFirstSeenAt() != null
+                                        && drawVerificationService.isTrusted(blocker.getResult())
+                                        ? blocker.getSource() : null);
+                        Wa55MarketClient.Draw draw;
+                        String source;
+                        if (reference != null && blocker.getPeriod().equals(reference.getPeriod())) {
+                            draw = new Wa55MarketClient.Draw(reference.getPeriod(), reference.getResult(),
+                                    reference.getDrawTime(), reference.getDrawUpdatedAt(), reference.getRawSnapshot());
+                            source = reference.getSource();
+                        } else {
+                            Wa55MarketClient.Draw historical = matchingRecoveryDraw(historicalDraws,
+                                    blocker.getPeriod());
+                            if (historical == null) return null;
+                            List<Wa55MarketClient.Draw> accepted = acceptedDraws(BY123_DRAW_SOURCE,
+                                    List.of(historical));
+                            if (accepted.isEmpty()) return null;
+                            draw = accepted.get(0);
+                            source = BY123_DRAW_SOURCE;
+                        }
                         if (blocker.getResult() != null && !blocker.getResult().isBlank()
                                 && !blocker.getResult().equals(draw.result())) {
                             LOGGER.error("历史开奖补偿发现号码冲突 tenant={} user={} period={}",
@@ -260,7 +284,7 @@ public class LotteryMarketSyncService {
                         transactionTemplate.execute(status -> {
                             IssueDO current = findIssue(preview.getUserId(), blocker.getPeriod());
                             if (!isMissingDrawBlocker(current, LocalDateTime.now())) return null;
-                            upsertDrawIssue(preview.getUserId(), draw, reference.getSource(),
+                            upsertDrawIssue(preview.getUserId(), draw, source,
                                     LocalDateTime.now(), newlyDrawn);
                             return null;
                         });
@@ -286,6 +310,19 @@ public class LotteryMarketSyncService {
                 || !Set.of("CLOSED", "DRAW_PENDING").contains(issue.getStatus())) return false;
         LocalDateTime expectedDraw = issue.getDrawTime() == null ? issue.getClosedAt() : issue.getDrawTime();
         return expectedDraw != null && expectedDraw.isBefore(now.minusSeconds(30));
+    }
+
+    private Wa55MarketClient.Draw matchingRecoveryDraw(List<Wa55MarketClient.Draw> history, String period) {
+        Wa55MarketClient.Draw matching = null;
+        for (Wa55MarketClient.Draw draw : history) {
+            if (!period.equals(draw.period()) || !drawVerificationService.isTrusted(draw.result())) continue;
+            if (matching != null && !matching.result().equals(draw.result())) {
+                LOGGER.error("历史开奖回查号码冲突 period={}", period);
+                return null;
+            }
+            matching = draw;
+        }
+        return matching;
     }
 
     private IssueDO trustedSharedReference(List<IssueDO> references, String requiredSource) {
@@ -984,7 +1021,9 @@ public class LotteryMarketSyncService {
                                     Set<String> newlyDrawnPeriods) {
         if (!draw.period().matches("\\d{8,20}")) return false;
         IssueDO issue = findIssue(userId, draw.period());
-        if (issue != null && issue.getDrawFirstSeenAt() != null && !source.equals(issue.getSource())) return false;
+        if (issue != null && issue.getDrawFirstSeenAt() != null
+                && drawVerificationService.isTrusted(issue.getResult())
+                && !source.equals(issue.getSource())) return false;
         if (issue != null
                 && List.of("DRAWN", "SETTLING", "SETTLED").contains(issue.getStatus())
                 && Objects.equals(issue.getResult(), draw.result())

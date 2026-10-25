@@ -608,6 +608,7 @@ class LotteryMarketSyncServiceTest {
     @Test
     void doesNotReplaceAnExistingCandidateFromAnotherSource() {
         IssueMapper issueMapper = mock(IssueMapper.class);
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
         IssueDO issue = new IssueDO();
         issue.setPeriod("20261014172");
         issue.setStatus("DRAW_PENDING");
@@ -622,6 +623,35 @@ class LotteryMarketSyncServiceTest {
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(service, "upsertDrawIssue", 229L, draw,
                 "系统开奖", LocalDateTime.of(2026, 10, 14, 14, 20, 18))).isFalse();
         verify(issueMapper, never()).updateById(any(IssueDO.class));
+    }
+
+    @Test
+    void replacesAnEmptyHistoricalCandidateWithATrustedSharedResult() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        LotteryService lotteryService = mock(LotteryService.class);
+        IssueDO issue = new IssueDO();
+        issue.setUserId(234L);
+        issue.setPeriod("20261015167");
+        issue.setStatus("CLOSED");
+        issue.setResult("");
+        issue.setSource("系统开奖");
+        issue.setDrawConfirmations(0);
+        issue.setDrawFirstSeenAt(LocalDateTime.of(2026, 10, 15, 13, 56, 23));
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
+        ReflectionTestUtils.setField(service, "lotteryService", lotteryService);
+
+        ReflectionTestUtils.invokeMethod(service, "upsertDrawIssue", 234L,
+                new Wa55MarketClient.Draw(issue.getPeriod(), "71018", issue.getDrawFirstSeenAt(),
+                        issue.getDrawFirstSeenAt(), "{}"), "by123开奖", LocalDateTime.now());
+
+        assertThat(issue.getStatus()).isEqualTo("DRAWN");
+        assertThat(issue.getResult()).isEqualTo("71018");
+        assertThat(issue.getSource()).isEqualTo("by123开奖");
+        verify(issueMapper).updateById(issue);
     }
 
     @Test
@@ -673,6 +703,22 @@ class LotteryMarketSyncServiceTest {
         market.setDrawConfirmations(0);
         assertThat((IssueDO) ReflectionTestUtils.invokeMethod(service, "trustedSharedReference",
                 List.of(market, by123), null)).isSameAs(by123);
+    }
+
+    @Test
+    void recoveryHistoryOnlyUsesTheExactPeriodAndRejectsConflictingResults() {
+        ReflectionTestUtils.setField(service, "drawVerificationService", new LotteryDrawVerificationService());
+        Wa55MarketClient.Draw target = new Wa55MarketClient.Draw("20261024017", "58771", null, null, "{}");
+        Wa55MarketClient.Draw another = new Wa55MarketClient.Draw("20261024117", "12345", null, null, "{}");
+
+        assertThat((Wa55MarketClient.Draw) ReflectionTestUtils.invokeMethod(service,
+                "matchingRecoveryDraw", List.of(another, target), "20261024017")).isSameAs(target);
+        assertThat((Wa55MarketClient.Draw) ReflectionTestUtils.invokeMethod(service,
+                "matchingRecoveryDraw", List.of(another), "20261024017")).isNull();
+        assertThat((Wa55MarketClient.Draw) ReflectionTestUtils.invokeMethod(service,
+                "matchingRecoveryDraw", List.of(target,
+                        new Wa55MarketClient.Draw("20261024017", "58772", null, null, "{}")),
+                "20261024017")).isNull();
     }
 
     private static IssueDO verifiedIssue(String source, String result) {

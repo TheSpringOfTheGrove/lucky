@@ -372,7 +372,7 @@ public class LotteryBettingService {
 
     private List<String> completeSumSpace(String expression) {
         Set<Integer> positions = new LinkedHashSet<>();
-        Matcher sum = Pattern.compile("((?:头|千|百|十|尾|个){2,4})合").matcher(expression);
+        Matcher sum = Pattern.compile("((?:头|千|百|十|尾|个){1,4})合").matcher(expression);
         while (sum.find()) {
             positions.addAll(positionIndexes(sum.group(1)));
         }
@@ -582,7 +582,7 @@ public class LotteryBettingService {
             }));
         }
 
-        Matcher sumMatcher = Pattern.compile("(取|除)?((?:头|千|百|十|尾|个|五){2,5})合([0-9]+)").matcher(expression);
+        Matcher sumMatcher = Pattern.compile("(取|除)?((?:头|千|百|十|尾|个|五){1,5})合([0-9]+)").matcher(expression);
         while (sumMatcher.find()) {
             boolean take = !"除".equals(sumMatcher.group(1));
             Set<Integer> positions = positionIndexes(sumMatcher.group(2));
@@ -636,11 +636,15 @@ public class LotteryBettingService {
             });
         }
 
-        Matcher opposite = Pattern.compile("(取|除)对数([0-9]+)").matcher(expression);
+        Matcher opposite = Pattern.compile("(取|除)对数([0-9]*)").matcher(expression);
         while (opposite.find()) {
             boolean take = "取".equals(opposite.group(1));
-            Set<Character> required = chars(opposite.group(2));
-            result.removeIf(value -> containsAllDigits(value, required) != take);
+            if (opposite.group(2).isEmpty()) {
+                result.removeIf(value -> hasOppositePair(value) != take);
+            } else {
+                Set<Character> required = chars(opposite.group(2));
+                result.removeIf(value -> containsAllDigits(value, required) != take);
+            }
         }
 
         Matcher attributes = Pattern.compile("(取|除)([大小单双X]{2,5})(?![大小单双重])").matcher(expression);
@@ -757,6 +761,18 @@ public class LotteryBettingService {
         return actual.containsAll(required);
     }
 
+    private boolean hasOppositePair(String value) {
+        for (int first = 0; first < value.length(); first++) {
+            char left = value.charAt(first);
+            if (left == 'X') continue;
+            for (int second = first + 1; second < value.length(); second++) {
+                char right = value.charAt(second);
+                if (right != 'X' && Math.abs(left - right) == 5) return true;
+            }
+        }
+        return false;
+    }
+
     private boolean matchesAttributePattern(String value, String pattern) {
         if (pattern.length() > value.length()) return false;
         for (int index = 0; index < pattern.length(); index++) {
@@ -858,7 +874,7 @@ public class LotteryBettingService {
         int size = extractPositionGroups(expression).size();
         if (size >= 1 && size <= 4) return size;
         Set<Integer> positions = new HashSet<>();
-        Matcher sums = Pattern.compile("((?:头|千|百|十|尾|个){2,4})合").matcher(expression);
+        Matcher sums = Pattern.compile("((?:头|千|百|十|尾|个){1,4})合").matcher(expression);
         while (sums.find()) {
             positions.addAll(positionIndexes(sums.group(1)));
         }

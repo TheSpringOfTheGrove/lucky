@@ -209,6 +209,38 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void appliesSinglePositionSumAndBareOppositePairFilters() {
+        String command = "四定取千百个合079654123千百十个合078965421"
+                + "千十个合078965421个合079654123两数合246含0378取对数各0.1";
+        List<LotteryBettingService.ParsedBet> bets = service.parse(command, odds);
+
+        assertThat(bets).hasSize(2_465)
+                .allSatisfy(bet -> {
+                    assertThat(bet.play()).isEqualTo("四定位");
+                    assertThat(bet.amount()).isEqualByComparingTo("0.1");
+                    assertThat(bet.selection().charAt(3)).isNotEqualTo('8');
+                    assertThat(hasOppositePair(bet.selection())).isTrue();
+                });
+        assertThat(service.parse("四定取个合079654123各1", odds)).hasSize(9_000);
+        assertThat(service.parse("取个合079654123各1", odds)).hasSize(9);
+        assertThat(service.parse("四定取对数各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("0005").doesNotContain("0000", "0123");
+        assertThat(service.parse("四定除对数各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("0000", "0123").doesNotContain("0005");
+    }
+
+    private boolean hasOppositePair(String value) {
+        for (int first = 0; first < value.length(); first++) {
+            for (int second = first + 1; second < value.length(); second++) {
+                if (Math.abs(value.charAt(first) - value.charAt(second)) == 5) return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
     void excludesFourSmallNumbersInCompoundPositionCommand() {
         String command = "千523167890百128456790十163245890个124567390"
                 + "千百十合241567890取千百十个合234567890两数合2846三数合124560"
