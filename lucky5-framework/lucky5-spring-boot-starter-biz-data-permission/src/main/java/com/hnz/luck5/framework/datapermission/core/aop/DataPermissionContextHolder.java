@@ -17,7 +17,18 @@ public class DataPermissionContextHolder {
      * 使用 List 的原因，可能存在方法的嵌套调用
      */
     private static final ThreadLocal<LinkedList<DataPermission>> DATA_PERMISSIONS =
-            TransmittableThreadLocal.withInitial(LinkedList::new);
+            new TransmittableThreadLocal<>() {
+                @Override
+                protected LinkedList<DataPermission> initialValue() {
+                    return new LinkedList<>();
+                }
+
+                @Override
+                public LinkedList<DataPermission> copy(LinkedList<DataPermission> parentValue) {
+                    // Tasks may run in parallel: sharing the mutable stack makes one task pop another's entry.
+                    return parentValue == null ? new LinkedList<>() : new LinkedList<>(parentValue);
+                }
+            };
 
     /**
      * 获得当前的 DataPermission 注解
