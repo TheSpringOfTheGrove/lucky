@@ -18,6 +18,35 @@ export const resolveDragonTiger = (numbers: string[], storedResult = '') => {
   return first === last ? '和' : first > last ? '龙' : '虎'
 }
 
+export const roomAmountRecordPresentation = (record: {
+  type: string
+  status: string
+  remark: string
+  amount: number
+  recordSource?: string
+}) => {
+  const isRebate = record.type === '返水' || record.recordSource === 'REBATE'
+  const isTransfer = !isRebate && (record.type === '上分' || record.type === '下分')
+  const isMemberRequest = isTransfer && record.remark !== '后台手动操作'
+  return {
+    relatedCommandType: isTransfer
+      ? record.type === '上分'
+        ? 'DEPOSIT_REQUEST'
+        : 'WITHDRAW_REQUEST'
+      : isRebate
+        ? 'FLOW_REBATE'
+        : '',
+    memberCommand: isMemberRequest
+      ? `${record.type === '上分' ? '上' : '下'}${money(record.amount)}`
+      : '',
+    robotReply: isRebate
+      ? record.status === '已通过'
+        ? '返水已入账'
+        : `返水${record.status}`
+      : `${record.type}${isMemberRequest ? '申请' : ''}${record.status}`
+  }
+}
+
 export const roomReplyTemplates = {
   welcome(roomName: string, memberName: string, balance: number, period: string) {
     return `${roomName}\n会员：${memberName}\n可用积分：${money(balance)}\n当前期号：${period || '等待开盘'}`

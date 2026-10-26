@@ -18,7 +18,7 @@ import {
 } from '@/api/lottery/room'
 import ScratchCard from './components/ScratchCard.vue'
 import QuickPickDialog from './components/QuickPickDialog.vue'
-import { cancelFailureText, resolveDragonTiger, roomReplyTemplates } from './replyTemplates'
+import { cancelFailureText, resolveDragonTiger, roomAmountRecordPresentation, roomReplyTemplates } from './replyTemplates'
 import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
 import { receiptAction as parseReceiptAction, receiptText } from '../utils/receipt'
 import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
@@ -541,20 +541,22 @@ const chatMessages = computed<ChatItem[]>(() => {
       amountRecord.recordSource === 'AUTO_PROXY' ||
       /自动托虚拟积分不足|自动托上下分自动审核/.test(amountRecord.remark || '')
     ) continue
-    const isMemberRequest = amountRecord.remark !== '后台手动操作'
-    const commandType = amountRecord.type === '上分' ? 'DEPOSIT_REQUEST' : 'WITHDRAW_REQUEST'
+    const presentation = roomAmountRecordPresentation(amountRecord)
     const relatedMessage = session.value.messages.find(
       (message) =>
-        message.commandType === commandType &&
-        Number(message.content.replace(/[^\d.]/g, '')) === Number(amountRecord.amount) &&
+        Boolean(presentation.relatedCommandType) &&
+        message.own !== false &&
+        message.commandType === presentation.relatedCommandType &&
+        (presentation.relatedCommandType === 'FLOW_REBATE' ||
+          Number(message.content.replace(/[^\d.]/g, '')) === Number(amountRecord.amount)) &&
         Math.abs(dayjs(message.createdAt).diff(dayjs(amountRecord.createdAt), 'second')) <= 10
     )
-    if (isMemberRequest && !relatedMessage) {
+    if (presentation.memberCommand && !relatedMessage) {
       messages.push({
         id: `member-amount-${amountRecord.id}`,
         kind: 'member',
         type: 'text',
-        content: `${amountRecord.type === '上分' ? '上' : '下'}${money(amountRecord.amount)}`,
+        content: presentation.memberCommand,
         createdAt: amountRecord.createdAt,
         displayTimeAt: amountRecord.createdAt
       })
@@ -564,7 +566,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         id: `robot-amount-${amountRecord.id}`,
         kind: 'robot',
         type: 'amount',
-        content: `${amountRecord.type}${isMemberRequest ? '申请' : ''}${amountRecord.status}`,
+        content: presentation.robotReply,
         createdAt:
           amountRecord.auditedAt ||
           dayjs(amountRecord.createdAt).add(1, 'millisecond').toISOString(),
