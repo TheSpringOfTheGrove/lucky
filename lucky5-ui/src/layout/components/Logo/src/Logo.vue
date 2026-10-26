@@ -92,6 +92,7 @@ watch(
         class="h-[calc(var(--logo-height)-10px)] w-[calc(var(--logo-height)-10px)]"
         src="@/assets/imgs/logo.png"
       />
+      <span class="luck-logo__mini" aria-label="首页">💪</span>
       <div
         v-if="show"
         :class="[

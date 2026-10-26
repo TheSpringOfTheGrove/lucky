@@ -54,6 +54,7 @@ export const useRenderLayout = () => {
                 'absolute top-0 left-0 z-10 bg-[var(--top-header-bg-color)] lucky-admin-logo-shell',
                 {
                   '!pl-0': mobile.value && collapse.value,
+                  'lucky-admin-logo-shell--collapsed': collapse.value && !mobile.value,
                   'w-[var(--left-menu-min-width)]': appStore.getCollapse,
                   'w-[var(--left-menu-max-width)]': !appStore.getCollapse
                 }
@@ -79,7 +80,8 @@ export const useRenderLayout = () => {
             'lucky-admin-sidebar-shell absolute top-[var(--top-tool-height)] left-0 h-[calc(100%-var(--top-tool-height))] layout-border__right',
             {
               '!fixed z-3000': mobile.value,
-              'lucky-admin-sidebar-shell--open': mobile.value && !collapse.value
+              'lucky-admin-sidebar-shell--open': mobile.value && !collapse.value,
+              'lucky-admin-sidebar-shell--collapsed': collapse.value
             }
           ]}
         >

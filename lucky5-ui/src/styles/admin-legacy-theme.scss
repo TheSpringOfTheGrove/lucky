@@ -33,7 +33,7 @@ body.lucky-admin-theme {
   --el-text-color-regular: #444;
   --el-text-color-secondary: #777;
   --left-menu-max-width: 230px;
-  --left-menu-min-width: 58px;
+  --left-menu-min-width: 50px;
   --left-menu-bg-color: #222d32;
   --left-menu-bg-light-color: #1e282c;
   --left-menu-bg-active-color: #1e282c;
@@ -58,7 +58,7 @@ body.lucky-admin-theme {
 /* 框架组件从 #app 读取布局变量；同时声明避免被通用主题的 200px 覆盖。 */
 body.lucky-admin-theme #app {
   --left-menu-max-width: 230px;
-  --left-menu-min-width: 58px;
+  --left-menu-min-width: 50px;
   --top-header-bg-color: #5eb8ba;
   --app-content-padding: 0px;
   --app-content-bg-color: #ecf0f5;
@@ -145,6 +145,22 @@ body.lucky-admin-theme .luck-layout .luck-logo > img {
   display: none;
 }
 
+body.lucky-admin-theme .luck-layout .luck-logo__mini {
+  display: none;
+}
+
+body.lucky-admin-theme .luck-layout .lucky-admin-logo-shell--collapsed .luck-logo {
+  justify-content: center;
+  padding-left: 0;
+  background: #4fabae;
+}
+
+body.lucky-admin-theme .luck-layout .lucky-admin-logo-shell--collapsed .luck-logo__mini {
+  display: block;
+  font-size: 20px;
+  line-height: 50px;
+}
+
 body.lucky-admin-theme .luck-layout .luck-logo > div {
   display: flex;
   margin-left: 0;
@@ -195,9 +211,18 @@ body.lucky-admin-theme .luck-layout .lucky-admin-nav-title {
   font-size: 12px;
 }
 
+body.lucky-admin-theme .luck-layout .lucky-admin-sidebar-shell--collapsed .lucky-admin-nav-title {
+  display: none;
+}
+
 body.lucky-admin-theme .luck-layout .lucky-admin-menu {
   height: calc(100% - 37px) !important;
   margin-top: 37px;
+}
+
+body.lucky-admin-theme .luck-layout .lucky-admin-sidebar-shell--collapsed .lucky-admin-menu {
+  height: 100% !important;
+  margin-top: 0;
 }
 
 body.lucky-admin-theme .luck-layout .luck-menu--menu .el-menu-item,

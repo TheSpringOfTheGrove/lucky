@@ -31,15 +31,17 @@ watch(
   () => width.value,
   (width: number) => {
     if (width < 768) {
-      !appStore.getMobile ? appStore.setMobile(true) : undefined
+      if (!appStore.getMobile) {
+        appStore.setMobile(true)
+        appStore.setCollapse(true)
+      }
       setCssVar('--left-menu-min-width', '0')
-      appStore.setCollapse(true)
       normalizeLayout(appStore.getLayout) !== 'sidebar-nav'
         ? appStore.setLayout('sidebar-nav')
         : undefined
     } else {
       appStore.getMobile ? appStore.setMobile(false) : undefined
-      setCssVar('--left-menu-min-width', '64px')
+      setCssVar('--left-menu-min-width', '50px')
     }
   },
   {

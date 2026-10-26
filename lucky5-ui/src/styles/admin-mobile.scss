@@ -182,7 +182,6 @@ body.lucky-admin-theme .dashboard-breadcrumb {
       left: 0 !important;
       width: 100% !important;
       height: auto !important;
-      transition: transform 0.2s;
       > .el-scrollbar {
         height: auto !important;
         overflow: visible;
@@ -195,12 +194,14 @@ body.lucky-admin-theme .dashboard-breadcrumb {
         display: none;
       }
     }
-    .lucky-admin-content-shell--drawer-open {
-      transform: translateX(230px);
-    }
     .luck-layout .lucky-admin-view {
       min-height: calc(100vh - 100px) !important;
     }
+  }
+}
+
+@media (max-width: 767px) {
+  body.lucky-admin-theme {
     .luck-layout .lucky-page.lucky-page {
       min-width: 0;
       padding: 0 15px 15px;

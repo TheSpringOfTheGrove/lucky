@@ -375,7 +375,8 @@ export default defineComponent({
 
     const menuSelect = (index: string) => {
       horizontalOverflowOpened.value = false
-      if (appStore.getMobile) {
+      // 平板使用常驻展开的侧栏；只有手机选中菜单后自动收起。
+      if (appStore.getMobile && window.innerWidth < 768) {
         appStore.setCollapse(true)
       }
       if (props.menuSelect) {
