@@ -394,6 +394,69 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void supportsTakeRotatedPoolsAndValueRangeWithoutChangingExcludePools() {
+        assertThat(service.parse("取配1配2二定各1", odds))
+                .containsExactlyElementsOf(service.parse("配1配2二定各1", odds));
+        assertThat(service.parse("取配1配1四定各1", odds)).hasSize(523);
+        assertThat(service.parse("除配12配3二定各1", odds)).hasSize(576);
+        assertThat(service.parse("四定值范围8-28各1", odds))
+                .containsExactlyElementsOf(service.parse("四定取值8值28各1", odds));
+        assertThat(service.parse("四定除值范围8-28各1", odds))
+                .containsExactlyElementsOf(service.parse("四定除值8值28各1", odds));
+    }
+
+    @Test
+    void bareSiblingFilterMeansTwoSiblingsInCombinedCommand() {
+        String prefix = "除2配2四定除千百十个合1两数合0246三数合56789";
+        String suffix = "除三兄弟值范围7-29排除39除两对数各1";
+        assertThat(service.parse(prefix + "取兄弟" + suffix, odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactlyElementsOf(service.parse(prefix + "取两兄弟" + suffix, odds)
+                        .stream().map(LotteryBettingService.ParsedBet::selection).toList());
+        assertThat(service.parse(prefix + "取兄弟" + suffix, odds)).hasSize(1_536);
+    }
+
+    @Test
+    void twoOppositePairsRequireTwoDisjointPositionPairs() {
+        assertThat(service.parse("四定取两对数各1", odds)).hasSize(270)
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("0505", "0516").doesNotContain("0511", "0005");
+        assertThat(service.parse("四定除两对数各1", odds)).hasSize(9_730);
+        assertThat(service.parse("四定取二对数各1", odds))
+                .containsExactlyElementsOf(service.parse("四定取两对数各1", odds));
+    }
+
+    @Test
+    void matchesReferenceCombinedCommandWithOppositePairsAndSiblings() {
+        String prefix = "除2配2四定除千百十个合1两数合0246三数合56789";
+        String command = prefix + "值范围7-29排除39除两对数各0.3"
+                + prefix + "除三兄弟值范围7-28排除39除两对数各0.5"
+                + prefix + "取兄弟除三兄弟值范围7-29排除39除两对数各1";
+        List<LotteryBettingService.ParsedCommand> parsed = service.parseCommands(command, odds);
+        assertThat(parsed).extracting(item -> item.items().size()).containsExactly(2_988, 2_532, 1_536);
+        assertThat(parsed.stream().mapToInt(item -> item.items().size()).sum()).isEqualTo(7_056);
+        assertThat(parsed.stream().flatMap(item -> item.items().stream())
+                .map(LotteryBettingService.ParsedBet::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("3698.4");
+    }
+
+    @Test
+    void attributeXRequiresAnUnfilledPositionAndMatchesReferenceCommandCount() {
+        assertThat(service.parse("三定取大X大大各1", odds)).hasSize(125);
+        assertThat(service.parse("三定除大X大大各1", odds)).hasSize(3_875);
+        assertThat(service.parse("四定除大X大大各1", odds)).hasSize(10_000);
+
+        String command = "取配124679配013589四定取千百合56789百十合56789十个合01342"
+                + "千百十个合123456790两数合180三数合0258除四兄弟双双重"
+                + "值范围8-28取含23456除大X大大除单双大小各0.1";
+        assertThat(service.parse(command, odds)).hasSize(612)
+                .allSatisfy(item -> {
+                    assertThat(item.play()).isEqualTo("四定位");
+                    assertThat(item.amount()).isEqualByComparingTo("0.1");
+                });
+    }
+
+    @Test
     void supportsLegacyQuickPickFifthBallGenerationAndFilters() {
         assertThat(service.parse("五位二定复式12各1", odds)).hasSize(16)
                 .allSatisfy(item -> assertThat(item.odds()).isEqualByComparingTo("88"));

@@ -111,7 +111,7 @@ public class LotteryBettingService {
         // A trailing visual filter such as "除小小小大各0.3" is part of a positioning expression, not four
         // standalone 大小 bets. Require a real token boundary so the matcher cannot restart in the middle of a
         // 取/除 filter chain.
-        Matcher groupMatcher = Pattern.compile("(?<![取除大小单双龙虎和])([大小单双龙虎和]{2,})各(\\d+(?:\\.\\d+)?)")
+        Matcher groupMatcher = Pattern.compile("(?<![取除大小单双龙虎和X])([大小单双龙虎和]{2,})各(\\d+(?:\\.\\d+)?)")
                 .matcher(content);
         while (groupMatcher.find()) {
             BigDecimal amount = amount(groupMatcher.group(2));
@@ -624,16 +624,27 @@ public class LotteryBettingService {
             result.removeIf(value -> allowed.contains(value) != take);
         }
 
-        Matcher range = Pattern.compile("(取|除)值(\\d+)值(\\d+)").matcher(expression);
+        Matcher range = Pattern.compile("(取|除)值(\\d+)值(\\d+)|(取|除)?值范围(\\d+)-(\\d+)")
+                .matcher(expression);
         while (range.find()) {
-            boolean take = "取".equals(range.group(1));
-            int min = Math.min(Integer.parseInt(range.group(2)), Integer.parseInt(range.group(3)));
-            int max = Math.max(Integer.parseInt(range.group(2)), Integer.parseInt(range.group(3)));
+            boolean legacyRange = range.group(1) != null;
+            String action = legacyRange ? range.group(1) : range.group(4);
+            int first = Integer.parseInt(range.group(legacyRange ? 2 : 5));
+            int second = Integer.parseInt(range.group(legacyRange ? 3 : 6));
+            boolean take = !"除".equals(action);
+            int min = Math.min(first, second);
+            int max = Math.max(first, second);
             result.removeIf(value -> {
                 int total = value.chars().filter(v -> v != 'X').map(v -> v - '0').sum();
                 boolean matches = total >= min && total <= max;
                 return matches != take;
             });
+        }
+
+        Matcher twoOppositePairs = Pattern.compile("(取|除)(?:两|二)对数").matcher(expression);
+        while (twoOppositePairs.find()) {
+            boolean take = "取".equals(twoOppositePairs.group(1));
+            result.removeIf(value -> hasTwoDisjointOppositePairs(value) != take);
         }
 
         Matcher opposite = Pattern.compile("(取|除)对数([0-9]*)").matcher(expression);
@@ -651,7 +662,7 @@ public class LotteryBettingService {
         while (attributes.find()) {
             boolean take = "取".equals(attributes.group(1));
             String pattern = attributes.group(2);
-            result.removeIf(value -> matchesAttributePattern(value, pattern) != take);
+            result.removeIf(value -> matchesAttributePattern(value, pattern, !take) != take);
         }
 
         Matcher allSizes = Pattern.compile("(取|除)四([大小])(?![大小单双])").matcher(expression);
@@ -675,7 +686,7 @@ public class LotteryBettingService {
         }
 
         String action = null;
-        Matcher shapeFilters = Pattern.compile("(取|除)|(两双重|双双重|双重|三重|四重|[二三四两]兄弟)")
+        Matcher shapeFilters = Pattern.compile("(取|除)|(两双重|双双重|双重|三重|四重|[二三四两]?兄弟)")
                 .matcher(expression);
         while (shapeFilters.find()) {
             if (shapeFilters.group(1) != null) {
@@ -686,7 +697,8 @@ public class LotteryBettingService {
             boolean take = "取".equals(action);
             String rule = shapeFilters.group(2);
             if (rule.endsWith("兄弟")) {
-                int length = rule.charAt(0) == '二' || rule.charAt(0) == '两' ? 2 : rule.charAt(0) == '三' ? 3 : 4;
+                int length = rule.equals("兄弟") || rule.charAt(0) == '二' || rule.charAt(0) == '两'
+                        ? 2 : rule.charAt(0) == '三' ? 3 : 4;
                 result.removeIf(value -> hasSiblingRun(value, length) != take);
             } else {
                 String normalizedRule = "两双重".equals(rule) ? "双双重" : rule;
@@ -763,21 +775,45 @@ public class LotteryBettingService {
 
     private boolean hasOppositePair(String value) {
         for (int first = 0; first < value.length(); first++) {
-            char left = value.charAt(first);
-            if (left == 'X') continue;
             for (int second = first + 1; second < value.length(); second++) {
-                char right = value.charAt(second);
-                if (right != 'X' && Math.abs(left - right) == 5) return true;
+                if (isOppositePair(value, first, second)) return true;
             }
         }
         return false;
     }
 
-    private boolean matchesAttributePattern(String value, String pattern) {
+    private boolean hasTwoDisjointOppositePairs(String value) {
+        for (int first = 0; first < value.length(); first++) {
+            for (int second = first + 1; second < value.length(); second++) {
+                if (!isOppositePair(value, first, second)) continue;
+                for (int third = 0; third < value.length(); third++) {
+                    if (third == first || third == second) continue;
+                    for (int fourth = third + 1; fourth < value.length(); fourth++) {
+                        if (fourth != first && fourth != second && isOppositePair(value, third, fourth)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isOppositePair(String value, int first, int second) {
+        char left = value.charAt(first);
+        char right = value.charAt(second);
+        return left != 'X' && right != 'X' && Math.abs(left - right) == 5;
+    }
+
+    private boolean matchesAttributePattern(String value, String pattern, boolean requireBlankX) {
         if (pattern.length() > value.length()) return false;
         for (int index = 0; index < pattern.length(); index++) {
-            if (pattern.charAt(index) == 'X') continue;
             char digit = value.charAt(index);
+            if (pattern.charAt(index) == 'X') {
+                // Keep legacy take-pattern wildcard behavior; in an exclusion, X denotes an empty position.
+                if (requireBlankX && digit != 'X') return false;
+                continue;
+            }
             if (digit == 'X') return false;
             int number = digit - '0';
             boolean matches = switch (pattern.charAt(index)) {
@@ -804,7 +840,7 @@ public class LotteryBettingService {
     }
 
     private RotatedFixed extractRotatedFixed(String expression) {
-        Matcher matcher = Pattern.compile("^(除)?(?:配)?([0-9]+(?:配[0-9]+)+)配?([二三四])(?:字)?定")
+        Matcher matcher = Pattern.compile("^(取|除)?(?:配)?([0-9]+(?:配[0-9]+)+)配?([二三四])(?:字)?定")
                 .matcher(expression);
         if (!matcher.find()) return null;
         int count = CHINESE_COUNT.get(matcher.group(3).charAt(0));
@@ -812,7 +848,7 @@ public class LotteryBettingService {
                 .map(this::chars)
                 .toList();
         if (pools.size() < 2 || pools.size() > count) throw exception(BET_CONTENT_INVALID);
-        return new RotatedFixed(pools, count, matcher.group(1) != null);
+        return new RotatedFixed(pools, count, "除".equals(matcher.group(1)));
     }
 
     private RotatedFixed extractRotatedFiveTwo(String expression) {
