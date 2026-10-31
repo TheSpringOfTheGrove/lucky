@@ -870,7 +870,7 @@ INSERT INTO `system_menu` (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`p
 (7000,'首页','lottery:dashboard:query',2,10,0,'/lucky5/dashboard','fa:dashboard','lottery/dashboard/index','LotteryDashboard',0,b'0',b'1',b'1','1','1',b'0'),
 (7010,'配置管理','lottery:config:manage',2,20,0,'/lucky5/config','fa:cog','lottery/config/index','LotteryConfig',0,b'1',b'1',b'1','1','1',b'0'),
 (7020,'赔率设置','lottery:odds:manage',2,30,0,'/lucky5/odds','fa:cog','lottery/odds/index','LotteryOdds',0,b'1',b'1',b'1','1','1',b'0'),
-(7025,'飞鱼蓝鲸信息','lottery:dashboard:query',2,35,0,'/lucky5/fish-info','fa:dashboard','lottery/fishInfo/index','LotteryFishInfo',0,b'1',b'1',b'1','1','1',b'0'),
+(7025,'配置信息','lottery:dashboard:query',2,35,0,'/lucky5/fish-info','fa:dashboard','lottery/fishInfo/index','LotteryFishInfo',0,b'1',b'1',b'1','1','1',b'0'),
 (7030,'链接配置','lottery:link:manage',2,40,0,'/lucky5/links','fa:link','lottery/linkConfig/index','LotteryLinkConfig',0,b'1',b'1',b'1','1','1',b'0'),
 (7040,'预设订单管理','lottery:preset:manage',2,50,0,'/lucky5/presets','fa:gear','lottery/presetOrder/index','LotteryPresetOrder',0,b'1',b'1',b'1','1','1',b'0'),
 (7050,'跟单列表','lottery:follow:manage',2,60,0,'/lucky5/follows','fa:clone','lottery/followOrder/index','LotteryFollowOrder',0,b'1',b'1',b'1','1','1',b'0'),

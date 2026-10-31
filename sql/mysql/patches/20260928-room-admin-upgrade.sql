@@ -56,7 +56,7 @@ WHERE `id` IN (7000,7010,7020,7030,7040,7050,7060,7070,7080,7090,7100,7110,7120,
 INSERT INTO `system_menu`
   (`id`,`name`,`permission`,`type`,`sort`,`parent_id`,`path`,`icon`,`component`,`component_name`,
    `status`,`visible`,`keep_alive`,`always_show`,`creator`,`updater`,`deleted`)
-VALUES (7025,'飞鱼蓝鲸信息','lottery:dashboard:query',2,35,0,'/lucky5/fish-info','fa:dashboard',
+VALUES (7025,'配置信息','lottery:dashboard:query',2,35,0,'/lucky5/fish-info','fa:dashboard',
         'lottery/fishInfo/index','LotteryFishInfo',0,b'1',b'1',b'1','1','1',b'0')
 ON DUPLICATE KEY UPDATE `name`=VALUES(`name`),`icon`=VALUES(`icon`),`component`=VALUES(`component`),
   `component_name`=VALUES(`component_name`),`path`=VALUES(`path`),`sort`=VALUES(`sort`);

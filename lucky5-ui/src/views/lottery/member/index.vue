@@ -334,14 +334,17 @@ onBeforeUnmount(stopMemberRefresh)
           <el-button class="member-toolbar__delete" @click="clearAllFingerprints">抹除标识</el-button>
         </div>
         <div class="member-summary">
-          <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}，托总余分：{{ formatStatistic(proxyBalance) }}，</span>
+          <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}</span>
+          <span class="lucky-member-total">托总余分：{{ formatStatistic(proxyBalance) }}</span>
           <span class="lucky-danger">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
           <span class="member-summary__separator"> || </span>
-          <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}，托总投额：{{ formatStatistic(proxyBet) }}，</span>
+          <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}</span>
+          <span class="lucky-member-total">托总投额：{{ formatStatistic(proxyBet) }}</span>
           <span class="lucky-danger">真实会员总投额：{{ formatStatistic(realBet) }}</span>
           <span class="member-summary__separator"> || </span>
-          <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}，</span>
-          <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}，托盈亏：{{ formatStatistic(proxyProfit) }}</span>
+          <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}</span>
+          <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}</span>
+          <span class="lucky-danger">托盈亏：{{ formatStatistic(proxyProfit) }}</span>
         </div>
       </div>
 
@@ -427,7 +430,7 @@ onBeforeUnmount(stopMemberRefresh)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="微信/飞鱼/蓝鲸昵称" min-width="170">
+        <el-table-column label="微信昵称" min-width="170">
           <template #default="{ row }">
             <div class="member-identity">
               <span>{{ row.externalNickname || '//' }}</span>
@@ -731,6 +734,7 @@ onBeforeUnmount(stopMemberRefresh)
   line-height: 34px;
   white-space: nowrap;
   align-items: center;
+  gap: 0 6px;
 }
 
 .member-summary__separator {
@@ -958,12 +962,22 @@ onBeforeUnmount(stopMemberRefresh)
   }
 
   .member-summary {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-    padding-bottom: 4px;
-    overflow-x: visible;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    border: 1px solid #e5eaf0;
+    border-radius: 6px;
+    background: #f8fafc;
     white-space: normal;
+    line-height: 1.4;
+  }
+
+  .member-summary > span:not(.member-summary__separator) {
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .member-summary__group {

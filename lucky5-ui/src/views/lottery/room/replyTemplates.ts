@@ -2,6 +2,9 @@ const money = (value: number) => Number(value || 0).toFixed(2)
 
 export const cancelSuccessText = 'tui碼成功'
 
+export const normalizeRoomReply = (value: string) => value
+  .replace(/房源已录入成功[√✓]{2}/g, '房源已提交成功✅✅✅')
+
 export const cancelFailureText = (reason?: string) => {
   const detail = (reason || '当前订单不能退码')
     .trim()
@@ -53,7 +56,7 @@ export const roomReplyTemplates = {
   },
 
   issueTransition(status: string) {
-    return status === 'OPEN' ? '^^★★★开始-答题★★★' : '^^★★★停止-上课★★★'
+    return status === 'OPEN' ? '^^★★★开始——答题★★★' : '^^★★★停止——答题★★★'
   },
 
   draw(period: string, numbers: string[], storedDragonTiger = '') {

@@ -18,7 +18,7 @@ import {
 } from '@/api/lottery/room'
 import ScratchCard from './components/ScratchCard.vue'
 import QuickPickDialog from './components/QuickPickDialog.vue'
-import { cancelFailureText, resolveDragonTiger, roomAmountRecordPresentation, roomReplyTemplates } from './replyTemplates'
+import { cancelFailureText, normalizeRoomReply, resolveDragonTiger, roomAmountRecordPresentation, roomReplyTemplates } from './replyTemplates'
 import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
 import { receiptAction as parseReceiptAction, receiptText } from '../utils/receipt'
 import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
@@ -714,7 +714,7 @@ const resetChatMessageTracking = () => {
 }
 // The room protocol is text-sensitive: punctuation, order and line breaks come from the server and must not be
 // reflowed by the client before players see them.
-const formatRobotReply = (value: string) => value
+const formatRobotReply = normalizeRoomReply
 
 const showCancelFailure = (reason?: string) =>
   ElMessageBox.alert(cancelFailureText(reason), '', {
@@ -1573,7 +1573,6 @@ onBeforeUnmount(() => {
             autocomplete="off"
             enterkeyhint="enter"
             aria-label="聊天输入"
-            placeholder="输入聊天或下注指令"
             @focus="bottomPanel = ''"
           ></textarea>
           <button class="fast-select" type="button" @click="openQuickPicker">快选</button>

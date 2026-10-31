@@ -496,13 +496,13 @@ body.lucky-admin-theme .dashboard-breadcrumb {
       }
     }
     .luck-layout .member-summary {
-      display: inline;
+      display: grid;
       white-space: normal;
       font-size: 14px;
-      line-height: 20px;
+      line-height: 1.4;
     }
     .luck-layout .member-summary__separator {
-      display: inline;
+      display: none;
     }
     .luck-layout .member-search {
       font-size: 14px;

@@ -636,7 +636,10 @@ public class LotteryServiceImpl implements LotteryService {
 
     private String normalizeCheckMarks(String text) {
         if (text == null) return null;
-        return text.replace('√', '✓').replace("【户型审核成功】✓✓", "【户型审核成功】√√");
+        return text.replace("【户型审核成功】√√", "【户型审核成功】☑️☑️☑️")
+                .replace("【户型审核成功】✓✓", "【户型审核成功】☑️☑️☑️")
+                .replace("房源已录入成功✓✓", "房源已提交成功✅✅✅")
+                .replace("房源已录入成功√√", "房源已提交成功✅✅✅");
     }
 
     /**

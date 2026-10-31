@@ -8,7 +8,7 @@ export const useRenderMenuTitle = () => {
     const { title = 'Please set title', icon } = meta
 
     const legacyIcon: Record<string, string> = {
-      首页: 'dashboard', 配置管理: 'cog', 赔率设置: 'cog', 飞鱼蓝鲸信息: 'dashboard',
+      首页: 'dashboard', 配置管理: 'cog', 赔率设置: 'cog', 配置信息: 'dashboard',
       链接配置: 'link', 预设订单管理: 'cog', 跟单列表: 'clone', 会员管理: 'users',
       会员操作管理: 'users', 上下分审核: 'cny', 订单查询: 'shopping-cart',
       历史记录: 'history', 开奖历史记录: 'database', 返水管理: 'backward',
