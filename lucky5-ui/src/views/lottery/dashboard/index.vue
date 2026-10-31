@@ -1,43 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import type { IntegrationKey } from '@/api/lottery'
 import { useLucky5Store, type SwitchKey } from '@/store/modules/lottery'
 
 const store = useLucky5Store()
 const router = useRouter()
 let dashboardRefreshTimer: number | undefined
-
-const integrationKeys: IntegrationKey[] = ['blueWhale', 'wechat', 'fish']
-const integrationStyles: Record<IntegrationKey, { iconClass: string }> = {
-  blueWhale: { iconClass: 'dashboard-service-card__icon--orange' },
-  wechat: { iconClass: 'dashboard-service-card__icon--green' },
-  fish: { iconClass: 'dashboard-service-card__icon--aqua' }
-}
-const integrationDialogVisible = ref(false)
-const selectedIntegrationKey = ref<IntegrationKey>('blueWhale')
-const integrationForm = reactive({ account: '', group: '' })
-const selectedIntegration = computed(() => store.integrations[selectedIntegrationKey.value])
-const integrationCards = computed(() =>
-  integrationKeys.map((key) => ({
-    key,
-    ...store.integrations[key],
-    ...integrationStyles[key]
-  }))
-)
-
-const openIntegrationConfig = (key: IntegrationKey) => {
-  const integration = store.integrations[key]
-  selectedIntegrationKey.value = key
-  integrationForm.account = integration?.account || ''
-  integrationForm.group = integration?.group || ''
-  integrationDialogVisible.value = true
-}
-
-const saveIntegration = async () => {
-  const saved = await store.bindIntegration(selectedIntegrationKey.value, integrationForm)
-  if (saved) integrationDialogVisible.value = false
-}
 
 onMounted(() => {
   void store.refreshMembers()
@@ -121,34 +88,6 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="dashboard-service-grid">
-      <article
-        v-for="integration in integrationCards"
-        :key="integration.key"
-        class="dashboard-service-card"
-        :class="`dashboard-service-card--${integration.key}`"
-      >
-        <span class="dashboard-service-card__icon" :class="integration.iconClass">
-          <Icon icon="ion:chatbubbles" :size="45" />
-        </span>
-        <div class="dashboard-service-card__content">
-          <template v-if="integration.key === 'wechat'">
-            <div>微信</div>
-          </template>
-          <template v-else>
-            <div>{{ integration.name }}{{ integration.key === 'fish' ? '昵称' : '账号' }}: {{ integration.account || '未绑定' }}</div>
-            <div>{{ integration.name }}群: {{ integration.group || '未绑定' }}</div>
-            <div>状态: {{ integration.status || '未登录' }}</div>
-          </template>
-          <button
-            type="button"
-            class="dashboard-service-card__button"
-            @click="openIntegrationConfig(integration.key)"
-          >
-            配置{{ integration.name }}
-          </button>
-        </div>
-      </article>
-
       <article class="dashboard-service-card dashboard-startup-card">
         <span class="dashboard-service-card__icon dashboard-service-card__icon--red">
           <Icon icon="ion:power" :size="45" />
@@ -164,26 +103,6 @@ onBeforeUnmount(() => {
         </div>
       </article>
     </div>
-
-    <el-dialog
-      v-model="integrationDialogVisible"
-      :title="`配置${selectedIntegration?.name || ''}`"
-      width="440px"
-      class="lucky-dialog"
-    >
-      <el-form label-width="90px">
-        <el-form-item label="账号">
-          <el-input v-model="integrationForm.account" maxlength="100" autocomplete="off" />
-        </el-form-item>
-        <el-form-item label="群名称">
-          <el-input v-model="integrationForm.group" maxlength="100" autocomplete="off" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="integrationDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="store.saving" @click="saveIntegration">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -370,18 +289,6 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
-.dashboard-service-card__icon--orange {
-  background: #e49300;
-}
-
-.dashboard-service-card__icon--green {
-  background: #009551;
-}
-
-.dashboard-service-card__icon--aqua {
-  background: #2fc2c0;
-}
-
 .dashboard-service-card__icon--red {
   background: #dd2f20;
 }
@@ -395,32 +302,10 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-.dashboard-service-card__button {
-  height: 34px;
-  margin-top: 0;
-  padding: 6px 12px;
-  border: 1px solid #367fa9;
-  border-radius: 3px;
-  color: #fff;
-  background: #3c8dbc;
-  font-size: 14px;
-  cursor: pointer;
-}
-
 .dashboard-startup {
   display: flex;
   align-items: flex-start;
   gap: 4px;
-}
-
-/* The reference dashboard keeps the red start card in the third slot; the
- * Feiyu card begins the following row. */
-.dashboard-startup-card {
-  order: 3;
-}
-
-.dashboard-service-card--fish {
-  order: 4;
 }
 
 .dashboard-startup :deep(.el-checkbox) {
