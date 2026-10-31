@@ -238,6 +238,7 @@
 </template>
 <script lang="ts" setup>
 import { DICT_TYPE, getIntDictOptions } from '@/utils/dict'
+import { generateUUID } from '@/utils'
 import download from '@/utils/download'
 import { CommonStatusEnum } from '@/utils/constants'
 import * as UserApi from '@/api/system/user'
@@ -490,7 +491,7 @@ const submitGold = async () => {
   }
   const amount = Number(goldAmount.value) * (goldDirection.value === 'increase' ? 1 : -1)
   if (!goldPendingOperation.value || goldPendingOperation.value.amount !== amount) {
-    goldPendingOperation.value = { amount, key: crypto.randomUUID() }
+    goldPendingOperation.value = { amount, key: generateUUID() }
   }
   goldSubmitting.value = true
   try {
