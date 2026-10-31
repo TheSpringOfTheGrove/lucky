@@ -14,6 +14,7 @@ import QRCode from 'qrcode'
 import { useLucky5Store } from '@/store/modules/lottery'
 import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 import { lotteryPlayerAvatarSrc } from '@/views/lottery/utils/playerAvatar'
+import { copyText } from '@/views/lottery/utils/copyText'
 
 const store = useLucky5Store()
 const timeType = ref(0)
@@ -254,8 +255,11 @@ const rotateLink = async () => {
 }
 
 const copy = async (value: string) => {
-  await navigator.clipboard.writeText(value)
-  ElMessage.success('已复制')
+  if (await copyText(value)) {
+    ElMessage.success('已复制')
+  } else {
+    ElMessage.error('复制失败，请长按链接手动复制')
+  }
 }
 
 const clearMember = async (row: any) => {
