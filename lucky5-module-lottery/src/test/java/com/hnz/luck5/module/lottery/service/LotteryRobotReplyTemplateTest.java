@@ -171,8 +171,8 @@ class LotteryRobotReplyTemplateTest {
                 new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "千12百34二定各1", false)),
                 new BigDecimal("4374.10")))
                 .isEqualTo("@露露\n【目前房源】：\n[挂牌时间]194\n654倒二定各10"
-                        + "\n【状态】:房源已提交成功✅✅✅\n\n[挂牌时间]194\n千12百34二定各1"
-                        + "\n【状态】:正在确认明细\n\n【您目前】：\n4374.1");
+                        + "\n【状态】：房源已提交成功✅✅✅\n\n[挂牌时间]194\n千12百34二定各1"
+                        + "\n【状态】：正在确认明细\n\n【您目前】：\n4374.1");
         assertThat(template.profitLoss("露露", new BigDecimal("1265.70")))
                 .isEqualTo("@露露\nyk：1265.7");
         assertThat(template.periodSummary(List.of("[露露]654倒二定各10", "[露露]654倒二定各10")))

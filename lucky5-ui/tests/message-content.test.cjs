@@ -47,7 +47,7 @@ test('current customer room wording is consistent for transitions and saved repl
   assert.equal(replyTemplates.roomReplyTemplates.issueTransition('OPEN'), '^^★★★开始——答题★★★')
   assert.equal(replyTemplates.roomReplyTemplates.issueTransition('CLOSED'), '^^★★★停止——答题★★★')
   assert.equal(replyTemplates.normalizeRoomReply('【状态】:房源已录入成功✓✓'),
-    '【状态】:房源已提交成功✅✅✅')
+    '【状态】：房源已提交成功✅✅✅')
   assert.equal(receipt.receiptText('【户型审核成功】√√\n点击退码'), '【户型审核成功】☑️☑️☑️')
 })
 

@@ -43,7 +43,7 @@ public class LotteryRobotReplyTemplate {
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
         String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
                 .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())
-                        + "\n【状态】:" + (order.confirmed() ? "房源已提交成功✅✅✅" : "正在确认明细"))
+                        + "\n【状态】：" + (order.confirmed() ? "房源已提交成功✅✅✅" : "正在确认明细"))
                 .reduce((left, right) -> left + "\n\n" + right)
                 .orElse("目前无房源");
         return "@" + memberName + "\n【目前房源】：\n" + orders

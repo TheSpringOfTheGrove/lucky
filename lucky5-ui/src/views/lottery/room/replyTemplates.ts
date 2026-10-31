@@ -4,6 +4,7 @@ export const cancelSuccessText = 'tui碼成功'
 
 export const normalizeRoomReply = (value: string) => value
   .replace(/房源已录入成功[√✓]{2}/g, '房源已提交成功✅✅✅')
+  .replace(/【状态】:房源已提交成功/g, '【状态】：房源已提交成功')
 
 export const cancelFailureText = (reason?: string) => {
   const detail = (reason || '当前订单不能退码')
