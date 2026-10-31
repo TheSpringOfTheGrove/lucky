@@ -335,16 +335,16 @@ onBeforeUnmount(stopMemberRefresh)
         </div>
         <div class="member-summary">
           <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}</span>
-          <span class="lucky-member-total">托总余分：{{ formatStatistic(proxyBalance) }}</span>
+          <span class="lucky-member-total">拖总余分：{{ formatStatistic(proxyBalance) }}</span>
           <span class="lucky-danger">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
           <span class="member-summary__separator"> || </span>
           <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}</span>
-          <span class="lucky-member-total">托总投额：{{ formatStatistic(proxyBet) }}</span>
+          <span class="lucky-member-total">拖总投额：{{ formatStatistic(proxyBet) }}</span>
           <span class="lucky-danger">真实会员总投额：{{ formatStatistic(realBet) }}</span>
           <span class="member-summary__separator"> || </span>
           <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}</span>
           <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}</span>
-          <span class="lucky-danger">托盈亏：{{ formatStatistic(proxyProfit) }}</span>
+          <span class="lucky-danger">拖盈亏：{{ formatStatistic(proxyProfit) }}</span>
         </div>
       </div>
 
