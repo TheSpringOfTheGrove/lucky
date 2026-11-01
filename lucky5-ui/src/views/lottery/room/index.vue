@@ -23,7 +23,7 @@ import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
 import { receiptAction as parseReceiptAction, receiptText } from '../utils/receipt'
 import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
 import logo from '@/assets/imgs/logo.png'
-import robotAvatar from '@/assets/lottery/robot-avatar.png'
+import robotAvatar from '@/assets/lottery/robot-avatar-chenguanxi.png'
 import scratchButton from '@/assets/lottery/scratch-button.jpg'
 import { useRoomChatViewport } from './useRoomChatViewport'
 
