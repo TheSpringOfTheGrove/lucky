@@ -38,18 +38,35 @@ const prefixCls = getPrefixCls('login')
 
 <style lang="scss" scoped>
 .legacy-login-page {
+  position: relative;
   display: flex;
+  isolation: isolate;
   min-height: 100%;
   align-items: flex-start;
   justify-content: center;
   padding: 0 12px 24px;
   overflow-x: hidden;
-  background: #e3f1f3;
-  color: #333;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  color: #333;
+  background:
+    radial-gradient(circle at 18% 20%, rgb(37 152 158 / 28%), transparent 36%),
+    radial-gradient(circle at 84% 78%, rgb(52 94 153 / 24%), transparent 42%),
+    linear-gradient(135deg, #0b1728 0%, #13283d 52%, #0d3036 100%);
+}
+
+.legacy-login-page::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: '';
+  background: url('../../assets/lottery/login-grain.svg') repeat;
+  opacity: 0.18;
+  mix-blend-mode: screen;
 }
 
 .legacy-login-box {
+  position: relative;
   width: 360px;
   max-width: 100%;
   margin: 7% 0 0;
@@ -58,19 +75,23 @@ const prefixCls = getPrefixCls('login')
 
 .legacy-login-logo {
   margin-bottom: 30px;
-  color: #444;
-  text-align: center;
   font-size: 35px;
   font-weight: 300;
   line-height: 1.2;
+  color: #f2fafb;
+  text-align: center;
+  text-shadow: 0 3px 18px rgb(0 0 0 / 30%);
 }
 
 .legacy-login-box__body {
   width: 100%;
   padding: 20px;
+  border-top: 3px solid #43bec1;
+  color: #666;
   box-sizing: border-box;
   background: #fff;
-  color: #666;
+  border-radius: 6px;
+  box-shadow: 0 20px 48px rgb(0 10 24 / 28%);
 }
 
 .legacy-login-box__hint {
