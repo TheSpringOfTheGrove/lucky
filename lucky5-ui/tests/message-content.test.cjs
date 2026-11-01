@@ -44,8 +44,16 @@ test('room and audit share receipt punctuation, amounts and action handling', ()
 })
 
 test('current customer room wording is consistent for transitions and saved replies', () => {
-  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('OPEN'), '★★★★开始———答题★★★★')
-  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('CLOSED'), '★★★★停止———答题★★★★')
+  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('OPEN'), '★★★★★  开始——答题  ★★★★★')
+  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('CLOSED'), '★★★★★  停止——答题  ★★★★★')
+  assert.match(roomSource, /'chat-message-transition': message\.type === 'transition'/)
+  assert.match(roomSource, /--draw-history-width: 381px/)
+  assert.match(roomSource, /\.chat-message-transition \.chat-body\s*\{\s*width: min\(65%, var\(--draw-history-width\)\)/)
+  assert.match(roomSource, /\.draw-history-image\s*\{[^}]*width: var\(--draw-history-width\)/s)
+  assert.match(roomSource, /message\.type === 'transition'" class="chat-transition"/)
+  assert.match(roomSource, /message\.content\.split\('  '\)/)
+  assert.match(roomSource, /\.chat-message-transition \.chat-body\s*\{[^}]*container-type: inline-size/s)
+  assert.match(roomSource, /\.chat-transition\s*\{[^}]*justify-content: space-between;[^}]*font-size: clamp\(9px, 5cqw, 13px\)/s)
   assert.equal(replyTemplates.normalizeRoomReply('【状态】:房源已录入成功✓✓'),
     '【状态】：房源已提交成功√√√')
   assert.equal(receipt.receiptText('【户型审核成功】√√\n点击退码'), '【户型审核成功】√√√')

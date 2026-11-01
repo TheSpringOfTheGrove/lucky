@@ -645,7 +645,8 @@ public class LotteryServiceImpl implements LotteryService {
                 .replace("【挂牌时间】", "【入住时间】")
                 .replace("【套内】", "【室内】")
                 .replace("【套外】", "【室外】")
-                .replaceAll("(?m)^(加分|减分)\\s+(\\d+(?:\\.\\d+)?)", "$1：$2");
+                .replaceAll("(?m)^(加分|减分)[ \\t]*[：:]?[ \\t]*(\\d+(?:\\.\\d+)?)", "$1:$2")
+                .replaceAll("(?m)^现在[ \\t]*[：:][ \\t]*", "现在:");
     }
 
     /**

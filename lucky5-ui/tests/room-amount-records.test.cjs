@@ -14,17 +14,19 @@ runInNewContext(compiled, { exports: templateExports })
 const { roomAmountRecordPresentation, normalizeRoomReply, roomReplyTemplates } = templateExports
 
 test('room status bubbles do not show the old prefix', () => {
-  assert.equal(roomReplyTemplates.issueTransition('OPEN'), '★★★★开始———答题★★★★')
-  assert.equal(roomReplyTemplates.issueTransition('CLOSED'), '★★★★停止———答题★★★★')
+  assert.equal(roomReplyTemplates.issueTransition('OPEN'), '★★★★★  开始——答题  ★★★★★')
+  assert.equal(roomReplyTemplates.issueTransition('CLOSED'), '★★★★★  停止——答题  ★★★★★')
 })
 
 test('old approved transfer replies render with the new wording', () => {
   assert.equal(normalizeRoomReply('@小吴\n审批通过[加油100]\n现在:10054'),
-    '@小吴\n加分：100\n现在:10054')
+    '@小吴\n加分:100\n现在:10054')
   assert.equal(normalizeRoomReply('@测试1\n考核成功下100\n现在:9954'),
-    '@测试1\n减分：100\n现在:9954')
+    '@测试1\n减分:100\n现在:9954')
   assert.equal(normalizeRoomReply('@测试1\n减分 1000\n现在:9254'),
-    '@测试1\n减分：1000\n现在:9254')
+    '@测试1\n减分:1000\n现在:9254')
+  assert.equal(normalizeRoomReply('@测试1\n减分：1000\n现在：8144'),
+    '@测试1\n减分:1000\n现在:8144')
 })
 
 test('rebate credit never creates a fake withdrawal request', () => {
@@ -65,7 +67,7 @@ test('actual member withdrawal keeps its existing request bubbles', () => {
   })
   assert.equal(result.memberCommand, '下191.52')
   assert.equal(result.relatedCommandType, 'WITHDRAW_REQUEST')
-  assert.equal(result.robotReply, '@小吴\n减分：191.52')
+  assert.equal(result.robotReply, '@小吴\n减分:191.52')
 })
 
 test('manual transfer does not fabricate a member command', () => {
@@ -79,5 +81,5 @@ test('manual transfer does not fabricate a member command', () => {
   })
   assert.equal(result.memberCommand, '')
   assert.equal(result.relatedCommandType, 'DEPOSIT_REQUEST')
-  assert.equal(result.robotReply, '@广西一哥\n加分：10')
+  assert.equal(result.robotReply, '@广西一哥\n加分:10')
 })

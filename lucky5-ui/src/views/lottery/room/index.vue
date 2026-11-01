@@ -1447,7 +1447,7 @@ onBeforeUnmount(() => {
         <article
           v-for="message in chatMessages"
           :key="message.id"
-          :class="['chat-message', `chat-message-${message.kind}`]"
+          :class="['chat-message', `chat-message-${message.kind}`, { 'chat-message-transition': message.type === 'transition' }]"
         >
           <div v-if="message.showTime" class="chat-time"
             ><span>{{ messageTime(message.createdAt) }}</span></div
@@ -1476,6 +1476,10 @@ onBeforeUnmount(() => {
                     :alt="`第 ${message.draw.period} 期开奖图`"
                   />
                 </template>
+
+                <div v-else-if="message.type === 'transition'" class="chat-transition">
+                  <span v-for="(part, index) in message.content.split('  ')" :key="index">{{ part }}</span>
+                </div>
 
                 <template v-else-if="message.type === 'order' && message.order">
                   <CancelSuccessReceipt
@@ -1520,7 +1524,7 @@ onBeforeUnmount(() => {
 
                 <pre
                   v-else
-                  :class="{ 'is-copyable': message.kind !== 'robot', 'is-transition': message.type === 'transition' }"
+                  :class="{ 'is-copyable': message.kind !== 'robot' }"
                   @click.stop="copyInstruction(message)"
                   @pointerdown="beginMessageLongPress(() => appendMessageContent(message))"
                   @pointerup="clearMessageLongPress"
@@ -1637,6 +1641,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .chat-room {
   --room-overview-height: 0px;
+  --draw-history-width: 381px;
   position: fixed;
   z-index: 1;
   overflow: hidden;
@@ -2149,6 +2154,11 @@ onBeforeUnmount(() => {
   min-width: 30px;
 }
 
+.chat-message-transition .chat-body {
+  width: min(65%, var(--draw-history-width));
+  container-type: inline-size;
+}
+
 .chat-body h5 {
   height: 21px;
   margin: -1px 0 0;
@@ -2231,9 +2241,14 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 
-.chat-bubble pre.is-transition {
-  font-size: clamp(11px, 3.4vw, 14px);
-  letter-spacing: -0.3px;
+.chat-transition {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 6px;
+  font-family: monospace;
+  font-size: clamp(9px, 5cqw, 13px);
+  line-height: 18px;
   white-space: nowrap;
 }
 
@@ -2667,7 +2682,7 @@ onBeforeUnmount(() => {
 
 .draw-history-image {
   display: block;
-  width: 381px;
+  width: var(--draw-history-width);
   max-width: 95%;
   height: auto;
   margin: 5px auto;
