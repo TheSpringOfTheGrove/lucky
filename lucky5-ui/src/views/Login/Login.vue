@@ -1,7 +1,7 @@
 <template>
   <div :class="[prefixCls, 'legacy-login-page']">
     <main class="legacy-login-box">
-      <div class="legacy-login-logo">管理系统</div>
+      <div class="legacy-login-logo">冠希管理系统</div>
       <section class="legacy-login-box__body">
         <p class="legacy-login-box__hint">登录即可使用本网站</p>
         <Transition appear enter-active-class="animate__animated animate__fadeInDown">
@@ -44,7 +44,7 @@ const prefixCls = getPrefixCls('login')
   justify-content: center;
   padding: 0 12px 24px;
   overflow-x: hidden;
-  background: #d2d6de;
+  background: #e3f1f3;
   color: #333;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
