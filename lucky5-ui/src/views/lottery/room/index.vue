@@ -10,7 +10,6 @@ import {
   getRoomMessageHistoryApi,
   getRoomSessionApi,
   sendRoomMessageApi,
-  type RoomAmountRecord,
   type RoomCredential,
   type RoomDraw,
   type RoomOrder,
@@ -48,7 +47,6 @@ interface ChatItem {
   cancelOrderId?: string
   cancelPeriod?: string
   receiptAction?: 'cancelable' | 'canceled'
-  amountRecord?: RoomAmountRecord
   draw?: RoomDraw
   showTime?: boolean
   sequenceRank?: number
@@ -541,7 +539,10 @@ const chatMessages = computed<ChatItem[]>(() => {
       amountRecord.recordSource === 'AUTO_PROXY' ||
       /自动托虚拟积分不足|自动托上下分自动审核/.test(amountRecord.remark || '')
     ) continue
-    const presentation = roomAmountRecordPresentation(amountRecord)
+    const presentation = roomAmountRecordPresentation({
+      ...amountRecord,
+      member: amountRecord.member || session.value.member.name
+    })
     const relatedMessage = session.value.messages.find(
       (message) =>
         Boolean(presentation.relatedCommandType) &&
@@ -572,8 +573,7 @@ const chatMessages = computed<ChatItem[]>(() => {
           dayjs(amountRecord.createdAt).add(1, 'millisecond').toISOString(),
         displayTimeAt:
           amountRecord.auditedAt ||
-          dayjs(amountRecord.createdAt).add(1, 'millisecond').toISOString(),
-        amountRecord
+          dayjs(amountRecord.createdAt).add(1, 'millisecond').toISOString()
       })
     }
   }
@@ -1518,16 +1518,6 @@ onBeforeUnmount(() => {
                   </template>
                 </template>
 
-                <template v-else-if="message.type === 'amount' && message.amountRecord">
-                  <div class="amount-reply">
-                    <strong>{{ message.content }}</strong>
-                    <span>分数：{{ money(message.amountRecord.amount) }}</span>
-                    <span v-if="message.amountRecord.remark">{{
-                      message.amountRecord.remark
-                    }}</span>
-                  </div>
-                </template>
-
                 <pre
                   v-else
                   :class="{ 'is-copyable': message.kind !== 'robot' }"
@@ -2251,14 +2241,30 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+:global(.room-copy-success.el-message-box) {
+  width: min(300px, calc(100vw - 48px));
+  max-width: none;
+  padding: 12px 16px 14px;
+  border-radius: 10px;
+}
+
+:global(.room-copy-success .el-message-box__header) {
+  display: none;
+}
+
+:global(.room-copy-success .el-message-box__content) {
+  padding: 10px 0;
+}
+
 :global(.room-copy-success .el-message-box__message) {
   justify-content: center;
   color: #00b83f;
-  font-size: 17px;
+  font-size: 16px;
 }
 
 :global(.room-copy-success .el-message-box__btns) {
   justify-content: center;
+  padding: 4px 0 0;
 }
 
 :global(.room-cancel-failure.el-message-box) {
@@ -2313,17 +2319,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
   background: transparent;
   border: 0;
-}
-
-.amount-reply {
-  display: grid;
-  gap: 3px;
-  min-width: 180px;
-}
-
-.amount-reply span {
-  font-size: 13px;
-  color: #666;
 }
 
 .chat-composer {

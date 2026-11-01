@@ -42,7 +42,7 @@ public class LotteryRobotReplyTemplate {
 
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
         String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
-                .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())
+                .map(order -> "【入住时间】" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())
                         + "\n【状态】：" + (order.confirmed() ? "房源已提交成功√√√" : "正在确认明细"))
                 .reduce((left, right) -> left + "\n\n" + right)
                 .orElse("目前无房源");
@@ -162,9 +162,9 @@ public class LotteryRobotReplyTemplate {
 
     public String cancelSuccessReceipt(String memberName, String period, int sequence, String content,
                                        int itemCount, BigDecimal refunded, BigDecimal balance) {
-        return "@" + memberName + "\n[挂牌时间]" + period
+        return "@" + memberName + "\n【入住时间】" + period
                 + "\n【编号】： " + sequence + "\n" + displayCommands(content)
-                + "\n【套内】：" + itemCount
+                + "\n【室内】：" + itemCount
                 + "\n【退面积】：" + receiptMoney(refunded)
                 + "\n【面积】：" + receiptMoney(balance)
                 + "\ntui碼成功";
@@ -228,9 +228,9 @@ public class LotteryRobotReplyTemplate {
 
     private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                               BigDecimal amount, BigDecimal balance, String action) {
-        return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + displayCommands(content)
+        return "@" + memberName + "\n【入住时间】" + periodSuffix(period) + "\n" + displayCommands(content)
                 + "\n【户型审核成功】√√√\n【编号】" + sequence
-                + "\n【套内】:" + itemCount + "\n【套外】:" + receiptMoney(amount)
+                + "\n【室内】:" + itemCount + "\n【室外】:" + receiptMoney(amount)
                 + "\n【面积】:" + receiptMoney(balance) + "\n\n" + action;
     }
 

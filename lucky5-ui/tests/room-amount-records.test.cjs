@@ -14,8 +14,8 @@ runInNewContext(compiled, { exports: templateExports })
 const { roomAmountRecordPresentation, normalizeRoomReply, roomReplyTemplates } = templateExports
 
 test('room status bubbles do not show the old prefix', () => {
-  assert.equal(roomReplyTemplates.issueTransition('OPEN'), '★★★开始——答题★★★')
-  assert.equal(roomReplyTemplates.issueTransition('CLOSED'), '★★★停止——答题★★★')
+  assert.equal(roomReplyTemplates.issueTransition('OPEN'), '★★★★★开始———答题★★★★★')
+  assert.equal(roomReplyTemplates.issueTransition('CLOSED'), '★★★★★停止———答题★★★★★')
 })
 
 test('old approved transfer replies render with the new wording', () => {
@@ -40,6 +40,7 @@ test('rebate credit never creates a fake withdrawal request', () => {
 
 test('rebate source takes priority over an inconsistent transfer type', () => {
   const result = roomAmountRecordPresentation({
+    member: '小吴',
     type: '下分',
     status: '已通过',
     remark: '系统发放',
@@ -53,6 +54,7 @@ test('rebate source takes priority over an inconsistent transfer type', () => {
 
 test('actual member withdrawal keeps its existing request bubbles', () => {
   const result = roomAmountRecordPresentation({
+    member: '小吴',
     type: '下分',
     status: '已通过',
     remark: '网页群消息申请',
@@ -61,11 +63,12 @@ test('actual member withdrawal keeps its existing request bubbles', () => {
   })
   assert.equal(result.memberCommand, '下191.52')
   assert.equal(result.relatedCommandType, 'WITHDRAW_REQUEST')
-  assert.equal(result.robotReply, '减分 191.52')
+  assert.equal(result.robotReply, '@小吴\n减分 191.52')
 })
 
 test('manual transfer does not fabricate a member command', () => {
   const result = roomAmountRecordPresentation({
+    member: '广西一哥',
     type: '上分',
     status: '已通过',
     remark: '后台手动操作',
@@ -74,5 +77,5 @@ test('manual transfer does not fabricate a member command', () => {
   })
   assert.equal(result.memberCommand, '')
   assert.equal(result.relatedCommandType, 'DEPOSIT_REQUEST')
-  assert.equal(result.robotReply, '加分 10')
+  assert.equal(result.robotReply, '@广西一哥\n加分 10')
 })

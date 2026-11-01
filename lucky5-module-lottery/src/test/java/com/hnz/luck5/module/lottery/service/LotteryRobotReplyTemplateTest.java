@@ -26,8 +26,8 @@ class LotteryRobotReplyTemplateTest {
     void shouldFormatBetReceiptLikeReferenceRobot() {
         assertThat(template.betReceipt("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√√"
-                        + "\n【编号】3\n【套内】:36\n【套外】:360.00\n【面积】:26764.45"
+                .isEqualTo("@露露\n【入住时间】194\n654倒二定各10\n【户型审核成功】√√√"
+                        + "\n【编号】3\n【室内】:36\n【室外】:360.00\n【面积】:26764.45"
                         + "\n\n点击退码");
     }
 
@@ -35,7 +35,7 @@ class LotteryRobotReplyTemplateTest {
     void shouldPutEachCombinedInstructionOnItsOwnLine() {
         assertThat(template.betReceipt("玩家2", "20260809194", "2501各2,5201各2,2015各2", 2, 3,
                 new BigDecimal("6"), new BigDecimal("100")))
-                .contains("[挂牌时间]194\n2501各2\n5201各2\n2015各2\n【户型审核成功】");
+                .contains("【入住时间】194\n2501各2\n5201各2\n2015各2\n【户型审核成功】");
     }
 
     @Test
@@ -56,8 +56,8 @@ class LotteryRobotReplyTemplateTest {
                 new BigDecimal("360"), new BigDecimal("26764.45"));
 
         assertThat(template.publicBetReceipt("露露", privateReceipt))
-                .contains("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√√",
-                        "【编号】3", "【套内】:36", "【套外】:360.00", "【面积】:26764.45", "点击退码")
+                .contains("@露露\n【入住时间】194\n654倒二定各10\n【户型审核成功】√√√",
+                        "【编号】3", "【室内】:36", "【室外】:360.00", "【面积】:26764.45", "点击退码")
                 .doesNotContain("共 36 注", "合计 360.00");
         assertThat(template.publicBetReceipt("露露", "下注成功，订单号 O1001"))
                 .isEqualTo("@露露\n下注成功");
@@ -78,8 +78,8 @@ class LotteryRobotReplyTemplateTest {
                 new BigDecimal("2"), new BigDecimal("43"));
 
         assertThat(template.cancelSucceeded(receipt))
-                .isEqualTo("@玩家2\n[挂牌时间]153\n三现全倒112各2\n【户型审核成功】√√√"
-                        + "\n【编号】4\n【套内】:1\n【套外】:2.00\n【面积】:43.00"
+                .isEqualTo("@玩家2\n【入住时间】153\n三现全倒112各2\n【户型审核成功】√√√"
+                        + "\n【编号】4\n【室内】:1\n【室外】:2.00\n【面积】:43.00"
                         + "\n\n已退码")
                 .doesNotContain("退码成功：");
         assertThat(template.cancelSucceeded(template.cancelSucceeded(receipt)))
@@ -94,8 +94,8 @@ class LotteryRobotReplyTemplateTest {
                 "5962033785962倒四定各0.1", 3000, new BigDecimal("300"),
                 new BigDecimal("19451.6"));
 
-        assertThat(receipt).isEqualTo("@晓琳\n[挂牌时间]20261015268\n【编号】： 12"
-                + "\n5962033785962倒四定各0.1\n【套内】：3000"
+        assertThat(receipt).isEqualTo("@晓琳\n【入住时间】20261015268\n【编号】： 12"
+                + "\n5962033785962倒四定各0.1\n【室内】：3000"
                 + "\n【退面积】：300.00\n【面积】：19451.60\ntui碼成功");
         assertThat(template.cancelSucceeded(receipt)).isEqualTo(receipt);
     }
@@ -106,8 +106,8 @@ class LotteryRobotReplyTemplateTest {
                 .isEqualTo("@露露\n提交中");
         assertThat(template.betReceiptAwaitingDetails("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
-                .isEqualTo("@露露\n[挂牌时间]194\n654倒二定各10\n【户型审核成功】√√√"
-                        + "\n【编号】3\n【套内】:36\n【套外】:360.00\n【面积】:26764.45"
+                .isEqualTo("@露露\n【入住时间】194\n654倒二定各10\n【户型审核成功】√√√"
+                        + "\n【编号】3\n【室内】:36\n【室外】:360.00\n【面积】:26764.45"
                         + "\n\n正在确认明细")
                 .doesNotContain("盘口", "外盘");
         assertThat(template.betFailed("露露", new BigDecimal("360.00")))
@@ -173,8 +173,8 @@ class LotteryRobotReplyTemplateTest {
                 new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "654倒二定各10", true),
                 new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "千12百34二定各1", false)),
                 new BigDecimal("4374.10")))
-                .isEqualTo("@露露\n【目前房源】：\n[挂牌时间]194\n654倒二定各10"
-                        + "\n【状态】：房源已提交成功√√√\n\n[挂牌时间]194\n千12百34二定各1"
+                .isEqualTo("@露露\n【目前房源】：\n【入住时间】194\n654倒二定各10"
+                        + "\n【状态】：房源已提交成功√√√\n\n【入住时间】194\n千12百34二定各1"
                         + "\n【状态】：正在确认明细\n\n【您目前】：\n4374.1");
         assertThat(template.profitLoss("露露", new BigDecimal("1265.70")))
                 .isEqualTo("@露露\nyk：1265.7");

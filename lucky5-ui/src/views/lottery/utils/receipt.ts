@@ -3,6 +3,9 @@ import { cancelSuccessText } from '../room/replyTemplates'
 
 export const receiptText = (value: string) => {
   const normalizedValue = value
+    .replace(/\[挂牌时间\]|【挂牌时间】/g, '【入住时间】')
+    .replace(/【套内】/g, '【室内】')
+    .replace(/【套外】/g, '【室外】')
     .replace(/【户型审核成功】(?:[√✓]{2,3}|☑️☑️☑️)/g, '【户型审核成功】√√√')
   const cancelSuccess = value
     .split('\n')
@@ -10,10 +13,10 @@ export const receiptText = (value: string) => {
   const body = cancelSuccess
     ? normalizedValue
     : normalizedValue
-        .replace(/【(编号|套内|套外|面积)】：/g, '【$1】:')
+        .replace(/【(编号|室内|室外|面积)】：/g, '【$1】:')
         .replace(/【编号】:\s*(\d+)/g, '【编号】$1')
         .replace(
-          /【(套外|面积)】:\s*(\d+(?:\.\d+)?)/g,
+          /【(室外|面积)】:\s*(\d+(?:\.\d+)?)/g,
           (_, label, amount) => `【${label}】:${Number(amount).toFixed(2)}`
         )
   return body

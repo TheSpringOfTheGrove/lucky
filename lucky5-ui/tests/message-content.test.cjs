@@ -37,20 +37,24 @@ const component = load(compileScript(descriptor, { id: 'audit-message', inlineTe
 const render = (row) => renderToString(vue.h(component, { row }))
 
 test('room and audit share receipt punctuation, amounts and action handling', () => {
-  const text = '@会员\n【户型审核成功】✓✓\n【编号】： 2\n【套外】：560\n【面积】：680\n\n点击退码'
-  assert.equal(receipt.receiptText(text), '@会员\n【户型审核成功】√√√\n【编号】2\n【套外】:560.00\n【面积】:680.00')
+  const text = '@会员\n[挂牌时间]035\n【户型审核成功】✓✓\n【编号】： 2\n【套内】：49\n【套外】：560\n【面积】：680\n\n点击退码'
+  assert.equal(receipt.receiptText(text), '@会员\n【入住时间】035\n【户型审核成功】√√√\n【编号】2\n【室内】:49\n【室外】:560.00\n【面积】:680.00')
   assert.equal(receipt.receiptAction(text), 'cancelable')
   assert.equal(receipt.receiptAction(text + '\n已退码'), 'canceled')
 })
 
 test('current customer room wording is consistent for transitions and saved replies', () => {
-  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('OPEN'), '★★★开始——答题★★★')
-  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('CLOSED'), '★★★停止——答题★★★')
+  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('OPEN'), '★★★★★开始———答题★★★★★')
+  assert.equal(replyTemplates.roomReplyTemplates.issueTransition('CLOSED'), '★★★★★停止———答题★★★★★')
   assert.equal(replyTemplates.normalizeRoomReply('【状态】:房源已录入成功✓✓'),
     '【状态】：房源已提交成功√√√')
   assert.equal(receipt.receiptText('【户型审核成功】√√\n点击退码'), '【户型审核成功】√√√')
   assert.equal(receipt.receiptText('【户型审核成功】☑️☑️☑️\n点击退码'), '【户型审核成功】√√√')
   assert.equal(replyTemplates.normalizeRoomReply('【状态】：房源已提交成功✅✅✅'), '【状态】：房源已提交成功√√√')
+  assert.equal(replyTemplates.normalizeRoomReply('[挂牌时间]035\n【套内】:49\n【套外】:980.00'),
+    '【入住时间】035\n【室内】:49\n【室外】:980.00')
+  assert.equal(receipt.receiptText('[挂牌时间]035\n【套内】：49\n【套外】：980.00\ntui碼成功'),
+    '【入住时间】035\n【室内】：49\n【室外】：980.00')
 })
 
 test('robot cancel label is orange and readonly; player text is not an action', async () => {

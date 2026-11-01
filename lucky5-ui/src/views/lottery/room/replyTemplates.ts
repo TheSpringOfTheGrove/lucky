@@ -3,6 +3,9 @@ const money = (value: number) => Number(value || 0).toFixed(2)
 export const cancelSuccessText = 'tui碼成功'
 
 export const normalizeRoomReply = (value: string) => value
+  .replace(/\[挂牌时间\]|【挂牌时间】/g, '【入住时间】')
+  .replace(/【套内】/g, '【室内】')
+  .replace(/【套外】/g, '【室外】')
   .replace(/房源已录入成功[√✓]{2}/g, '房源已提交成功√√√')
   .replace(/房源已提交成功✅✅✅/g, '房源已提交成功√√√')
   .replace(/【户型审核成功】(?:[√✓]{2,3}|☑️☑️☑️)/g, '【户型审核成功】√√√')
@@ -27,6 +30,7 @@ export const resolveDragonTiger = (numbers: string[], storedResult = '') => {
 }
 
 export const roomAmountRecordPresentation = (record: {
+  member?: string
   type: string
   status: string
   remark: string
@@ -36,6 +40,7 @@ export const roomAmountRecordPresentation = (record: {
   const isRebate = record.type === '返水' || record.recordSource === 'REBATE'
   const isTransfer = !isRebate && (record.type === '上分' || record.type === '下分')
   const isMemberRequest = isTransfer && record.remark !== '后台手动操作'
+  const memberPrefix = isTransfer && record.member?.trim() ? `@${record.member.trim()}\n` : ''
   return {
     relatedCommandType: isTransfer
       ? record.type === '上分'
@@ -47,13 +52,13 @@ export const roomAmountRecordPresentation = (record: {
     memberCommand: isMemberRequest
       ? `${record.type === '上分' ? '上' : '下'}${money(record.amount)}`
       : '',
-    robotReply: isRebate
+    robotReply: memberPrefix + (isRebate
       ? record.status === '已通过'
         ? '返水已入账'
         : `返水${record.status}`
       : isTransfer && record.status === '已通过'
         ? `${record.type === '上分' ? '加分' : '减分'} ${Number(record.amount || 0)}`
-        : `${record.type}${isMemberRequest ? '申请' : ''}${record.status}`
+        : `${record.type}${isMemberRequest ? '申请' : ''}${record.status}`)
   }
 }
 
@@ -63,7 +68,7 @@ export const roomReplyTemplates = {
   },
 
   issueTransition(status: string) {
-    return status === 'OPEN' ? '★★★开始——答题★★★' : '★★★停止——答题★★★'
+    return status === 'OPEN' ? '★★★★★开始———答题★★★★★' : '★★★★★停止———答题★★★★★'
   },
 
   draw(period: string, numbers: string[], storedDragonTiger = '') {

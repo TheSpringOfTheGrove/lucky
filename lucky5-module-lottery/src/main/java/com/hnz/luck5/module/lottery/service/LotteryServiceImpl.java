@@ -586,7 +586,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "member", item.getMember(), "period", item.getPeriod(),
                 "content", item.getContent(), "status", item.getStatus(), "orderId", item.getOrderId(), "error", item.getError(),
                 "commandType", item.getCommandType(), "messageType", value(item.getMessageType(), TYPE_PLAYER),
-                "reply", roomDisplayText(normalizeCheckMarks(item.getReply())), "processedAt", date(item.getProcessedAt()),
+                "reply", roomDisplayText(normalizeHistoricalRoomReply(item.getReply())), "processedAt", date(item.getProcessedAt()),
                 "createdAt", date(item.getCreateTime()), "sentAt", date(item.getCreateTime()),
                 "replyUpdatedAt", StrUtil.isBlank(item.getReply()) ? null : date(item.getUpdateTime()),
                 "time", date(item.getCreateTime()));
@@ -618,7 +618,7 @@ public class LotteryServiceImpl implements LotteryService {
 
     /** The audit view and room replay the same receipt, including its current cancel state. */
     private String roomRobotReply(MessageDO item) {
-        String reply = roomDisplayText(normalizeCheckMarks(value(item.getReply(), "")));
+        String reply = roomDisplayText(normalizeHistoricalRoomReply(value(item.getReply(), "")));
         if (DRAW_RESULT_COMMANDS.contains(value(item.getCommandType(), ""))
                 && value(item.getContent(), "").replaceAll("\\D", "").matches("\\d{5}")) {
             return robotReplyTemplate.drawResult(item.getPeriod(), item.getContent());
@@ -634,13 +634,17 @@ public class LotteryServiceImpl implements LotteryService {
         return reply;
     }
 
-    private String normalizeCheckMarks(String text) {
+    private String normalizeHistoricalRoomReply(String text) {
         if (text == null) return null;
         return text.replaceAll("【户型审核成功】(?:√{2,3}|✓{2,3}|☑️☑️☑️)", "【户型审核成功】√√√")
                 .replace("房源已录入成功✓✓", "房源已提交成功√√√")
                 .replace("房源已录入成功√√", "房源已提交成功√√√")
                 .replace("房源已提交成功✅✅✅", "房源已提交成功√√√")
-                .replace("【状态】:房源已提交成功", "【状态】：房源已提交成功");
+                .replace("【状态】:房源已提交成功", "【状态】：房源已提交成功")
+                .replace("[挂牌时间]", "【入住时间】")
+                .replace("【挂牌时间】", "【入住时间】")
+                .replace("【套内】", "【室内】")
+                .replace("【套外】", "【室外】");
     }
 
     /**

@@ -32,6 +32,7 @@ export interface RoomOrder {
 
 export interface RoomAmountRecord {
   id: string
+  member?: string
   recordSource?: 'PLAYER' | 'AUTO_PROXY'
   type: string
   amount: number
