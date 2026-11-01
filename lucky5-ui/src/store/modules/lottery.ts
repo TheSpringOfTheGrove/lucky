@@ -119,7 +119,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
       hasPassword: false,
       alertValue: 0,
       bossMode: false,
-      playType: 2,
+      playType: 0,
       useProxy: true
     },
     market: {

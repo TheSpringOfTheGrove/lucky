@@ -205,7 +205,7 @@ public class LotteryOwnerInitializationService {
                 changed = true;
             }
             if (config.getPlayType() == null || config.getPlayType() < 0 || config.getPlayType() > 2) {
-                config.setPlayType(value(template == null ? null : template.getPlayType(), 2));
+                config.setPlayType(0);
                 changed = true;
             }
             if (config.getUseProxy() == null) {
@@ -236,7 +236,7 @@ public class LotteryOwnerInitializationService {
         config.setMarketPasswordEncrypted("");
         config.setAlertValue(value(template == null ? null : template.getAlertValue(), ZERO));
         config.setBossMode(true);
-        config.setPlayType(value(template == null ? null : template.getPlayType(), 2));
+        config.setPlayType(0);
         config.setUseProxy(value(template == null ? null : template.getUseProxy(), true));
         lotteryConfigMapper.insert(config);
     }

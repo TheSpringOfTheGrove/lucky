@@ -9,7 +9,7 @@ const form = reactive({
   password: '',
   alertValue: 0,
   bossMode: false,
-  playType: 2,
+  playType: 0,
   useProxy: true
 })
 
@@ -17,7 +17,8 @@ watch(
   () => store.config,
   (value) =>
     Object.assign(form, value, {
-      password: value.password || ''
+      password: value.password || '',
+      playType: 0
     }),
   { deep: true, immediate: true }
 )
@@ -65,13 +66,6 @@ onBeforeUnmount(() => {
           <el-select v-model="form.bossMode">
             <el-option label="关闭" :value="false" />
             <el-option label="开启" :value="true" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="玩法">
-          <el-select v-model="form.playType">
-            <el-option label="普通" :value="0" />
-            <el-option label="龙虎和" :value="1" />
-            <el-option label="普通+龙虎和" :value="2" />
           </el-select>
         </el-form-item>
         <el-form-item class="legacy-form-actions">

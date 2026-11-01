@@ -25,9 +25,13 @@ public class LotteryDrawHistoryImageRenderer {
 
     /** Replay saved old snapshots in the selected card style without changing their numbers or times. */
     public static String completeSnapshot(String image) {
-        if (image == null || image.contains("data-draw-format=\"3\"")
+        if (image == null || image.contains("data-draw-format=\"4\"")
                 || !image.startsWith("<svg ") || !image.contains("width=\"381\" height=\"661\"")) {
             return image;
+        }
+        if (image.contains("data-draw-format=\"3\"")) {
+            return image.replace("data-draw-format=\"3\"", "data-draw-format=\"4\"")
+                    .replaceAll("(<text x=\"329\" y=\"\\d+\"[^>]*>)(龙|虎|和)(</text>)", "$1✅$3");
         }
         Map<Integer, LegacyRow> legacyRows = new TreeMap<>();
         Matcher matcher = LEGACY_TEXT.matcher(image);
@@ -61,7 +65,7 @@ public class LotteryDrawHistoryImageRenderer {
 
     private static String renderCard(List<Row> history) {
         StringBuilder svg = new StringBuilder(8500);
-        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"3\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"4\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
                 .append("<rect width=\"381\" height=\"661\" rx=\"16\" fill=\"#e8f3f2\"/>");
         label(svg, 14, 32, "次数", "#31575b", 14, true);
         label(svg, 80, 32, "时间", "#31575b", 14, true);
@@ -85,12 +89,8 @@ public class LotteryDrawHistoryImageRenderer {
                 centerLabel(svg, x + 11, baseline, String.valueOf(result.charAt(digit)),
                         digitColor(result.charAt(digit)), 15);
             }
-            // Only the first and fourth balls determine the result; ball five is display-only.
-            String outcome = result.charAt(0) > result.charAt(3) ? "龙"
-                    : result.charAt(0) < result.charAt(3) ? "虎" : "和";
-            String outcomeColor = "龙".equals(outcome) ? "#da3975"
-                    : "虎".equals(outcome) ? "#3070d2" : "#1f9e61";
-            label(svg, 329, baseline, outcome, outcomeColor, 14, true);
+            // This customer shows a completed draw mark instead of the optional 龙虎和 mode.
+            label(svg, 329, baseline, "✅", "#1f9e61", 15, true);
         }
         return svg.append("</svg>").toString();
     }

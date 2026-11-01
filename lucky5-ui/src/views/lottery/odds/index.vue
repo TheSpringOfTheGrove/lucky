@@ -50,7 +50,7 @@ const rows = reactive<OddsRow[]>([
   { id: 'regexh', label: '和', rate: 0, minLimit: 0, maxLimit: 0 }
 ])
 
-const playType = computed(() => Number(store.config.playType ?? 2))
+const playType = computed(() => Number(store.config.playType ?? 0))
 const playTypeLabel = computed(() => {
   if (playType.value === 0) return '普通'
   if (playType.value === 1) return '龙虎和'

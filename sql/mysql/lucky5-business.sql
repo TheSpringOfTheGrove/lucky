@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_config` (
   `chat_url` varchar(500) NOT NULL DEFAULT '', `upstream_url` varchar(500) NOT NULL DEFAULT '',
   `upstream_account` varchar(100) NOT NULL DEFAULT '', `market_password_encrypted` varchar(1000) NOT NULL DEFAULT '',
   `alert_value` decimal(18,2) NOT NULL DEFAULT 0, `boss_mode` bit(1) NOT NULL DEFAULT b'0',
-  `play_type` tinyint NOT NULL DEFAULT 2, `use_proxy` bit(1) NOT NULL DEFAULT b'1',
+  `play_type` tinyint NOT NULL DEFAULT 0, `use_proxy` bit(1) NOT NULL DEFAULT b'1',
   `creator` varchar(64) DEFAULT '', `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updater` varchar(64) DEFAULT '', `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,

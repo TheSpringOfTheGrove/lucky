@@ -280,7 +280,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "account", item == null ? "" : value(item.getUpstreamAccount(), ""), "password", "",
                 "hasPassword", item != null && StrUtil.isNotBlank(item.getMarketPasswordEncrypted()),
                 "alertValue", item == null ? ZERO : money(item.getAlertValue()),
-                "bossMode", item != null && bool(item.getBossMode()), "playType", item == null ? 2 : value(item.getPlayType(), 2),
+                "bossMode", item != null && bool(item.getBossMode()), "playType", 0,
                 "useProxy", item == null || bool(item.getUseProxy()), "bound", item != null,
                 "realMarketWritesEnabled", marketOrderClient.isRealWritesEnabled());
     }
@@ -755,7 +755,8 @@ public class LotteryServiceImpl implements LotteryService {
         config.setMarketPasswordEncrypted(encrypted);
         config.setAlertValue(value(reqVO.getAlertValue(), ZERO));
         config.setBossMode(reqVO.getBossMode());
-        config.setPlayType(reqVO.getPlayType());
+        // The Chen Guan Xi room is normal-play only, including direct API saves.
+        config.setPlayType(0);
         config.setUseProxy(reqVO.getUseProxy());
         lotteryConfigMapper.updateById(config);
         if (credentialsChanged || modeChanged) {
@@ -1771,10 +1772,7 @@ public class LotteryServiceImpl implements LotteryService {
         List<LotteryBettingService.ParsedBet> parsed = parsedCommands.stream()
                 .flatMap(command -> command.items().stream()).toList();
         long parseElapsedMs = elapsedMillis(parseStartedAt);
-        boolean hasDragonTiger = parsed.stream().anyMatch(item -> "龙虎".equals(item.play()));
-        boolean hasNormal = parsed.stream().anyMatch(item -> !"龙虎".equals(item.play()));
-        int playType = value(config.getPlayType(), 2);
-        if (playType == 0 && hasDragonTiger || playType == 1 && hasNormal) throw exception(PLAY_TYPE_DISABLED);
+        if (parsed.stream().anyMatch(item -> "龙虎".equals(item.play()))) throw exception(PLAY_TYPE_DISABLED);
         BigDecimal total = money(parsed.stream().map(LotteryBettingService.ParsedBet::amount).reduce(ZERO, BigDecimal::add));
         if (value(member.getBalance(), ZERO).compareTo(total) < 0) throw exception(MEMBER_BALANCE_NOT_ENOUGH);
         // A market capability rejection is shown as a normal robot reply by the room handler. Validate it
@@ -3499,6 +3497,7 @@ public class LotteryServiceImpl implements LotteryService {
             MemberDO member = requireRoomAccess(reqVO).member();
             List<LotteryBettingService.ParsedBet> items = bettingService.parsePreview(reqVO.getContent(),
                     getEffectiveOdds(member.getUserId()));
+            if (items.stream().anyMatch(item -> "龙虎".equals(item.play()))) throw exception(PLAY_TYPE_DISABLED);
             int previewLimit = 500;
             return map("count", items.size(), "total", money(items.stream().map(LotteryBettingService.ParsedBet::amount)
                             .reduce(ZERO, BigDecimal::add)),
@@ -4088,6 +4087,7 @@ public class LotteryServiceImpl implements LotteryService {
         if (item != null) return item;
         item = new LotteryConfigDO();
         item.setUserId(userId);
+        item.setPlayType(0);
         lotteryConfigMapper.insert(item);
         return lotteryConfigMapper.selectById(item.getId());
     }
