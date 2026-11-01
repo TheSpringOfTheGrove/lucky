@@ -3,7 +3,9 @@ const money = (value: number) => Number(value || 0).toFixed(2)
 export const cancelSuccessText = 'tui碼成功'
 
 export const normalizeRoomReply = (value: string) => value
-  .replace(/房源已录入成功[√✓]{2}/g, '房源已提交成功✅✅✅')
+  .replace(/房源已录入成功[√✓]{2}/g, '房源已提交成功√√√')
+  .replace(/房源已提交成功✅✅✅/g, '房源已提交成功√√√')
+  .replace(/【户型审核成功】(?:[√✓]{2,3}|☑️☑️☑️)/g, '【户型审核成功】√√√')
   .replace(/【状态】:房源已提交成功/g, '【状态】：房源已提交成功')
   .replace(/审批通过\[加油(\d+(?:\.\d+)?)\]/g, '加分 $1')
   .replace(/考核成功下(\d+(?:\.\d+)?)/g, '减分 $1')

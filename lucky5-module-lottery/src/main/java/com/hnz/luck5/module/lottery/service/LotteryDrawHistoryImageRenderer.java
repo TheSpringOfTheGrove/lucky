@@ -15,6 +15,8 @@ public class LotteryDrawHistoryImageRenderer {
 
     private static final Pattern LEGACY_TEXT = Pattern.compile(
             "<text x=\"(14|71|158|195|232|269|306)\" y=\"(\\d+)\"[^>]*>([^<]*)</text>");
+    private static final Pattern CARD_TEXT = Pattern.compile(
+            "<text x=\"(25|88|196|222|248|274|300)\" y=\"(\\d+)\"[^>]*>([^<]*)</text>");
 
     public record Row(String period, String time, String result) {
     }
@@ -25,30 +27,30 @@ public class LotteryDrawHistoryImageRenderer {
 
     /** Replay saved old snapshots in the selected card style without changing their numbers or times. */
     public static String completeSnapshot(String image) {
-        if (image == null || image.contains("data-draw-format=\"4\"")
+        if (image == null || image.contains("data-draw-format=\"5\"")
                 || !image.startsWith("<svg ") || !image.contains("width=\"381\" height=\"661\"")) {
             return image;
         }
-        if (image.contains("data-draw-format=\"3\"")) {
-            return image.replace("data-draw-format=\"3\"", "data-draw-format=\"4\"")
-                    .replaceAll("(<text x=\"329\" y=\"\\d+\"[^>]*>)(龙|虎|和)(</text>)", "$1✅$3");
-        }
+        boolean card = image.contains("data-draw-format=\"3\"") || image.contains("data-draw-format=\"4\"");
         Map<Integer, LegacyRow> legacyRows = new TreeMap<>();
-        Matcher matcher = LEGACY_TEXT.matcher(image);
+        Matcher matcher = (card ? CARD_TEXT : LEGACY_TEXT).matcher(image);
         while (matcher.find()) {
             int baseline = Integer.parseInt(matcher.group(2));
-            if (baseline < 72 || (baseline - 72) % 41 != 0 || (baseline - 72) / 41 >= 15) {
+            int firstBaseline = card ? 74 : 72;
+            int rowHeight = card ? 40 : 41;
+            if (baseline < firstBaseline || (baseline - firstBaseline) % rowHeight != 0
+                    || (baseline - firstBaseline) / rowHeight >= 15) {
                 continue;
             }
             int x = Integer.parseInt(matcher.group(1));
             String value = matcher.group(3);
             LegacyRow row = legacyRows.computeIfAbsent(baseline, ignored -> new LegacyRow());
-            if (x == 14) {
+            if (x == (card ? 25 : 14)) {
                 row.period = value;
-            } else if (x == 71) {
+            } else if (x == (card ? 88 : 71)) {
                 row.time = value;
             } else if (value.length() == 1 && Character.isDigit(value.charAt(0))) {
-                row.result[(x - 158) / 37] = value.charAt(0);
+                row.result[card ? (x - 196) / 26 : (x - 158) / 37] = value.charAt(0);
             }
         }
         if (legacyRows.isEmpty()) return image;
@@ -65,11 +67,11 @@ public class LotteryDrawHistoryImageRenderer {
 
     private static String renderCard(List<Row> history) {
         StringBuilder svg = new StringBuilder(8500);
-        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"4\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"5\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
                 .append("<rect width=\"381\" height=\"661\" rx=\"16\" fill=\"#e8f3f2\"/>");
-        label(svg, 14, 32, "次数", "#31575b", 14, true);
-        label(svg, 80, 32, "时间", "#31575b", 14, true);
-        label(svg, 244, 32, "入住房号", "#31575b", 14, true);
+        label(svg, 25, 32, "次数", "#31575b", 16, true);
+        label(svg, 88, 32, "时间", "#31575b", 16, true);
+        label(svg, 185, 32, "入 住 房 号", "#31575b", 16, true);
         for (int index = 0; index < 15; index++) {
             int rowTop = 51 + index * 40;
             svg.append("<rect x=\"12\" y=\"").append(rowTop)
@@ -78,8 +80,8 @@ public class LotteryDrawHistoryImageRenderer {
             Row row = history.get(index);
             int baseline = rowTop + 23;
             String period = row.period() == null ? "" : row.period();
-            label(svg, 25, baseline, period.substring(Math.max(0, period.length() - 3)), "#177d81", 15, true);
-            label(svg, 88, baseline, row.time(), "#193b40", 14, false);
+            label(svg, 25, baseline, period.substring(Math.max(0, period.length() - 3)), "#177d81", 17, true);
+            label(svg, 88, baseline, row.time(), "#193b40", 16, true);
             String result = row.result() == null ? "" : row.result().replaceAll("\\D", "");
             if (result.length() != 5) continue;
             for (int digit = 0; digit < 5; digit++) {
@@ -87,10 +89,10 @@ public class LotteryDrawHistoryImageRenderer {
                 svg.append("<rect x=\"").append(x).append("\" y=\"").append(rowTop + 6)
                         .append("\" width=\"22\" height=\"24\" rx=\"5\" fill=\"#edf5f5\"/>");
                 centerLabel(svg, x + 11, baseline, String.valueOf(result.charAt(digit)),
-                        digitColor(result.charAt(digit)), 15);
+                        digitColor(result.charAt(digit)), 17);
             }
-            // This customer shows a completed draw mark instead of the optional 龙虎和 mode.
-            label(svg, 329, baseline, "✅", "#1f9e61", 15, true);
+            // Use a plain glyph so SVG fill controls the requested red color across browsers.
+            label(svg, 329, baseline, "√", "#e5484d", 20, true);
         }
         return svg.append("</svg>").toString();
     }

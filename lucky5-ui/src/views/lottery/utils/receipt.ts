@@ -3,7 +3,7 @@ import { cancelSuccessText } from '../room/replyTemplates'
 
 export const receiptText = (value: string) => {
   const normalizedValue = value
-    .replace(/【户型审核成功】[√✓]{2}/g, '【户型审核成功】☑️☑️☑️')
+    .replace(/【户型审核成功】(?:[√✓]{2,3}|☑️☑️☑️)/g, '【户型审核成功】√√√')
   const cancelSuccess = value
     .split('\n')
     .some((line) => [cancelSuccessText, '退码成功'].includes(line.trim()))

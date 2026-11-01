@@ -43,7 +43,7 @@ public class LotteryRobotReplyTemplate {
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
         String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
                 .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())
-                        + "\n【状态】：" + (order.confirmed() ? "房源已提交成功✅✅✅" : "正在确认明细"))
+                        + "\n【状态】：" + (order.confirmed() ? "房源已提交成功√√√" : "正在确认明细"))
                 .reduce((left, right) -> left + "\n\n" + right)
                 .orElse("目前无房源");
         return "@" + memberName + "\n【目前房源】：\n" + orders
@@ -229,7 +229,7 @@ public class LotteryRobotReplyTemplate {
     private String betReceipt(String memberName, String period, String content, int sequence, int itemCount,
                               BigDecimal amount, BigDecimal balance, String action) {
         return "@" + memberName + "\n[挂牌时间]" + periodSuffix(period) + "\n" + displayCommands(content)
-                + "\n【户型审核成功】☑️☑️☑️\n【编号】" + sequence
+                + "\n【户型审核成功】√√√\n【编号】" + sequence
                 + "\n【套内】:" + itemCount + "\n【套外】:" + receiptMoney(amount)
                 + "\n【面积】:" + receiptMoney(balance) + "\n\n" + action;
     }
