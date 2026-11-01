@@ -20,9 +20,7 @@ const { getPrefixCls } = useDesign()
 
 const prefixCls = getPrefixCls('user-info')
 
-// The legacy backend uses this fixed AdminLTE portrait as its default rather
-// than the generic avatar returned by the framework profile endpoint.
-const avatar = computed(() => defaultAvatar)
+const avatar = computed(() => userStore.user.avatar || defaultAvatar)
 const userName = computed(() => userStore.user.username || userStore.user.nickname || 'Admin')
 
 const loginOut = async () => {
