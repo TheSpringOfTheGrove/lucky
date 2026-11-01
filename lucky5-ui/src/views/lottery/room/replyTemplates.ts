@@ -5,6 +5,8 @@ export const cancelSuccessText = 'tui碼成功'
 export const normalizeRoomReply = (value: string) => value
   .replace(/房源已录入成功[√✓]{2}/g, '房源已提交成功✅✅✅')
   .replace(/【状态】:房源已提交成功/g, '【状态】：房源已提交成功')
+  .replace(/审批通过\[加油(\d+(?:\.\d+)?)\]/g, '加分 $1')
+  .replace(/考核成功下(\d+(?:\.\d+)?)/g, '减分 $1')
 
 export const cancelFailureText = (reason?: string) => {
   const detail = (reason || '当前订单不能退码')
@@ -47,7 +49,9 @@ export const roomAmountRecordPresentation = (record: {
       ? record.status === '已通过'
         ? '返水已入账'
         : `返水${record.status}`
-      : `${record.type}${isMemberRequest ? '申请' : ''}${record.status}`
+      : isTransfer && record.status === '已通过'
+        ? `${record.type === '上分' ? '加分' : '减分'} ${Number(record.amount || 0)}`
+        : `${record.type}${isMemberRequest ? '申请' : ''}${record.status}`
   }
 }
 
@@ -57,7 +61,7 @@ export const roomReplyTemplates = {
   },
 
   issueTransition(status: string) {
-    return status === 'OPEN' ? '^^★★★开始——答题★★★' : '^^★★★停止——答题★★★'
+    return status === 'OPEN' ? '★★★开始——答题★★★' : '★★★停止——答题★★★'
   },
 
   draw(period: string, numbers: string[], storedDragonTiger = '') {

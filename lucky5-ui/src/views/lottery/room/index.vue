@@ -24,7 +24,7 @@ import { receiptAction as parseReceiptAction, receiptText } from '../utils/recei
 import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
 import logo from '@/assets/imgs/logo.png'
 import robotAvatar from '@/assets/lottery/robot-avatar-chenguanxi.png'
-import scratchButton from '@/assets/lottery/scratch-button.jpg'
+import scratchButton from '@/assets/lottery/scratch-button-chenguanxi.png'
 import { useRoomChatViewport } from './useRoomChatViewport'
 
 type ChatKind = 'member' | 'other' | 'robot'

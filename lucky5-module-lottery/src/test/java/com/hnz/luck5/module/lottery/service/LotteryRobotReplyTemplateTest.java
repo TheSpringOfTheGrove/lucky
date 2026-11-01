@@ -138,7 +138,10 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.amountPending("旺旺杀米米")).isEqualTo("@旺旺杀米米\n请稍后");
         assertThat(template.amountAudited("旺旺杀米米", "上分", new BigDecimal("100.00"),
                 "已通过", new BigDecimal("65393.87")))
-                .isEqualTo("@旺旺杀米米\n审批通过[加油100]\n现在:65393.87");
+                .isEqualTo("@旺旺杀米米\n加分 100\n现在:65393.87");
+        assertThat(template.amountAudited("旺旺杀米米", "下分", new BigDecimal("50.00"),
+                "已通过", new BigDecimal("65343.87")))
+                .isEqualTo("@旺旺杀米米\n减分 50\n现在:65343.87");
         assertThat(template.amountAudited("旺旺杀米米", "下分", new BigDecimal("50.00"),
                 "已拒绝", new BigDecimal("65393.87")))
                 .isEqualTo("@旺旺杀米米\n下分审核不通过[下50]");

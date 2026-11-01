@@ -136,8 +136,8 @@ public class LotteryRobotReplyTemplate {
         String amountText = number(amount);
         if ("已通过".equals(status)) {
             return "上分".equals(type)
-                    ? "@" + memberName + "\n审批通过[加油" + amountText + "]\n现在:" + number(balance)
-                    : "@" + memberName + "\n考核成功下" + amountText + "\n现在:" + number(balance);
+                    ? "@" + memberName + "\n加分 " + amountText + "\n现在:" + number(balance)
+                    : "@" + memberName + "\n减分 " + amountText + "\n现在:" + number(balance);
         }
         return "@" + memberName + "\n" + type + "审核不通过["
                 + ("上分".equals(type) ? "上" : "下") + amountText + "]";
