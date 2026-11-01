@@ -27,11 +27,12 @@ public class LotteryDrawHistoryImageRenderer {
 
     /** Replay saved old snapshots in the selected card style without changing their numbers or times. */
     public static String completeSnapshot(String image) {
-        if (image == null || image.contains("data-draw-format=\"5\"")
+        if (image == null || image.contains("data-draw-format=\"6\"")
                 || !image.startsWith("<svg ") || !image.contains("width=\"381\" height=\"661\"")) {
             return image;
         }
-        boolean card = image.contains("data-draw-format=\"3\"") || image.contains("data-draw-format=\"4\"");
+        boolean card = image.contains("data-draw-format=\"3\"") || image.contains("data-draw-format=\"4\"")
+                || image.contains("data-draw-format=\"5\"");
         Map<Integer, LegacyRow> legacyRows = new TreeMap<>();
         Matcher matcher = (card ? CARD_TEXT : LEGACY_TEXT).matcher(image);
         while (matcher.find()) {
@@ -67,11 +68,11 @@ public class LotteryDrawHistoryImageRenderer {
 
     private static String renderCard(List<Row> history) {
         StringBuilder svg = new StringBuilder(8500);
-        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"5\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"6\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
                 .append("<rect width=\"381\" height=\"661\" rx=\"16\" fill=\"#e8f3f2\"/>");
         label(svg, 25, 32, "次数", "#31575b", 16, true);
         label(svg, 88, 32, "时间", "#31575b", 16, true);
-        label(svg, 185, 32, "入 住 房 号", "#31575b", 16, true);
+        label(svg, 185, 32, "VIP 入 住 房 号", "#31575b", 16, true);
         for (int index = 0; index < 15; index++) {
             int rowTop = 51 + index * 40;
             svg.append("<rect x=\"12\" y=\"").append(rowTop)

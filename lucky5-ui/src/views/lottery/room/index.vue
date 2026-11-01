@@ -27,7 +27,7 @@ import scratchButton from '@/assets/lottery/scratch-button-chenguanxi.png'
 import { useRoomChatViewport } from './useRoomChatViewport'
 
 type ChatKind = 'member' | 'other' | 'robot'
-type ChatType = 'text' | 'order' | 'amount' | 'draw'
+type ChatType = 'text' | 'transition' | 'order' | 'amount' | 'draw'
 
 const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
 const SCRATCH_PERIOD_SECONDS = 300
@@ -374,7 +374,7 @@ const chatMessages = computed<ChatItem[]>(() => {
     messages.push({
       id: `issue-transition-${transition.id}`,
       kind: 'robot',
-      type: 'text',
+      type: 'transition',
       content: roomReplyTemplates.issueTransition(transition.status),
       createdAt: transition.createdAt,
       displayTimeAt: transition.createdAt,
@@ -1520,7 +1520,7 @@ onBeforeUnmount(() => {
 
                 <pre
                   v-else
-                  :class="{ 'is-copyable': message.kind !== 'robot' }"
+                  :class="{ 'is-copyable': message.kind !== 'robot', 'is-transition': message.type === 'transition' }"
                   @click.stop="copyInstruction(message)"
                   @pointerdown="beginMessageLongPress(() => appendMessageContent(message))"
                   @pointerup="clearMessageLongPress"
@@ -2229,6 +2229,12 @@ onBeforeUnmount(() => {
   word-break: break-word;
   white-space: pre-wrap;
   user-select: text;
+}
+
+.chat-bubble pre.is-transition {
+  font-size: clamp(11px, 3.4vw, 14px);
+  letter-spacing: -0.3px;
+  white-space: nowrap;
 }
 
 .chat-bubble pre.reference-receipt {
