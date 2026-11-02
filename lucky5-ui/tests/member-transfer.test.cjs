@@ -6,6 +6,15 @@ const { runInNewContext } = require('node:vm')
 const ts = require('typescript')
 
 const source = readFileSync(resolve(__dirname, '../src/views/lottery/member/index.vue'), 'utf8')
+
+test('eat action is red only for members with eat enabled in both layouts', () => {
+  const buttons = source.match(/<el-button[^>]*@click="toggleEat\(row\)"[^>]*>/g) || []
+  assert.equal(buttons.length, 2)
+  for (const button of buttons) {
+    assert.match(button, /:type="row\.eatEnabled \? 'danger' : undefined"/)
+  }
+})
+
 const names = ['openTransfer', 'captureTransferAmount', 'parseTransferAmount', 'submitTransfer']
 const functions = {}
 function extract(text, filename, selected) {

@@ -406,7 +406,7 @@ onBeforeUnmount(stopMemberRefresh)
             <el-button size="small" @click="openLinks(row)">链接</el-button>
             <el-button size="small" @click="openTransfer(row, '上分')">上分</el-button>
             <el-button size="small" @click="openTransfer(row, '下分')">下分</el-button>
-            <el-button size="small" @click="toggleEat(row)">吃码</el-button>
+            <el-button size="small" :type="row.eatEnabled ? 'danger' : undefined" @click="toggleEat(row)">吃码</el-button>
             <el-button size="small" @click="clearMember(row)">清流水</el-button>
             <el-button size="small" @click="openDetails(row)">查询</el-button>
             <el-button size="small" @click="store.changeMemberAvatar(row.id)">换头像</el-button>
@@ -423,7 +423,7 @@ onBeforeUnmount(stopMemberRefresh)
               <el-button size="small" @click="openLinks(row)">链接</el-button>
               <el-button size="small" @click="openTransfer(row, '上分')">上</el-button>
               <el-button size="small" @click="openTransfer(row, '下分')">下</el-button>
-              <el-button size="small" @click="toggleEat(row)">吃</el-button>
+              <el-button size="small" :type="row.eatEnabled ? 'danger' : undefined" @click="toggleEat(row)">吃</el-button>
               <el-button size="small" @click="clearMember(row)">清</el-button>
               <el-button size="small" @click="openDetails(row)">查</el-button>
               <el-button size="small" @click="store.changeMemberAvatar(row.id)">换</el-button>
