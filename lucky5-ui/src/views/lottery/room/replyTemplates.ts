@@ -19,6 +19,7 @@ export const resolveDragonTiger = (numbers: string[], storedResult = '') => {
 }
 
 export const roomAmountRecordPresentation = (record: {
+  member: string
   type: string
   status: string
   remark: string
@@ -27,9 +28,13 @@ export const roomAmountRecordPresentation = (record: {
 }) => {
   const isRebate = record.type === '返水' || record.recordSource === 'REBATE'
   const isTransfer = !isRebate && (record.type === '上分' || record.type === '下分')
-  const isMemberRequest = isTransfer && record.remark !== '后台手动操作'
+  const isAdminTransfer = isTransfer && record.recordSource === 'ADMIN'
+  const isMemberRequest = isTransfer && !isAdminTransfer && record.remark !== '后台手动操作'
   return {
-    relatedCommandType: isTransfer
+    plainRobotReply: isAdminTransfer,
+    relatedCommandType: isAdminTransfer
+      ? ''
+      : isTransfer
       ? record.type === '上分'
         ? 'DEPOSIT_REQUEST'
         : 'WITHDRAW_REQUEST'
@@ -39,7 +44,9 @@ export const roomAmountRecordPresentation = (record: {
     memberCommand: isMemberRequest
       ? `${record.type === '上分' ? '上' : '下'}${money(record.amount)}`
       : '',
-    robotReply: isRebate
+    robotReply: isAdminTransfer
+      ? `@${record.member}\n${record.type}${Number(record.amount || 0)}`
+      : isRebate
       ? record.status === '已通过'
         ? '返水已入账'
         : `返水${record.status}`

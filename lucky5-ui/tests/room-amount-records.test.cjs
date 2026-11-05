@@ -64,3 +64,47 @@ test('manual transfer does not fabricate a member command', () => {
   assert.equal(result.relatedCommandType, 'DEPOSIT_REQUEST')
   assert.equal(result.robotReply, '上分已通过')
 })
+
+test('admin top-up shows only the named robot credit without a fake player command', () => {
+  const result = roomAmountRecordPresentation({
+    member: '22232',
+    type: '上分',
+    status: '已通过',
+    remark: '后台即时操作',
+    amount: 10000,
+    recordSource: 'ADMIN'
+  })
+  assert.equal(result.memberCommand, '')
+  assert.equal(result.relatedCommandType, '')
+  assert.equal(result.plainRobotReply, true)
+  assert.equal(result.robotReply, '@22232\n上分10000')
+})
+
+test('admin withdrawal shows only the named robot debit without a fake player command', () => {
+  const result = roomAmountRecordPresentation({
+    member: '22232',
+    type: '下分',
+    status: '已通过',
+    remark: '后台即时操作',
+    amount: 250.5,
+    recordSource: 'ADMIN'
+  })
+  assert.equal(result.memberCommand, '')
+  assert.equal(result.relatedCommandType, '')
+  assert.equal(result.plainRobotReply, true)
+  assert.equal(result.robotReply, '@22232\n下分250.5')
+})
+
+test('member top-up still keeps the member request and audit reply', () => {
+  const result = roomAmountRecordPresentation({
+    member: '22232',
+    type: '上分',
+    status: '已通过',
+    remark: '网页群消息申请',
+    amount: 100,
+    recordSource: 'PLAYER'
+  })
+  assert.equal(result.memberCommand, '上100.00')
+  assert.equal(result.plainRobotReply, false)
+  assert.equal(result.robotReply, '上分申请已通过')
+})
