@@ -565,7 +565,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       messages.push({
         id: `robot-amount-${amountRecord.id}`,
         kind: 'robot',
-        type: 'amount',
+        type: presentation.plainRobotReply ? 'text' : 'amount',
         content: presentation.robotReply,
         createdAt:
           amountRecord.auditedAt ||
