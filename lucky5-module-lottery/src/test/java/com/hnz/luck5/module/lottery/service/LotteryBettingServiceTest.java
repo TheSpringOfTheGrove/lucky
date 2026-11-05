@@ -42,6 +42,23 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void fourPositionSizePatternIsOneFixedCommandWithCartesianDigits() {
+        List<LotteryBettingService.ParsedBet> bets = service.parse("大大小小各1", odds);
+
+        assertThat(bets).hasSize(625)
+                .allSatisfy(bet -> {
+                    assertThat(bet.play()).isEqualTo("四定位");
+                    assertThat(bet.amount()).isEqualByComparingTo("1");
+                });
+        assertThat(bets).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("5500", "9944")
+                .doesNotContain("4499", "5555");
+        assertThat(bets).containsExactlyElementsOf(service.parse(
+                "千56789百56789十01234个01234各1", odds));
+        assertThat(service.parse("大小各1", odds)).hasSize(2);
+    }
+
+    @Test
     void parsesFullFourPositionCartesianCommand() {
         List<LotteryBettingService.ParsedBet> bets = service.parse(
                 "千0123456789百0123456789十0123456789尾0123456789各0.1", odds);
@@ -391,6 +408,21 @@ class LotteryBettingServiceTest {
         assertThat(service.parse("除配12配3二定各1", odds)).hasSize(576);
         assertThat(service.parse("配1配2配3三定各1", odds)).hasSize(24);
         assertThat(service.parse("配1配2配3配4四定各1", odds)).hasSize(24);
+    }
+
+    @Test
+    void playNameBeforeRotatedPoolsUsesTheSameDistinctPositionMatching() {
+        String firstFilters = "两数合15三数合1234含1368除对数05除四兄弟各1";
+        List<LotteryBettingService.ParsedBet> first = service.parse(
+                "四定配258369配258369" + firstFilters, odds);
+        assertThat(first).hasSize(3_830)
+                .containsExactlyElementsOf(service.parse("配258369配258369四定" + firstFilters, odds));
+
+        String secondFilters = "两数合468三数合7890含1368除对数49除小小小大除四兄弟各1";
+        List<LotteryBettingService.ParsedBet> second = service.parse(
+                "四定配1234567配1234567" + secondFilters, odds);
+        assertThat(second).hasSize(5_529)
+                .containsExactlyElementsOf(service.parse("配1234567配1234567四定" + secondFilters, odds));
     }
 
     @Test

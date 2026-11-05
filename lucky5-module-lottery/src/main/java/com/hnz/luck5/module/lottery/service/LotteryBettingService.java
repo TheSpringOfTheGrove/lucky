@@ -105,6 +105,19 @@ public class LotteryBettingService {
         if (content.isBlank()) {
             throw exception(BET_CONTENT_INVALID);
         }
+        // A standalone four-position size pattern is a four-digit fixed bet, not repeated
+        // independent 大/小 bets (which would also collapse duplicate selections below).
+        Matcher fourSizes = Pattern.compile("^([大小]{4})各(\\d+(?:\\.\\d+)?)$").matcher(content);
+        if (fourSizes.matches()) {
+            StringBuilder positioned = new StringBuilder();
+            String positions = "千百十个";
+            for (int index = 0; index < positions.length(); index++) {
+                positioned.append(positions.charAt(index))
+                        .append(fourSizes.group(1).charAt(index) == '大' ? "56789" : "01234");
+            }
+            positioned.append("各").append(fourSizes.group(2));
+            return parseReference(positioned.toString(), odds).stream().map(IndexedBet::bet).toList();
+        }
         List<IndexedBet> values = new ArrayList<>();
         values.addAll(parseReference(content, odds));
 
@@ -840,6 +853,17 @@ public class LotteryBettingService {
     }
 
     private RotatedFixed extractRotatedFixed(String expression) {
+        // The legacy room also accepts the play name before the two rotated pools: 四定配A配B.
+        Matcher modeFirst = Pattern.compile("^([二三四])(?:字)?定配([0-9]+(?:配[0-9]+)+)")
+                .matcher(expression);
+        if (modeFirst.find()) {
+            int count = CHINESE_COUNT.get(modeFirst.group(1).charAt(0));
+            List<Set<Character>> pools = Arrays.stream(modeFirst.group(2).split("配"))
+                    .map(this::chars)
+                    .toList();
+            if (pools.size() < 2 || pools.size() > count) throw exception(BET_CONTENT_INVALID);
+            return new RotatedFixed(pools, count, false);
+        }
         Matcher matcher = Pattern.compile("^(取|除)?(?:配)?([0-9]+(?:配[0-9]+)+)配?([二三四])(?:字)?定")
                 .matcher(expression);
         if (!matcher.find()) return null;
