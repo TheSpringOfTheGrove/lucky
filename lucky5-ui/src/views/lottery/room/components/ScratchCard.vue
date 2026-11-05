@@ -51,10 +51,10 @@ const resetCover = async () => {
   context.fillStyle = '#c4c6c8'
   context.fillRect(0, 0, rect.width, rect.height)
   context.fillStyle = '#f3f3f3'
-  context.font = '600 18px Arial, sans-serif'
+  context.font = '700 28px "Microsoft YaHei", Arial, sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
-  context.fillText('刮开查看开奖结果', rect.width / 2, rect.height / 2)
+  context.fillText('刮开涂层，最后一舞', rect.width / 2, rect.height / 2)
   context.globalCompositeOperation = 'destination-out'
   context.lineCap = 'round'
   context.lineJoin = 'round'

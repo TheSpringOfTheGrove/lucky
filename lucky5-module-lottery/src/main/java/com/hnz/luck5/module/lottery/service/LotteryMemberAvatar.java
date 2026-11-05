@@ -5,7 +5,7 @@ import java.util.concurrent.ThreadLocalRandom;
 /** Shared avatar choices for manually and automatically created members. */
 final class LotteryMemberAvatar {
 
-    static final int COUNT = 50;
+    static final int COUNT = 60;
 
     private LotteryMemberAvatar() {
     }

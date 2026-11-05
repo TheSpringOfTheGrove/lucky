@@ -46,7 +46,7 @@ class LotteryMessageQueryTest {
 
         assertThat(first.getTotal()).isEqualTo(3);
         assertThat(first.getList()).extracting(row -> row.get("sender"))
-                .containsExactly("机器人", "玩家A");
+                .containsExactly("赏金女王", "玩家A");
         assertThat(first.getList().get(0).get("content")).isEqualTo("@玩家A\n下注成功");
 
         firstPage.setPageNo(2);
@@ -65,7 +65,7 @@ class LotteryMessageQueryTest {
 
         assertThat(result.getTotal()).isEqualTo(2);
         assertThat(result.getList()).extracting(row -> row.get("sender"))
-                .containsExactly("机器人", "玩家A");
+                .containsExactly("赏金女王", "玩家A");
     }
 
     @Test
@@ -84,9 +84,9 @@ class LotteryMessageQueryTest {
 
         assertThat(result.getTotal()).isEqualTo(3);
         assertThat(result.getList()).extracting(row -> row.get("sender"))
-                .containsExactly("机器人", "A01", "机器人");
+                .containsExactly("赏金女王", "A01", "赏金女王");
         assertThat(result.getList()).extracting(row -> row.get("content"))
-                .containsExactly("@A01\n【户型审核成功】√√", "大100", "^^--| 180期开奖结果-0|6|2|2|2|虎");
+                .containsExactly("@A01\n【户型审核成功】√√√", "大100", "^^--| 180期开奖结果-0|6|2|2|2|虎");
         Map<String, Object> drawRow = result.getList().get(2);
         assertThat(drawRow).containsEntry("kind", "robot").containsEntry("commandType", "DRAW_RESULT");
         String image = drawRow.get("drawImage").toString();
@@ -126,7 +126,7 @@ class LotteryMessageQueryTest {
 
         assertThat(roomMessage).containsEntry("status", "已退码");
         assertThat(roomMessage.get("reply").toString())
-                .contains("[挂牌时间]001", "【户型审核成功】", "点击退码")
+                .contains("【入住时间】001", "【户型审核成功】", "点击退码")
                 .doesNotContain("tui碼成功");
         when(messageMapper.selectList(any())).thenReturn(List.of(bet));
         Map<String, Object> auditReply = service.getMessages(new LotteryReqVO.MessagePage()).getList().get(0);

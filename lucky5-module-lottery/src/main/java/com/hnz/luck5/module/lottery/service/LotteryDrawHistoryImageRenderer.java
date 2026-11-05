@@ -27,12 +27,14 @@ public class LotteryDrawHistoryImageRenderer {
 
     /** Replay saved old snapshots in the selected card style without changing their numbers or times. */
     public static String completeSnapshot(String image) {
-        if (image == null || image.contains("data-draw-format=\"6\"")
+        if (image == null || image.contains("data-draw-format=\"9\"")
                 || !image.startsWith("<svg ") || !image.contains("width=\"381\" height=\"661\"")) {
             return image;
         }
         boolean card = image.contains("data-draw-format=\"3\"") || image.contains("data-draw-format=\"4\"")
-                || image.contains("data-draw-format=\"5\"");
+                || image.contains("data-draw-format=\"5\"") || image.contains("data-draw-format=\"6\"")
+                || image.contains("data-draw-format=\"7\"")
+                || image.contains("data-draw-format=\"8\"");
         Map<Integer, LegacyRow> legacyRows = new TreeMap<>();
         Matcher matcher = (card ? CARD_TEXT : LEGACY_TEXT).matcher(image);
         while (matcher.find()) {
@@ -68,11 +70,11 @@ public class LotteryDrawHistoryImageRenderer {
 
     private static String renderCard(List<Row> history) {
         StringBuilder svg = new StringBuilder(8500);
-        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"6\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
-                .append("<rect width=\"381\" height=\"661\" rx=\"16\" fill=\"#e8f3f2\"/>");
-        label(svg, 25, 32, "次数", "#31575b", 16, true);
-        label(svg, 88, 32, "时间", "#31575b", 16, true);
-        label(svg, 185, 32, "VIP 入 住 房 号", "#31575b", 16, true);
+        svg.append("<svg xmlns=\"http://www.w3.org/2000/svg\" data-draw-format=\"9\" width=\"381\" height=\"661\" viewBox=\"0 0 381 661\">")
+                .append("<rect width=\"381\" height=\"661\" rx=\"16\" fill=\"#cfe8ff\"/>");
+        label(svg, 25, 32, "次数", "#155d9e", 16, true);
+        label(svg, 88, 32, "时间", "#155d9e", 16, true);
+        centerLabel(svg, 248, 32, "VIP入住房号", "#155d9e", 15);
         for (int index = 0; index < 15; index++) {
             int rowTop = 51 + index * 40;
             svg.append("<rect x=\"12\" y=\"").append(rowTop)
@@ -81,14 +83,14 @@ public class LotteryDrawHistoryImageRenderer {
             Row row = history.get(index);
             int baseline = rowTop + 23;
             String period = row.period() == null ? "" : row.period();
-            label(svg, 25, baseline, period.substring(Math.max(0, period.length() - 3)), "#177d81", 17, true);
-            label(svg, 88, baseline, row.time(), "#193b40", 16, true);
+            label(svg, 25, baseline, period.substring(Math.max(0, period.length() - 3)), "#0879ca", 17, true);
+            label(svg, 88, baseline, row.time(), "#214a70", 16, true);
             String result = row.result() == null ? "" : row.result().replaceAll("\\D", "");
             if (result.length() != 5) continue;
             for (int digit = 0; digit < 5; digit++) {
                 int x = 185 + digit * 26;
                 svg.append("<rect x=\"").append(x).append("\" y=\"").append(rowTop + 6)
-                        .append("\" width=\"22\" height=\"24\" rx=\"5\" fill=\"#edf5f5\"/>");
+                        .append("\" width=\"22\" height=\"24\" rx=\"5\" fill=\"#edf6ff\"/>");
                 centerLabel(svg, x + 11, baseline, String.valueOf(result.charAt(digit)),
                         digitColor(result.charAt(digit)), 17);
             }
@@ -120,7 +122,7 @@ public class LotteryDrawHistoryImageRenderer {
             case '6' -> "#ff4f82";
             case '8' -> "#409eff";
             case '9' -> "#10c957";
-            default -> "#193b40";
+            default -> "#214a70";
         };
     }
 

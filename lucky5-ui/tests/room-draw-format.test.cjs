@@ -9,7 +9,7 @@ const source = readFileSync(resolve(__dirname, '../src/views/lottery/room/index.
 const ast = ts.createSourceFile('room.ts', source.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true)
 const functions = {}
 function visit(node) {
-  if (ts.isVariableDeclaration(node) && ['chatMessages', 'persistedDrawFromMessage', 'refreshCompletedDrawMessage'].includes(node.name.getText(ast))) {
+  if (ts.isVariableDeclaration(node) && ['chatMessages', 'persistedDrawFromMessage', 'refreshCompletedDrawMessage', 'submitChat'].includes(node.name.getText(ast))) {
     functions[node.name.getText(ast)] = node.initializer.getText(ast)
   }
   ts.forEachChild(node, visit)
@@ -93,11 +93,55 @@ test('cached automatic funding never renders a fake player request or robot appr
   assert.equal(context.chatMessages.value.some(message => /自动托|上1000/.test(message.content)), false)
 })
 
-test('real player funding is still visible with the standard approval', () => {
+test('legacy player funding shows only the robot approval, not the member command', () => {
   const { context } = fixture()
   const createdAt = '2026-09-27T22:15:00'
   context.visibleRoomMessages.value = [{ id: 92, messageType: 'PLAYER', commandType: 'DEPOSIT_REQUEST',
     own: true, content: '上1000', reply: '@玩家\n上分已通过', status: '已通过', createdAt }]
-  assert.ok(context.chatMessages.value.some(message => message.content === '上1000'))
+  assert.equal(context.chatMessages.value.some(message => message.content === '上1000'), false)
   assert.ok(context.chatMessages.value.some(message => message.content === '@玩家\n上分已通过'))
+})
+
+test('rejected room funding preserves the player command and instruction error', () => {
+  const { context } = fixture()
+  const createdAt = '2026-09-27T22:15:00'
+  context.visibleRoomMessages.value = [{ id: 93, messageType: 'PLAYER', commandType: 'AMOUNT_REJECTED',
+    own: true, content: '下分 1000', reply: '@玩家\n指令错误', createdAt }]
+  assert.ok(context.chatMessages.value.some(message => message.content === '下分 1000' && message.kind === 'member'))
+  assert.ok(context.chatMessages.value.some(message => message.content === '@玩家\n指令错误'))
+})
+
+test('a completed send releases the button while session refresh is still pending', async () => {
+  let completeRefresh
+  const refresh = new Promise(resolve => { completeRefresh = resolve })
+  const context = {
+    dayjs,
+    composer: { value: '上100' },
+    saving: { value: false },
+    session: { value: {
+      member: { name: '测试1', avatar: 1 },
+      issue: { status: 'OPEN' }, suggestedPeriod: '20261103189', messages: []
+    } },
+    credential: { value: { tenantId: 1, openId: 'test' } },
+    bottomPanel: { value: '' }, localMessages: { value: [] },
+    autoFollowMessages: { value: false },
+    uniqueId: () => 'test-id', shouldShowBetSubmitting: () => false,
+    scrollToBottom: async () => {},
+    sendRoomMessageApi: async () => ({ messageId: 12, reply: '@测试1\n指令错误', commandType: 'AMOUNT_REJECTED' }),
+    rememberPlayerSentAt: () => {}, loadSession: () => refresh,
+    scheduleSessionRefresh: () => {}, scheduleBetReplyRefresh: () => {},
+    ElMessage: { error: () => { throw new Error('unexpected send error') } }
+  }
+  runInNewContext(ts.transpileModule(`globalThis.submitChat = ${functions.submitChat}`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 }
+  }).outputText, context)
+  const sending = context.submitChat()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(context.saving.value, false)
+  assert.ok(context.localMessages.value.some(message => message.kind === 'member' && message.content === '上100'))
+  assert.ok(context.localMessages.value.some(message => message.kind === 'robot' && message.content === '@测试1\n指令错误'))
+  context.session.value.messages = [{ id: 12 }]
+  completeRefresh()
+  await sending
+  assert.equal(context.localMessages.value.length, 0)
 })

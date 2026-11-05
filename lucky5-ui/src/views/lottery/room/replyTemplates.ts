@@ -1,8 +1,15 @@
 const money = (value: number) => Number(value || 0).toFixed(2)
 
 export const cancelSuccessText = 'tui碼成功'
+export const isRoomAmountCommand = (value: string) => /^(上|下)(?:分)?\s*\d+(?:\.\d+)?$/.test(value.trim())
 
 export const normalizeRoomReply = (value: string) => value
+  .replace(/累计流水：([^\n，]+)，普通：([^\n，]+)，龙虎：[^\n]*/g, '累计流水：$1\n普通流水：$2')
+  .replace(/可返流水：([^\n，]+)，普通：([^\n，]+)，龙虎：[^\n]*\n返还水：[^\n]*\n目前：/g,
+    '可返流水：$1\n普通：$2\n\n目前：')
+  .replace(/【目前房源】：\n目前无房源/g, '【今日房源】：')
+  .replace(/【目前房源】/g, '【今日房源】')
+  .replace(/【您目前】：/g, '【您目前余】')
   .replace(/\[挂牌时间\]|【挂牌时间】/g, '【入住时间】')
   .replace(/【套内】/g, '【室内】')
   .replace(/【套外】/g, '【室外】')
@@ -10,10 +17,10 @@ export const normalizeRoomReply = (value: string) => value
   .replace(/房源已提交成功✅✅✅/g, '房源已提交成功√√√')
   .replace(/【户型审核成功】(?:[√✓]{2,3}|☑️☑️☑️)/g, '【户型审核成功】√√√')
   .replace(/【状态】:房源已提交成功/g, '【状态】：房源已提交成功')
-  .replace(/审批通过\[加油(\d+(?:\.\d+)?)\]/g, '加分:$1')
-  .replace(/考核成功下(\d+(?:\.\d+)?)/g, '减分:$1')
-  .replace(/(^|\n)(加分|减分)[ \t]*[：:]?[ \t]*(\d+(?:\.\d+)?)/g, '$1$2:$3')
-  .replace(/(^|\n)现在[ \t]*[：:][ \t]*/g, '$1现在:')
+  .replace(/审批通过\[加油(\d+(?:\.\d+)?)\]/g, '加分：$1')
+  .replace(/考核成功下(\d+(?:\.\d+)?)/g, '减分：$1')
+  .replace(/(^|\n)(加分|减分)[ \t]*[：:]?[ \t]*(\d+(?:\.\d+)?)/g, '$1$2：$3')
+  .replace(/(^|\n)(?:现在|目前)[ \t]*[：:][ \t]*/g, '$1目前：')
 
 export const cancelFailureText = (reason?: string) => {
   const detail = (reason || '当前订单不能退码')
@@ -41,7 +48,6 @@ export const roomAmountRecordPresentation = (record: {
 }) => {
   const isRebate = record.type === '返水' || record.recordSource === 'REBATE'
   const isTransfer = !isRebate && (record.type === '上分' || record.type === '下分')
-  const isMemberRequest = isTransfer && record.remark !== '后台手动操作'
   const memberPrefix = isTransfer && record.member?.trim() ? `@${record.member.trim()}\n` : ''
   return {
     relatedCommandType: isTransfer
@@ -51,16 +57,14 @@ export const roomAmountRecordPresentation = (record: {
       : isRebate
         ? 'FLOW_REBATE'
         : '',
-    memberCommand: isMemberRequest
-      ? `${record.type === '上分' ? '上' : '下'}${money(record.amount)}`
-      : '',
+    memberCommand: '',
     robotReply: memberPrefix + (isRebate
       ? record.status === '已通过'
         ? '返水已入账'
         : `返水${record.status}`
       : isTransfer && record.status === '已通过'
-        ? `${record.type === '上分' ? '加分' : '减分'}:${Number(record.amount || 0)}`
-        : `${record.type}${isMemberRequest ? '申请' : ''}${record.status}`)
+        ? `${record.type === '上分' ? '加分' : '减分'}：${Number(record.amount || 0)}`
+        : `${record.type}${record.status}`)
   }
 }
 

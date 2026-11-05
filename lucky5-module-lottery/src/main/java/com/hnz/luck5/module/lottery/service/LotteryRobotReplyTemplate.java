@@ -41,13 +41,14 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
-        String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
+        String orders = currentOrders.stream()
                 .map(order -> "【入住时间】" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())
                         + "\n【状态】：" + (order.confirmed() ? "房源已提交成功√√√" : "正在确认明细"))
                 .reduce((left, right) -> left + "\n\n" + right)
-                .orElse("目前无房源");
-        return "@" + memberName + "\n【目前房源】：\n" + orders
-                + "\n\n【您目前】：\n" + number(balance);
+                .orElse("");
+        return "@" + memberName + "\n【今日房源】："
+                + (orders.isEmpty() ? "" : "\n" + orders)
+                + "\n\n【您目前余】\n" + number(balance);
     }
 
     public String profitLoss(String memberName, BigDecimal profitLoss) {
@@ -56,16 +57,14 @@ public class LotteryRobotReplyTemplate {
 
     public String flow(String memberName, BigDecimal total, BigDecimal normal, BigDecimal dragon) {
         return "@" + memberName + "\n累计流水：" + fixed(total, 2)
-                + "，普通：" + fixed(normal, 2) + "，龙虎：" + fixed(dragon, 2);
+                + "\n普通流水：" + fixed(normal, 2);
     }
 
     public String flowRebate(String memberName, BigDecimal pendingNormal, BigDecimal pendingDragon,
                              BigDecimal paidNormal, BigDecimal paidDragon, BigDecimal balance) {
         return "@" + memberName + "\n可返流水：" + fixed(pendingNormal.add(pendingDragon), 2)
-                + "，普通：" + fixed(pendingNormal, 2) + "，龙虎：" + fixed(pendingDragon, 2)
-                + "\n返还水：" + fixed(paidNormal.add(paidDragon), 3)
-                + "，普通：" + fixed(paidNormal, 3) + "，龙虎：" + fixed(paidDragon, 3)
-                + "\n目前：" + fixed(balance, 2);
+                + "\n普通：" + fixed(pendingNormal, 2)
+                + "\n\n目前：" + fixed(balance, 2);
     }
 
     public String flowUnavailable(String memberName) {
@@ -136,8 +135,8 @@ public class LotteryRobotReplyTemplate {
         String amountText = number(amount);
         if ("已通过".equals(status)) {
             return "上分".equals(type)
-                    ? "@" + memberName + "\n加分:" + amountText + "\n现在:" + number(balance)
-                    : "@" + memberName + "\n减分:" + amountText + "\n现在:" + number(balance);
+                    ? "@" + memberName + "\n加分：" + amountText + "\n目前：" + number(balance)
+                    : "@" + memberName + "\n减分：" + amountText + "\n目前：" + number(balance);
         }
         return "@" + memberName + "\n" + type + "审核不通过["
                 + ("上分".equals(type) ? "上" : "下") + amountText + "]";

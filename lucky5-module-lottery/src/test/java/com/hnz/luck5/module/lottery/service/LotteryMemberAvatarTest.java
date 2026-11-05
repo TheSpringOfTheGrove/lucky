@@ -10,16 +10,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LotteryMemberAvatarTest {
 
     @Test
-    void currentCustomerHasFiftyDistinctAvatarPaths() {
+    void currentCustomerHasSixtyDistinctAvatarPaths() {
         Set<String> paths = IntStream.rangeClosed(1, LotteryMemberAvatar.COUNT)
                 .mapToObj(LotteryMemberAvatar::path)
                 .collect(java.util.stream.Collectors.toSet());
 
-        assertThat(LotteryMemberAvatar.COUNT).isEqualTo(50);
-        assertThat(paths).hasSize(50);
+        assertThat(LotteryMemberAvatar.COUNT).isEqualTo(60);
+        assertThat(paths).hasSize(60);
         assertThat(LotteryMemberAvatar.path(1)).isEqualTo("player-avatars-chenguanxi/avatar_01.jpg");
-        assertThat(LotteryMemberAvatar.path(50)).isEqualTo("player-avatars-chenguanxi/avatar_50.jpg");
+        assertThat(LotteryMemberAvatar.path(60)).isEqualTo("player-avatars-chenguanxi/avatar_60.jpg");
         assertThat(LotteryMemberAvatar.path(0)).isEqualTo(LotteryMemberAvatar.path(1));
-        assertThat(LotteryMemberAvatar.path(51)).isEqualTo(LotteryMemberAvatar.path(50));
+        assertThat(LotteryMemberAvatar.path(61)).isEqualTo(LotteryMemberAvatar.path(60));
     }
 }

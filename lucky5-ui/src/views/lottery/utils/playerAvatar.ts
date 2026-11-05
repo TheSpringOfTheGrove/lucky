@@ -5,7 +5,7 @@ const avatarAssets = import.meta.glob('/src/assets/lottery/player-avatars-chengu
 }) as Record<string, string>
 
 // Keep these indices aligned with LotteryMemberAvatar and the current customer's avatar migration.
-const playerAvatars = Array.from({ length: 50 }, (_, index) => {
+const playerAvatars = Array.from({ length: 60 }, (_, index) => {
   const number = String(index + 1).padStart(2, '0')
   const source = avatarAssets[`/src/assets/lottery/player-avatars-chenguanxi/avatar_${number}.jpg`]
   if (!source) throw new Error(`缺少玩家头像 ${number}`)

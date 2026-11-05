@@ -22,13 +22,14 @@ import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
 import { receiptAction as parseReceiptAction, receiptText } from '../utils/receipt'
 import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
 import logo from '@/assets/imgs/logo.png'
-import robotAvatar from '@/assets/lottery/robot-avatar-chenguanxi.png'
+import robotAvatar from '@/assets/lottery/robot-avatar-pirate-chenguanxi.png'
 import scratchButton from '@/assets/lottery/scratch-button-chenguanxi.png'
 import { useRoomChatViewport } from './useRoomChatViewport'
 
 type ChatKind = 'member' | 'other' | 'robot'
-type ChatType = 'text' | 'transition' | 'order' | 'amount' | 'draw'
+type ChatType = 'text' | 'transition' | 'order' | 'amount' | 'balance' | 'draw'
 
+const ROBOT_DISPLAY_NAME = '赏金女王'
 const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
 const SCRATCH_PERIOD_SECONDS = 300
 
@@ -73,7 +74,8 @@ const recentCommands = computed(() => {
   const seen = new Set<string>()
   return [...(session.value?.messages || [])]
     .reverse()
-    .filter((message) => message.own !== false && message.commandType !== 'SETTLEMENT')
+    .filter((message) => message.own !== false && message.commandType !== 'SETTLEMENT' &&
+      !['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST', 'AMOUNT_REJECTED'].includes(message.commandType))
     .map((message) => message.content.trim())
     .filter((content) => content && !seen.has(content) && (seen.add(content), true))
     .slice(0, 10)
@@ -86,8 +88,6 @@ const trackedBetMessageIds = ref<number[]>([])
 const sessionStartedAt = ref(new Date().toISOString())
 const autoFollowMessages = ref(true)
 const {
-  composerHeight,
-  viewportHeight,
   viewportStyle,
   scrollToBottom,
   handleScroll: updateChatScroll
@@ -105,15 +105,6 @@ const clockNowMs = ref(Date.now())
 const authoritativeClockOffsetMs = ref(0)
 const bettingCutoffAtMs = ref<number | null>(null)
 const autoScratch = ref(localStorage.getItem('lucky5-auto-scratch') !== 'false')
-const scratchLauncherTop = ref<number | null>(null)
-const scratchLauncherDragging = ref(false)
-let scratchLauncherDragActive = false
-let scratchLauncherStartY = 0
-let scratchLauncherStartTop = 0
-let suppressScratchLauncherClick = false
-const scratchLauncherStyle = computed(() =>
-  scratchLauncherTop.value === null ? {} : { top: `${scratchLauncherTop.value}px` }
-)
 const uniqueId = () =>
   globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
@@ -469,6 +460,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       Boolean(message.reply)
     if (
       message.content?.trim() &&
+      !['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType) &&
       !['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType)
     ) {
       messages.push({
@@ -504,7 +496,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       messages.push({
         id: `robot-message-${message.id}`,
         kind: 'robot',
-        type: order ? 'order' : 'text',
+        type: order ? 'order' : message.commandType === 'BALANCE' ? 'balance' : 'text',
         content: order
           ? formatRobotReply(message.reply || '下注成功')
           : formatRobotReply(
@@ -997,89 +989,14 @@ const updateAutoScratch = (value: boolean) => {
   localStorage.setItem('lucky5-auto-scratch', String(value))
 }
 
-const clampScratchLauncherTop = (value: number) => {
-  const minimum = 12
-  const maximum = Math.max(minimum, viewportHeight.value - composerHeight.value - 50 - 12)
-  return Math.min(Math.max(minimum, value), maximum)
-}
-
-const restoreScratchLauncherTop = () => {
-  const storedValue = localStorage.getItem('lucky5-scratch-launcher-top')
-  const stored = storedValue === null ? Number.NaN : Number(storedValue)
-  const fallback = viewportHeight.value * 0.4 - 20
-  scratchLauncherTop.value = clampScratchLauncherTop(Number.isFinite(stored) ? stored : fallback)
-}
-
-const beginScratchLauncherDrag = (clientY: number) => {
-  scratchLauncherDragActive = true
-  scratchLauncherStartY = clientY
-  scratchLauncherStartTop = scratchLauncherTop.value ?? viewportHeight.value * 0.4 - 20
-  scratchLauncherDragging.value = false
-}
-
-const moveScratchLauncher = (clientY: number) => {
-  if (!scratchLauncherDragActive) return
-  const delta = clientY - scratchLauncherStartY
-  if (Math.abs(delta) >= 4) scratchLauncherDragging.value = true
-  scratchLauncherTop.value = clampScratchLauncherTop(scratchLauncherStartTop + delta)
-}
-
-const finishScratchLauncherDrag = () => {
-  if (!scratchLauncherDragActive) return
-  scratchLauncherDragActive = false
-  const wasDragging = scratchLauncherDragging.value
-  scratchLauncherDragging.value = false
-  if (!wasDragging || scratchLauncherTop.value === null) return
-  localStorage.setItem('lucky5-scratch-launcher-top', String(Math.round(scratchLauncherTop.value)))
-  suppressScratchLauncherClick = true
-  window.setTimeout(() => {
-    suppressScratchLauncherClick = false
-  }, 0)
-}
-
-const moveScratchLauncherByMouse = (event: MouseEvent) => moveScratchLauncher(event.clientY)
-
-const finishScratchLauncherMouseDrag = () => {
-  window.removeEventListener('mousemove', moveScratchLauncherByMouse)
-  window.removeEventListener('mouseup', finishScratchLauncherMouseDrag)
-  finishScratchLauncherDrag()
-}
-
-const startScratchLauncherMouseDrag = (event: MouseEvent) => {
-  if (event.button !== 0) return
-  beginScratchLauncherDrag(event.clientY)
-  window.addEventListener('mousemove', moveScratchLauncherByMouse)
-  window.addEventListener('mouseup', finishScratchLauncherMouseDrag)
-}
-
-const startScratchLauncherTouchDrag = (event: TouchEvent) => {
-  const touch = event.touches[0]
-  if (touch) beginScratchLauncherDrag(touch.clientY)
-}
-
-const moveScratchLauncherByTouch = (event: TouchEvent) => {
-  const touch = event.touches[0]
-  if (touch) moveScratchLauncher(touch.clientY)
-}
-
 const openScratchCard = () => {
-  if (suppressScratchLauncherClick) return
   scratchVisible.value = true
   scheduleDrawStateRefresh()
 }
 
 const handleRoomResize = () => {
-  if (scratchLauncherTop.value !== null) {
-    scratchLauncherTop.value = clampScratchLauncherTop(scratchLauncherTop.value)
-  }
   resizeComposer()
 }
-
-watch([viewportHeight, composerHeight], () => {
-  if (scratchLauncherTop.value !== null) {
-    scratchLauncherTop.value = clampScratchLauncherTop(scratchLauncherTop.value)
-  }
-})
 
 const resizeComposer = () => {
   const textarea = composerRef.value
@@ -1145,10 +1062,26 @@ const submitChat = async () => {
       externalId,
       sentAt: new Date(submittedAt).getTime()
     })
+    // Sending has completed; a slower session refresh must not leave the composer disabled.
+    saving.value = false
     optimisticMessage.serverMessageId = result.messageId
     rememberPlayerSentAt(result.messageId, submittedAt)
     if (optimisticRobotMessage) optimisticRobotMessage.serverMessageId = result.messageId
     if (optimisticRobotMessage && result.reply) optimisticRobotMessage.content = result.reply
+    if (!optimisticRobotMessage && result.commandType === 'AMOUNT_REJECTED' && result.reply) {
+      localMessages.value = [
+        ...localMessages.value,
+        {
+          id: optimisticRobotMessageId,
+          kind: 'robot',
+          type: 'text',
+          content: result.reply,
+          createdAt: dayjs(submittedAt).add(1, 'millisecond').toISOString(),
+          displayTimeAt: submittedAt,
+          serverMessageId: result.messageId
+        }
+      ]
+    }
     if (result.commandType === 'BET' && result.reply?.trim().endsWith('提交中')) {
       trackedBetMessageIds.value = [...new Set([...trackedBetMessageIds.value, result.messageId])]
       betReplyFastPollUntilMs.value = Math.max(betReplyFastPollUntilMs.value, Date.now() + 30_000)
@@ -1365,7 +1298,6 @@ watch(
 )
 
 onMounted(async () => {
-  restoreScratchLauncherTop()
   restorePlayerSentAtOverrides()
   window.addEventListener('resize', handleRoomResize)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
@@ -1394,8 +1326,6 @@ onBeforeUnmount(() => {
   if (cancelReceiptTimer) window.clearTimeout(cancelReceiptTimer)
   window.removeEventListener('resize', handleRoomResize)
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
-  window.removeEventListener('mousemove', moveScratchLauncherByMouse)
-  window.removeEventListener('mouseup', finishScratchLauncherMouseDrag)
   if (refreshTimer) window.clearTimeout(refreshTimer)
   if (drawRefreshTimer) window.clearTimeout(drawRefreshTimer)
   if (countdownTimer) window.clearInterval(countdownTimer)
@@ -1416,16 +1346,9 @@ onBeforeUnmount(() => {
     <template v-else-if="session">
       <button
         class="scratch-launcher"
-        :class="{ 'is-dragging': scratchLauncherDragging }"
-        :style="scratchLauncherStyle"
         type="button"
         aria-label="打开刮刮卡"
         @click="openScratchCard"
-        @mousedown="startScratchLauncherMouseDrag"
-        @touchstart="startScratchLauncherTouchDrag"
-        @touchmove.prevent="moveScratchLauncherByTouch"
-        @touchend="finishScratchLauncherDrag"
-        @touchcancel="finishScratchLauncherDrag"
       >
         <img :src="scratchButton" alt="开始刮奖" />
       </button>
@@ -1456,7 +1379,7 @@ onBeforeUnmount(() => {
             <img
               class="chat-avatar"
               :src="message.kind === 'robot' ? robotAvatar : lotteryPlayerAvatarSrc(message.avatar ?? session.member.avatar)"
-              :alt="message.kind === 'robot' ? '机器人' : message.senderName || session.member.name"
+              :alt="message.kind === 'robot' ? ROBOT_DISPLAY_NAME : message.senderName || session.member.name"
               @pointerdown="beginMessageLongPress(() => appendMention(message))"
               @pointerup="clearMessageLongPress"
               @pointercancel="clearMessageLongPress"
@@ -1465,7 +1388,7 @@ onBeforeUnmount(() => {
             <div class="chat-body">
               <h5>
                 {{
-                  message.kind === 'robot' ? '机器人' : message.senderName || session.member.name
+                  message.kind === 'robot' ? ROBOT_DISPLAY_NAME : message.senderName || session.member.name
                 }}
               </h5>
               <div class="chat-bubble">
@@ -1479,6 +1402,11 @@ onBeforeUnmount(() => {
 
                 <div v-else-if="message.type === 'transition'" class="chat-transition">
                   <span v-for="(part, index) in message.content.split('  ')" :key="index">{{ part }}</span>
+                </div>
+
+                <div v-else-if="message.type === 'balance'" class="room-balance-reply">
+                  <pre>{{ message.content.slice(0, message.content.lastIndexOf('\n')) }}</pre>
+                  <div class="room-balance-value">{{ message.content.slice(message.content.lastIndexOf('\n') + 1) }}</div>
                 </div>
 
                 <template v-else-if="message.type === 'order' && message.order">
@@ -2052,7 +1980,7 @@ onBeforeUnmount(() => {
 
 .new-message-tip {
   position: absolute;
-  right: 30px;
+  right: 60px;
   bottom: calc(var(--composer-height) + 6px);
   z-index: 7;
   min-height: 24px;
@@ -2239,6 +2167,14 @@ onBeforeUnmount(() => {
   word-break: break-word;
   white-space: pre-wrap;
   user-select: text;
+}
+
+.room-balance-value {
+  width: 6em;
+  max-width: 100%;
+  margin: 0 6px 6px;
+  text-align: center;
+  font: 16px/18px monospace;
 }
 
 .chat-transition {
@@ -2656,6 +2592,7 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: 8;
   right: 0;
+  bottom: calc(var(--composer-height) + 10px);
   width: 50px;
   height: 50px;
   padding: 0;
@@ -2665,7 +2602,7 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   box-sizing: border-box;
   box-shadow: none;
-  touch-action: none;
+  touch-action: manipulation;
   user-select: none;
 }
 
@@ -2674,10 +2611,6 @@ onBeforeUnmount(() => {
   width: 50px;
   height: 50px;
   border-radius: 50%;
-}
-
-.scratch-launcher.is-dragging {
-  cursor: grabbing;
 }
 
 .draw-history-image {

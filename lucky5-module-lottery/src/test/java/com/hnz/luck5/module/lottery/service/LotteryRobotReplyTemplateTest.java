@@ -15,11 +15,10 @@ class LotteryRobotReplyTemplateTest {
     void shouldFormatFlowAndFlowRebateLikeReferenceRoom() {
         assertThat(template.flow("阿杰", new BigDecimal("420"), new BigDecimal("400"),
                 new BigDecimal("20")))
-                .isEqualTo("@阿杰\n累计流水：420.00，普通：400.00，龙虎：20.00");
+                .isEqualTo("@阿杰\n累计流水：420.00\n普通流水：400.00");
         assertThat(template.flowRebate("阿杰", new BigDecimal("100"), new BigDecimal("20"),
                 new BigDecimal("1"), new BigDecimal("0.4"), new BigDecimal("11866.4")))
-                .isEqualTo("@阿杰\n可返流水：120.00，普通：100.00，龙虎：20.00"
-                        + "\n返还水：1.400，普通：1.000，龙虎：0.400\n目前：11866.40");
+                .isEqualTo("@阿杰\n可返流水：120.00\n普通：100.00\n\n目前：11866.40");
     }
 
     @Test
@@ -138,10 +137,10 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.amountPending("旺旺杀米米")).isEqualTo("@旺旺杀米米\n请稍后");
         assertThat(template.amountAudited("旺旺杀米米", "上分", new BigDecimal("100.00"),
                 "已通过", new BigDecimal("65393.87")))
-                .isEqualTo("@旺旺杀米米\n加分:100\n现在:65393.87");
+                .isEqualTo("@旺旺杀米米\n加分：100\n目前：65393.87");
         assertThat(template.amountAudited("旺旺杀米米", "下分", new BigDecimal("50.00"),
                 "已通过", new BigDecimal("65343.87")))
-                .isEqualTo("@旺旺杀米米\n减分:50\n现在:65343.87");
+                .isEqualTo("@旺旺杀米米\n减分：50\n目前：65343.87");
         assertThat(template.amountAudited("旺旺杀米米", "下分", new BigDecimal("50.00"),
                 "已拒绝", new BigDecimal("65393.87")))
                 .isEqualTo("@旺旺杀米米\n下分审核不通过[下50]");
@@ -173,9 +172,12 @@ class LotteryRobotReplyTemplateTest {
                 new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "654倒二定各10", true),
                 new LotteryRobotReplyTemplate.CurrentOrder("20260809194", "千12百34二定各1", false)),
                 new BigDecimal("4374.10")))
-                .isEqualTo("@露露\n【目前房源】：\n【入住时间】194\n654倒二定各10"
+                .isEqualTo("@露露\n【今日房源】：\n【入住时间】194\n654倒二定各10"
                         + "\n【状态】：房源已提交成功√√√\n\n【入住时间】194\n千12百34二定各1"
-                        + "\n【状态】：正在确认明细\n\n【您目前】：\n4374.1");
+                        + "\n【状态】：正在确认明细\n\n【您目前余】\n4374.1");
+        assertThat(template.balance("露露", List.of(), new BigDecimal("20031")))
+                .isEqualTo("@露露\n【今日房源】：\n\n【您目前余】\n20031")
+                .doesNotContain("目前无房源");
         assertThat(template.profitLoss("露露", new BigDecimal("1265.70")))
                 .isEqualTo("@露露\nyk：1265.7");
         assertThat(template.periodSummary(List.of("[露露]654倒二定各10", "[露露]654倒二定各10")))

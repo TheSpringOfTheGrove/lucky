@@ -11,7 +11,7 @@ import java.util.regex.Pattern;
 @Service
 public class LotteryRoomMessagePolicy {
 
-    private static final Pattern AMOUNT_COMMAND = Pattern.compile("^(上|下)(?:分)?(\\d+(?:\\.\\d+)?)$");
+    private static final Pattern AMOUNT_COMMAND = Pattern.compile("^(上|下)(?:分)?\\s*(\\d+(?:\\.\\d+)?)$");
     private static final Pattern CANCEL_COMMAND = Pattern.compile("^退(?:码)?\\s*([A-Za-z0-9_-]+)$");
     public enum MessageType {
         CHAT,

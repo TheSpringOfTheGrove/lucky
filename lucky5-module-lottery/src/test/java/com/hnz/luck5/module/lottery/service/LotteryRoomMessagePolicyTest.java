@@ -25,6 +25,7 @@ class LotteryRoomMessagePolicyTest {
         assertThat(policy.classify("回流水")).isEqualTo(LotteryRoomMessagePolicy.MessageType.FLOW_REBATE);
         assertThat(policy.classify("查流水")).isEqualTo(LotteryRoomMessagePolicy.MessageType.BET);
         assertThat(policy.classify("上分100")).isEqualTo(LotteryRoomMessagePolicy.MessageType.AMOUNT);
+        assertThat(policy.classify("下分 100.50")).isEqualTo(LotteryRoomMessagePolicy.MessageType.AMOUNT);
         assertThat(policy.classify("退码L5-100")).isEqualTo(LotteryRoomMessagePolicy.MessageType.CANCEL);
         assertThat(policy.classify("跟")).isEqualTo(LotteryRoomMessagePolicy.MessageType.FOLLOW);
         assertThat(policy.classify("停止")).isEqualTo(LotteryRoomMessagePolicy.MessageType.STOP);
