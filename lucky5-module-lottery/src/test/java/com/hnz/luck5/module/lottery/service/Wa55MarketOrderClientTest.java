@@ -46,6 +46,7 @@ class Wa55MarketOrderClientTest {
     private int missingIdAtCall = -1;
     private int malformedAtCall = -1;
     private int rejectAtCall = -1;
+    private int zeroAcceptedAtCall = -1;
     private boolean batchResponseWithIds;
     private boolean batchResponseWithSecret;
     private boolean batchResponseWithSerialOnly;
@@ -633,6 +634,41 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
+    void treatsCompletedZeroAcceptedBatchAsDefiniteRejection() {
+        zeroAcceptedAtCall = 1;
+        Wa55MarketOrderClient client = client(true);
+
+        assertThatThrownBy(() -> client.submit(credentials(), issuePeriod, List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false))))
+                .isInstanceOfSatisfying(Wa55MarketOrderClient.MarketProtocolException.class, ex -> {
+                    assertThat(ex.submissionUncertain()).isFalse();
+                    assertThat(ex.retryable()).isFalse();
+                    assertThat(ex.confirmations()).isEmpty();
+                });
+        assertThat(betCalls).hasValue(1);
+        assertThat(marketRows).isEmpty();
+    }
+
+    @Test
+    void doesNotRefundAcceptedEarlierBatchWhenLaterBatchAcceptsZero() {
+        zeroAcceptedAtCall = 2;
+        Wa55MarketOrderClient client = client(true);
+
+        assertThatThrownBy(() -> client.submit(credentials(), issuePeriod, List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false),
+                request("route-3", "二定位", "X12X", "1", "guid-3", false),
+                request("route-4", "二定位", "X13X", "1", "guid-4", false))))
+                .isInstanceOfSatisfying(Wa55MarketOrderClient.MarketProtocolException.class, ex -> {
+                    assertThat(ex.submissionUncertain()).isTrue();
+                    assertThat(ex.retryable()).isFalse();
+                    assertThat(ex.confirmations()).isEmpty();
+                });
+        assertThat(betCalls).hasValue(2);
+    }
+
+    @Test
     void treatsSingleSuccessWithoutMarketIdentifierAsUncertainAndNeverSafeToRefund() {
         missingIdAtCall = 1;
         Wa55MarketOrderClient client = client(true);
@@ -806,6 +842,12 @@ class Wa55MarketOrderClientTest {
         }
         if (call == malformedAtCall) {
             json(exchange, "not-json");
+            return;
+        }
+        if (call == zeroAcceptedAtCall) {
+            json(exchange, "{\"Status\":1,\"Data\":{\"CompletedStatus\":1,\"LackStatus\":1,"
+                    + "\"SerialNo\":\"BATCH-SERIAL-" + call
+                    + "\",\"FinalBetCount\":0,\"FinalMoney\":0}}");
             return;
         }
         BigDecimal accepted = bets.stream().map(item -> new BigDecimal(String.valueOf(item.get("bet_money"))))

@@ -129,6 +129,14 @@ public class Wa55MarketOrderClient {
             BigDecimal accepted = decimal(first(data, "FinalMoney", "final_money", "Money", "money",
                     "BetMoney", "bet_money"));
             int betCount = number(first(data, "FinalBetCount", "final_bet_count", "BetCount", "bet_count"), -1);
+            // A completed batch that explicitly accepted nothing is a rejection, not an uncertain write.
+            // Never refund the whole order if an earlier group in the same submission was accepted.
+            if (number(first(data, "CompletedStatus", "completed_status"), -1) == 1
+                    && number(first(data, "LackStatus", "lack_status"), -1) == 1
+                    && betCount == 0 && accepted != null && accepted.signum() == 0) {
+                throw new MarketProtocolException("盘口本批次未受理任何下注", false, confirmations,
+                        !acceptedBatches.isEmpty(), null);
+            }
             if (betCount != group.requests().size() || accepted == null
                     || accepted.compareTo(group.totalAmount()) != 0) {
                 throw new MarketProtocolException("盘口实际受理注数或金额与提交批次不一致", false, confirmations,
