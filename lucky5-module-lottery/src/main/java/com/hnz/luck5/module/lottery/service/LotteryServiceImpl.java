@@ -2645,42 +2645,35 @@ public class LotteryServiceImpl implements LotteryService {
 
     @Override
     public PageResult<Map<String, Object>> getMessages(LotteryReqVO.MessagePage reqVO) {
-        String period = StrUtil.trim(reqVO.getPeriod());
-        String content = StrUtil.trim(reqVO.getContent());
-        String nickname = StrUtil.trim(reqVO.getNickname());
+        String period = StrUtil.emptyToNull(StrUtil.trim(reqVO.getPeriod()));
+        String content = StrUtil.emptyToNull(StrUtil.trim(reqVO.getContent()));
+        String nickname = StrUtil.emptyToNull(StrUtil.trim(reqVO.getNickname()));
         boolean nicknameCanMatchRobot = StrUtil.isNotBlank(nickname)
                 && StrUtil.containsIgnoreCase("机器人", nickname);
-        LambdaQueryWrapper<MessageDO> query = new LambdaQueryWrapper<MessageDO>()
-                .like(StrUtil.isNotBlank(period), MessageDO::getPeriod, period)
-                .and(StrUtil.isNotBlank(content), wrapper -> wrapper.like(MessageDO::getContent, content)
-                        .or().like(MessageDO::getReply, content))
-                .like(StrUtil.isNotBlank(nickname) && !nicknameCanMatchRobot, MessageDO::getMember, nickname)
-                .orderByDesc(MessageDO::getCreateTime)
-                .orderByDesc(MessageDO::getId);
-        List<Map<String, Object>> rows = new ArrayList<>();
-        List<MessageDO> messages = messageMapper.selectList(query);
-        for (MessageDO message : messages) {
-            for (Map<String, Object> row : messageDisplayRows(message)) {
-                if (StrUtil.isNotBlank(content)
-                        && !StrUtil.containsIgnoreCase(String.valueOf(row.get("content")), content)) {
-                    continue;
-                }
-                if (StrUtil.isNotBlank(nickname)
-                        && !StrUtil.containsIgnoreCase(String.valueOf(row.get("sender")), nickname)
-                        && !StrUtil.containsIgnoreCase(String.valueOf(row.get("sourceMember")), nickname)) {
-                    continue;
-                }
-                rows.add(row);
-            }
+        Long tenantId = TenantContextHolder.getRequiredTenantId();
+        Long userId = SecurityFrameworkUtils.getLoginUserId();
+        long total = messageMapper.countDisplayRows(tenantId, userId, period, content, nickname,
+                nicknameCanMatchRobot);
+        if (total == 0) return new PageResult<>(List.of(), 0L);
+        long offset = (long) (reqVO.getPageNo() - 1) * reqVO.getPageSize();
+        List<MessageMapper.MessagePageEntry> entries = messageMapper.selectDisplayPage(tenantId, userId, period,
+                content, nickname, nicknameCanMatchRobot, offset, reqVO.getPageSize());
+        if (entries.isEmpty()) return new PageResult<>(List.of(), total);
+        List<Long> ids = entries.stream().map(MessageMapper.MessagePageEntry::getMessageId).distinct().toList();
+        Map<Long, MessageDO> messages = messageMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(MessageDO::getId, Function.identity()));
+        List<Map<String, Object>> pageRows = new ArrayList<>(entries.size());
+        for (MessageMapper.MessagePageEntry entry : entries) {
+            MessageDO message = messages.get(entry.getMessageId());
+            if (message == null) continue;
+            List<Map<String, Object>> displayRows = messageDisplayRows(message);
+            String rowId = (entry.getKind() == 0 ? "robot-" : "member-") + entry.getMessageId();
+            displayRows.stream().filter(row -> Objects.equals(row.get("id"), rowId)).findFirst()
+                    .ifPresent(pageRows::add);
         }
-        int pageSize = reqVO.getPageSize();
-        long requestedStart = (long) (reqVO.getPageNo() - 1) * pageSize;
-        int fromIndex = (int) Math.min(requestedStart, rows.size());
-        int toIndex = Math.min(fromIndex + pageSize, rows.size());
-        List<Map<String, Object>> pageRows = new ArrayList<>(rows.subList(fromIndex, toIndex));
         // Encode/backfill only this page's images, preserving saved numbers and official draw times.
         Set<String> pageIds = pageRows.stream().map(row -> String.valueOf(row.get("id"))).collect(Collectors.toSet());
-        for (MessageDO message : messages) {
+        for (MessageDO message : messages.values()) {
             if (DRAW_RESULT_COMMANDS.contains(value(message.getCommandType(), ""))
                     && pageIds.contains("robot-" + message.getId())) {
                 ensureRoomDrawImages(message.getUserId(), List.of(message));
@@ -2688,7 +2681,7 @@ public class LotteryServiceImpl implements LotteryService {
                         .forEach(row -> row.put("drawImage", messageDrawImage(message)));
             }
         }
-        return new PageResult<>(pageRows, (long) rows.size());
+        return new PageResult<>(pageRows, total);
     }
 
     @Override

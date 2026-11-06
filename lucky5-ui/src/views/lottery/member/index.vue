@@ -386,7 +386,11 @@ onBeforeUnmount(stopMemberRefresh)
             <span>{{ row.balance }} 分</span>
           </div>
           <div class="lucky-mobile-card__meta">
-            <span>昵称：{{ row.name }}</span>
+            <span
+              >昵称：<span class="member-name" :class="{ 'member-name--eating': row.eatEnabled }">{{
+                row.name
+              }}</span></span
+            >
             <span>投分：{{ row.totalBet || 0 }}</span>
             <span>盈亏：{{ row.profitLoss || 0 }}</span>
             <span>托 {{ isAutoProxy(row) ? '✓' : '×' }}</span>
@@ -434,7 +438,13 @@ onBeforeUnmount(stopMemberRefresh)
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="昵称" min-width="110" />
+        <el-table-column label="昵称" min-width="110">
+          <template #default="{ row }">
+            <span class="member-name" :class="{ 'member-name--eating': row.eatEnabled }">{{
+              row.name
+            }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="balance" label="积分" min-width="90" />
         <el-table-column label="投分" min-width="90"
           ><template #default="{ row }">{{ row.totalBet || 0 }}</template></el-table-column
@@ -834,6 +844,14 @@ onBeforeUnmount(stopMemberRefresh)
 
 .member-identity--mobile {
   justify-content: flex-start;
+}
+
+.member-name {
+  color: #303133;
+}
+
+.member-name--eating {
+  color: #e53935;
 }
 
 .member-link {

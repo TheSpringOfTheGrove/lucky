@@ -503,6 +503,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_message` (
   `deleted` bit(1) NOT NULL DEFAULT b'0', `tenant_id` bigint NOT NULL,
   PRIMARY KEY (`id`), UNIQUE KEY `uk_lucky5_message_legacy` (`tenant_id`,`user_id`,`legacy_id`),
   UNIQUE KEY `uk_lucky5_message_external` (`tenant_id`,`user_id`,`external_id`), KEY `idx_lucky5_message_time` (`tenant_id`,`user_id`,`channel`,`create_time`),
+  KEY `idx_lucky5_message_display_page` (`tenant_id`,`user_id`,`deleted`,`create_time`,`id`),
   KEY `idx_lucky5_message_order` (`tenant_id`,`user_id`,`order_id`,`deleted`),
   KEY `idx_lucky5_message_period_command` (`tenant_id`,`user_id`,`period`,`command_type`,`deleted`),
   KEY `idx_lucky5_message_member_time` (`tenant_id`,`user_id`,`member_id`,`channel`,`create_time`),
