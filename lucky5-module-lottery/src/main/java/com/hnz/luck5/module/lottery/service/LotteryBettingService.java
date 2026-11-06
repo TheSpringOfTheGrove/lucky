@@ -100,6 +100,8 @@ public class LotteryBettingService {
     }
 
     private List<ParsedBet> parseSingle(String rawContent, List<OddDO> odds) {
+        List<ParsedBet> fixedGroups = parseFixedPatternGroups(rawContent, odds);
+        if (fixedGroups != null) return fixedGroups;
         String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(
                 normalizeReferenceAmountAlias(normalize(rawContent))));
         if (content.isBlank()) {
@@ -178,6 +180,29 @@ public class LotteryBettingService {
         }
         if (result.size() > MAX_SINGLE_COMMAND_ITEMS) {
             throw exception(BET_LIMIT_INVALID);
+        }
+        return result;
+    }
+
+    private List<ParsedBet> parseFixedPatternGroups(String rawContent, List<OddDO> odds) {
+        String content = rawContent == null ? "" : rawContent.trim();
+        if (!content.contains("*") && !content.matches(
+                "(?s)(?:[0-9]{4}[.、/,，@；;\\s]+)+[0-9]{4}各\\d+(?:\\.\\d+)?[；;]?")) {
+            return null;
+        }
+        Matcher amountMatcher = Pattern.compile("各(\\d+(?:\\.\\d+)?)[；;]?$", Pattern.DOTALL)
+                .matcher(content);
+        if (!amountMatcher.find()) throw exception(BET_CONTENT_INVALID);
+        String[] groups = content.substring(0, amountMatcher.start()).split("[.、/,，@；;\\s]+", -1);
+        BigDecimal perBetAmount = amount(amountMatcher.group(1));
+        List<ParsedBet> result = new ArrayList<>(groups.length);
+        for (String group : groups) {
+            if (!group.matches("[0-9*]{4}")) throw exception(BET_CONTENT_INVALID);
+            int fixedCount = (int) group.chars().filter(Character::isDigit).count();
+            if (fixedCount == 0) throw exception(BET_CONTENT_INVALID);
+            result.add(configuredBet(chineseCount(fixedCount) + "定位", group.replace('*', 'X'),
+                    perBetAmount, "regex" + fixedCount + "d", odds));
+            if (result.size() > MAX_SINGLE_COMMAND_ITEMS) throw exception(BET_LIMIT_INVALID);
         }
         return result;
     }
@@ -995,6 +1020,9 @@ public class LotteryBettingService {
     private List<String> splitCommands(String rawContent) {
         String value = rawContent == null ? "" : rawContent.trim();
         if (value.isEmpty()) return List.of(value);
+        boolean fixedPatternInput = value.contains("*") || value.matches(
+                "(?s)[0-9]{4}各\\d+(?:\\.\\d+)?(?:[.、/,，@；;\\s]+[0-9]{4}各\\d+(?:\\.\\d+)?)+[；;]?");
+        String separatorPattern = fixedPatternInput ? "[，,、；;./@\\s]+" : "[，,、；;\\s]+";
         Matcher amountMatcher = Pattern.compile(
                 "各\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?")
                 .matcher(value);
@@ -1002,12 +1030,12 @@ public class LotteryBettingService {
         int start = 0;
         while (amountMatcher.find()) {
             String command = value.substring(start, amountMatcher.end())
-                    .replaceFirst("^[，,、；;\\s]+", "")
+                    .replaceFirst("^" + separatorPattern, "")
                     .trim();
             if (!command.isEmpty()) commands.add(command);
             start = amountMatcher.end();
         }
-        String remaining = value.substring(start).replaceAll("[，,、；;\\s]+", "");
+        String remaining = value.substring(start).replaceAll(separatorPattern, "");
         if (!remaining.isEmpty() || commands.size() <= 1) return List.of(value);
         return commands;
     }
