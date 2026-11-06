@@ -458,7 +458,12 @@ public class LotteryMarketSyncService {
         String password = usablePassword(input.getPassword()) ? input.getPassword().trim()
                 : current == null ? "" : credentialService.decrypt(current.getMarketPasswordEncrypted());
         requireComplete(url, account, password);
-        Wa55MarketClient.Snapshot snapshot = marketClient.read(new Wa55MarketClient.Credentials(url, account, password), false);
+        Wa55MarketClient.Snapshot snapshot = current != null && Boolean.FALSE.equals(current.getBossMode())
+                && Objects.equals(url, trim(current.getUpstreamUrl()))
+                && Objects.equals(account, trim(current.getUpstreamAccount()))
+                ? marketOrderClient.readWithSession(new Wa55MarketOrderClient.Credentials(url, account, password),
+                        marketClient::readAccountAndIssue)
+                : marketClient.read(new Wa55MarketClient.Credentials(url, account, password), false);
         return map("configured", true, "connected", true, "status", "已连接", "lineUrl", snapshot.lineUrl(),
                 "account", map("displayAccount", snapshot.account().displayAccount(), "balance", snapshot.account().balance()),
                 "issue", issueMap(snapshot.issue()));
@@ -878,6 +883,13 @@ public class LotteryMarketSyncService {
 
     private Wa55MarketClient.Snapshot readDrawSnapshot(LotteryConfigDO config) {
         String password = credentialService.decrypt(config.getMarketPasswordEncrypted());
+        if (Boolean.FALSE.equals(config.getBossMode())) {
+            // The draw source may itself be a trading owner. Two independent DoLogin cookies for the same
+            // single-session account would invalidate one another on every draw/balance refresh.
+            return marketOrderClient.readWithSession(new Wa55MarketOrderClient.Credentials(
+                    config.getUpstreamUrl(), config.getUpstreamAccount(), password),
+                    marketClient::readDrawSnapshot);
+        }
         return marketClient.readDrawSnapshot(new Wa55MarketClient.Credentials(
                 config.getUpstreamUrl(), config.getUpstreamAccount(), password));
     }

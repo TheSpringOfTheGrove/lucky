@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.concurrent.Executor;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -69,6 +70,48 @@ class LotteryMarketSyncServiceTest {
         assertThat(service.normalizeTransitionDetail("{\"confirmations\":2}"))
                 .isEqualTo("{\"confirmations\":2}");
         assertThat(service.normalizeTransitionDetail(" ")).isEqualTo("{}");
+    }
+
+    @Test
+    void drawSourceInBossModeKeepsTheIndependentReadOnlyPath() {
+        Wa55MarketClient drawClient = mock(Wa55MarketClient.class);
+        Wa55MarketOrderClient orderClient = mock(Wa55MarketOrderClient.class);
+        MarketCredentialService credentials = mock(MarketCredentialService.class);
+        ReflectionTestUtils.setField(service, "marketClient", drawClient);
+        ReflectionTestUtils.setField(service, "marketOrderClient", orderClient);
+        ReflectionTestUtils.setField(service, "credentialService", credentials);
+        LotteryConfigDO source = new LotteryConfigDO();
+        source.setBossMode(true);
+        source.setUpstreamUrl("https://market.example");
+        source.setUpstreamAccount("draw-source");
+        source.setMarketPasswordEncrypted("encrypted");
+        when(credentials.decrypt("encrypted")).thenReturn("secret");
+
+        ReflectionTestUtils.invokeMethod(service, "readDrawSnapshot", source);
+
+        verify(drawClient).readDrawSnapshot(any(Wa55MarketClient.Credentials.class));
+        verify(orderClient, never()).readWithSession(any(), any(BiFunction.class));
+    }
+
+    @Test
+    void drawSourceThatAlsoTradesUsesTheOwnerSession() {
+        Wa55MarketClient drawClient = mock(Wa55MarketClient.class);
+        Wa55MarketOrderClient orderClient = mock(Wa55MarketOrderClient.class);
+        MarketCredentialService credentials = mock(MarketCredentialService.class);
+        ReflectionTestUtils.setField(service, "marketClient", drawClient);
+        ReflectionTestUtils.setField(service, "marketOrderClient", orderClient);
+        ReflectionTestUtils.setField(service, "credentialService", credentials);
+        LotteryConfigDO source = new LotteryConfigDO();
+        source.setBossMode(false);
+        source.setUpstreamUrl("https://market.example");
+        source.setUpstreamAccount("trading-owner");
+        source.setMarketPasswordEncrypted("encrypted");
+        when(credentials.decrypt("encrypted")).thenReturn("secret");
+
+        ReflectionTestUtils.invokeMethod(service, "readDrawSnapshot", source);
+
+        verify(orderClient).readWithSession(any(Wa55MarketOrderClient.Credentials.class), any(BiFunction.class));
+        verify(drawClient, never()).readDrawSnapshot(any(Wa55MarketClient.Credentials.class));
     }
 
     @Test

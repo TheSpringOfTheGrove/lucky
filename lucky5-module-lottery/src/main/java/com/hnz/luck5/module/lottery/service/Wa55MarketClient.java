@@ -70,6 +70,17 @@ public class Wa55MarketClient {
         return withSession(credentials, session -> new Snapshot(session.baseUrl, null, issue(session), draws(session)));
     }
 
+    /** Uses the trading client's cookie only when the configured draw source is itself a real-market owner. */
+    Snapshot readDrawSnapshot(HttpClient client, String baseUrl) {
+        Session session = new Session(client, baseUrl);
+        return new Snapshot(baseUrl, null, issue(session), draws(session));
+    }
+
+    Snapshot readAccountAndIssue(HttpClient client, String baseUrl) {
+        Session session = new Session(client, baseUrl);
+        return new Snapshot(baseUrl, account(session), issue(session), List.of());
+    }
+
     private Snapshot read(Credentials credentials, boolean includeAccount, boolean includeDraws) {
         return withSession(credentials, session -> {
             Account account = includeAccount ? account(session) : null;
@@ -280,7 +291,9 @@ public class Wa55MarketClient {
     private void assertAuthenticated(JsonNode payload) {
         int status = number(first(payload, "Status", "status"), Integer.MIN_VALUE);
         String data = text(first(payload, "Data", "message"));
-        if (status == 5 || data.toLowerCase(Locale.ROOT).contains("login") || data.contains("请登录")) {
+        if (status == 5 || data.toLowerCase(Locale.ROOT).contains("login") || data.contains("请登录")
+                || data.contains("别处登录") || data.contains("別處登錄") || data.contains("未登录")
+                || data.contains("未登錄") || data.contains("重新登录") || data.contains("重新登錄")) {
             throw new MarketSessionExpiredException();
         }
     }
@@ -403,7 +416,7 @@ public class Wa55MarketClient {
         private Session session;
     }
 
-    private static final class MarketSessionExpiredException extends IllegalStateException {
+    static final class MarketSessionExpiredException extends IllegalStateException {
 
         private MarketSessionExpiredException() {
             super("盘口会话已失效");

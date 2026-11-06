@@ -35,6 +35,7 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.BiFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -82,13 +83,13 @@ public class Wa55MarketOrderClient {
         requireEnabled();
         if (requests == null || requests.isEmpty()) return new SubmissionBatch(List.of(), List.of(), null);
         requests.forEach(request -> validateRequest(expectedPeriod, request));
-        // The local synchronized issue and absolute close time guard a normal write. Reuse the owner session and
-        // submit directly instead of adding a login/current-period round-trip to every player order.
+        // Validate the cached session and the upstream period before the first write. An expired cookie may be
+        // refreshed here, but never retry a batch after its request has been sent.
         long sessionStartedAt = System.nanoTime();
         boolean cachedSession = sessionCache.containsKey(sessionCacheKey(credentials));
         Session session;
         try {
-            session = connect(credentials);
+            session = preflight(credentials, expectedPeriod).session();
         } finally {
             LOGGER.info("Lucky5 market session timing: cached={}, sessionMs={}", cachedSession,
                     (System.nanoTime() - sessionStartedAt) / 1_000_000);
@@ -112,6 +113,7 @@ public class Wa55MarketOrderClient {
             try {
                 assertSuccess(payload, "盘口拒绝下注");
             } catch (MarketSessionExpiredException ex) {
+                invalidateSession(credentials, session);
                 throw new MarketProtocolException("盘口提交结果不确定（批次 " + group.guid() + "）："
                         + ex.getMessage(), false, confirmations, true, ex);
             } catch (MarketProtocolException ex) {
@@ -161,11 +163,24 @@ public class Wa55MarketOrderClient {
 
     /** Reads balance with the same owner cookie session used by BatchBet. */
     public AccountSnapshot readBalance(Credentials credentials) {
+        Session session = connect(credentials);
         try {
-            return account(connect(credentials));
+            return account(session);
         } catch (MarketSessionExpiredException ex) {
-            invalidateSession(credentials);
+            invalidateSession(credentials, session);
             return account(connect(credentials));
+        }
+    }
+
+    /** Shares the owner's authenticated cookie with the read-only draw client without exposing write operations. */
+    <T> T readWithSession(Credentials credentials, BiFunction<HttpClient, String, T> operation) {
+        Session session = connect(credentials);
+        try {
+            return operation.apply(session.client(), session.baseUrl());
+        } catch (Wa55MarketClient.MarketSessionExpiredException ex) {
+            invalidateSession(credentials, session);
+            Session refreshed = connect(credentials);
+            return operation.apply(refreshed.client(), refreshed.baseUrl());
         }
     }
 
@@ -337,12 +352,12 @@ public class Wa55MarketOrderClient {
     private Preflight preflight(Credentials credentials, String expectedPeriod) {
         MarketSessionExpiredException firstFailure = null;
         for (int attempt = 0; attempt < 2; attempt++) {
+            Session session = connect(credentials);
             try {
-                Session session = connect(credentials);
                 assertExpectedOpenPeriod(session, expectedPeriod);
                 return new Preflight(session);
             } catch (MarketSessionExpiredException ex) {
-                invalidateSession(credentials);
+                invalidateSession(credentials, session);
                 if (attempt > 0) throw ex;
                 firstFailure = ex;
             }
@@ -739,6 +754,10 @@ public class Wa55MarketOrderClient {
         sessionCache.remove(sessionCacheKey(credentials));
     }
 
+    private void invalidateSession(Credentials credentials, Session session) {
+        sessionCache.remove(sessionCacheKey(credentials), session);
+    }
+
     private AccountSnapshot account(Session session) {
         JsonNode raw = getJson(session, "/Member/GetMemberPrint?_=" + System.currentTimeMillis());
         assertAuthenticated(raw);
@@ -752,7 +771,14 @@ public class Wa55MarketOrderClient {
     }
 
     private String sessionCacheKey(Credentials credentials) {
-        return String.valueOf(credentials.url()).trim() + '\u0000' + String.valueOf(credentials.account()).trim();
+        String identity = normalizeBase(credentials.url()) + "\u0000" + String.valueOf(credentials.account()).trim()
+                + "\u0000" + String.valueOf(credentials.password());
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(identity.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("无法生成盘口会话标识", ex);
+        }
     }
 
     private JsonNode getJson(Session session, String path) {

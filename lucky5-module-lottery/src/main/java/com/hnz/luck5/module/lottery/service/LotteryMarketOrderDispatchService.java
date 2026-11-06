@@ -301,7 +301,7 @@ public class LotteryMarketOrderDispatchService {
                                 verify(order.getUserId(), order.getId());
                             }
                         } else if ("MANUAL_REVIEW".equals(order.getMarketStatus())) {
-                            stateService.confirmAcceptedDetailsWithoutIdentifiers(order.getUserId(), order.getId());
+                            // An uncertain receipt requires a human decision; never infer acceptance from a GUID.
                         } else {
                             submit(order.getUserId(), order.getId());
                         }

@@ -23,6 +23,7 @@ class Wa55MarketSessionReuseTest {
     private final AtomicInteger accountCalls = new AtomicInteger();
     private volatile String validSession = "";
     private volatile boolean expireNextAccountRead;
+    private volatile boolean expireNextDrawRead;
     private volatile boolean malformedNextAccountRead;
 
     @BeforeEach
@@ -74,6 +75,39 @@ class Wa55MarketSessionReuseTest {
         assertThat(loginCalls).hasValue(1);
     }
 
+    @Test
+    void drawAndTradingReadsShareOneLoginForTheSameOwner() {
+        Wa55MarketClient drawClient = client();
+        Wa55MarketOrderClient orderClient = new Wa55MarketOrderClient();
+        orderClient.setObjectMapperForTest(new ObjectMapper());
+        Wa55MarketOrderClient.Credentials owner = new Wa55MarketOrderClient.Credentials(
+                baseUrl, "owner-account", "owner-password");
+
+        orderClient.readBalance(owner);
+        Wa55MarketClient.Snapshot draw = orderClient.readWithSession(owner, drawClient::readDrawSnapshot);
+        orderClient.readBalance(owner);
+
+        assertThat(draw.issue().period()).isEqualTo("20260817001");
+        assertThat(loginCalls).hasValue(1);
+        assertThat(accountCalls).hasValue(2);
+    }
+
+    @Test
+    void explicitOtherLoginResponseRefreshesOnlyTheSharedReadSession() {
+        Wa55MarketClient drawClient = client();
+        Wa55MarketOrderClient orderClient = new Wa55MarketOrderClient();
+        orderClient.setObjectMapperForTest(new ObjectMapper());
+        Wa55MarketOrderClient.Credentials owner = new Wa55MarketOrderClient.Credentials(
+                baseUrl, "owner-account", "owner-password");
+        orderClient.readBalance(owner);
+        expireNextDrawRead = true;
+
+        Wa55MarketClient.Snapshot draw = orderClient.readWithSession(owner, drawClient::readDrawSnapshot);
+
+        assertThat(draw.issue().period()).isEqualTo("20260817001");
+        assertThat(loginCalls).hasValue(2);
+    }
+
     private Wa55MarketClient client() {
         Wa55MarketClient client = new Wa55MarketClient();
         client.setObjectMapperForTest(new ObjectMapper());
@@ -92,8 +126,8 @@ class Wa55MarketSessionReuseTest {
             case "/Member/DoLogin" -> login(exchange);
             case "/Member/SysNotice", "/App/Index" -> html(exchange, "ok");
             case "/Member/GetMemberPrint" -> account(exchange);
-            case "/drawno/GetCurrentPeriodStatus" -> authenticatedJson(exchange,
-                    "{\"Status\":1,\"PERIOD_NO\":\"20260817001\",\"OPEN_STATUS\":0}");
+            case "/drawno/GetCurrentPeriodStatus" -> drawStatus(exchange);
+            case "/DrawNo/GetDrawNoTable" -> authenticatedJson(exchange, "{\"Status\":1,\"Rows\":[]}");
             default -> {
                 exchange.sendResponseHeaders(404, -1);
                 exchange.close();
@@ -120,7 +154,18 @@ class Wa55MarketSessionReuseTest {
             return;
         }
         authenticatedJson(exchange, "{\"Status\":1,\"member_account\":\"owner\"," +
-                "\"credit_balance\":8888.50}");
+                "\"credit_balance\":8888.50,\"Data\":{\"Account\":\"owner\"," +
+                "\"credit_balance\":8888.50}}");
+    }
+
+    private void drawStatus(HttpExchange exchange) throws IOException {
+        if (expireNextDrawRead) {
+            expireNextDrawRead = false;
+            json(exchange, "{\"Status\":2,\"Data\":\"您的帐号已在别处登录。\"}");
+            return;
+        }
+        authenticatedJson(exchange,
+                "{\"Status\":1,\"PERIOD_NO\":\"20260817001\",\"OPEN_STATUS\":0}");
     }
 
     private void authenticatedJson(HttpExchange exchange, String body) throws IOException {

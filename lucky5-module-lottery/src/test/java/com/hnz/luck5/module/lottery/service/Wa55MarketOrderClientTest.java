@@ -32,6 +32,7 @@ class Wa55MarketOrderClientTest {
     private String baseUrl;
     private final AtomicInteger loginCalls = new AtomicInteger();
     private final AtomicInteger memberPrintCalls = new AtomicInteger();
+    private final AtomicInteger periodStatusCalls = new AtomicInteger();
     private final AtomicInteger betCalls = new AtomicInteger();
     private final AtomicInteger detailCalls = new AtomicInteger();
     private final AtomicInteger serialLookupCalls = new AtomicInteger();
@@ -53,6 +54,7 @@ class Wa55MarketOrderClientTest {
     private boolean serialLookupWrongBetCount;
     private boolean memberPrintSessionExpiredOnce;
     private boolean batchSessionExpired;
+    private boolean preflightSessionExpiredOnce;
     private boolean includeSummaryRow;
     private int detailVisibleAfterCall;
     private int detailPageSize = Integer.MAX_VALUE;
@@ -344,6 +346,20 @@ class Wa55MarketOrderClientTest {
         assertThat(loginCalls).hasValue(1);
         assertThat(betCalls).hasValue(1);
         assertThat(detailCalls).hasValue(0);
+    }
+
+    @Test
+    void refreshesExpiredSessionBeforeWriteButSendsBatchOnlyOnce() {
+        preflightSessionExpiredOnce = true;
+        Wa55MarketOrderClient client = client(true);
+
+        client.submit(credentials(), issuePeriod, List.of(
+                request("route-1", "四定位", "5874", "1", "guid-1", false),
+                request("route-2", "四定位", "8888", "1", "guid-2", false)));
+
+        assertThat(loginCalls).hasValue(2);
+        assertThat(periodStatusCalls).hasValue(2);
+        assertThat(betCalls).hasValue(1);
     }
 
     @Test
@@ -712,8 +728,7 @@ class Wa55MarketOrderClientTest {
             }
             case "/Member/SysNotice", "/App/Index" -> html(exchange, "ok");
             case "/Member/GetMemberPrint" -> handleMemberPrint(exchange);
-            case "/drawno/GetCurrentPeriodStatus" -> json(exchange, "{\"Status\":1,"
-                    + "\"PERIOD_NO\":\"" + issuePeriod + "\",\"OPEN_STATUS\":" + openStatus + "}");
+            case "/drawno/GetCurrentPeriodStatus" -> handlePeriodStatus(exchange);
             case "/Member/GetMemberBetList" -> handleMemberBetList(exchange);
             case "/Member/GetBetsBySerialNo" -> handleSerialLookup(exchange);
             case "/Member/Bet" -> handleBet(exchange);
@@ -737,6 +752,16 @@ class Wa55MarketOrderClientTest {
         }
         json(exchange, "{\"Status\":1,\"Data\":{" +
                 "\"period_no\":\"" + memberPeriod + "\",\"credit_balance\":9999.50}}");
+    }
+
+    private void handlePeriodStatus(HttpExchange exchange) throws IOException {
+        int call = periodStatusCalls.incrementAndGet();
+        if (preflightSessionExpiredOnce && call == 1) {
+            json(exchange, "{\"Status\":2,\"Data\":\"您的帐号已在别处登录。\"}");
+            return;
+        }
+        json(exchange, "{\"Status\":1,\"PERIOD_NO\":\"" + issuePeriod
+                + "\",\"OPEN_STATUS\":" + openStatus + "}");
     }
 
     private void handleBet(HttpExchange exchange) throws IOException {
