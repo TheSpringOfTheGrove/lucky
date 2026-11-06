@@ -59,6 +59,24 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void fourPositionMixedSizeAndParityPatternsUseFiveDigitsPerPosition() {
+        List<LotteryBettingService.ParsedBet> mixed = service.parse("大双小单各1", odds);
+        List<LotteryBettingService.ParsedBet> parity = service.parse("单单双双各1", odds);
+
+        assertThat(mixed).hasSize(625).containsExactlyElementsOf(service.parse(
+                "千56789百02468十01234个13579各1", odds));
+        assertThat(parity).hasSize(625).containsExactlyElementsOf(service.parse(
+                "千13579百13579十02468个02468各1", odds));
+        assertThat(mixed).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("5001", "9849")
+                .doesNotContain("4999", "5501");
+        assertThat(parity).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("1100", "9988")
+                .doesNotContain("0000", "1111");
+        assertThat(service.parse("单双各1", odds)).hasSize(2);
+    }
+
+    @Test
     void parsesFullFourPositionCartesianCommand() {
         List<LotteryBettingService.ParsedBet> bets = service.parse(
                 "千0123456789百0123456789十0123456789尾0123456789各0.1", odds);
