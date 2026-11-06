@@ -52,7 +52,7 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String profitLoss(String memberName, BigDecimal profitLoss) {
-        return "@" + memberName + "\nyk：" + number(profitLoss);
+        return "@" + memberName + "\n盈亏：" + number(profitLoss);
     }
 
     public String flow(String memberName, BigDecimal total, BigDecimal normal, BigDecimal dragon) {

@@ -116,11 +116,18 @@ export const useRoomChatViewport = (
     viewportTop.value = Math.max(0, viewport?.offsetTop || 0)
     followAfterLayout()
   }
+  const preventPinchZoom = (event: TouchEvent) => {
+    if (event.touches.length > 1) event.preventDefault()
+  }
+  const preventGestureZoom = (event: Event) => event.preventDefault()
   onMounted(() => {
     syncViewport()
     window.addEventListener('resize', syncViewport)
     window.visualViewport?.addEventListener('resize', syncViewport)
     window.visualViewport?.addEventListener('scroll', syncViewport)
+    document.addEventListener('touchmove', preventPinchZoom, { passive: false, capture: true })
+    document.addEventListener('gesturestart', preventGestureZoom, { passive: false })
+    document.addEventListener('gesturechange', preventGestureZoom, { passive: false })
   })
   onBeforeUnmount(() => {
     disposed = true
@@ -129,6 +136,9 @@ export const useRoomChatViewport = (
     window.removeEventListener('resize', syncViewport)
     window.visualViewport?.removeEventListener('resize', syncViewport)
     window.visualViewport?.removeEventListener('scroll', syncViewport)
+    document.removeEventListener('touchmove', preventPinchZoom, true)
+    document.removeEventListener('gesturestart', preventGestureZoom)
+    document.removeEventListener('gesturechange', preventGestureZoom)
   })
 
   return { composerHeight, viewportHeight, viewportStyle, scrollToBottom, handleScroll }

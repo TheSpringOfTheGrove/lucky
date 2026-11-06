@@ -739,6 +739,7 @@ const copyInstruction = async (message: ChatItem) => {
       confirmButtonText: '确定',
       showClose: false,
       center: true,
+      modalClass: 'room-copy-success-overlay',
       customClass: 'room-copy-success'
     })
   } catch (reason) {
@@ -1573,6 +1574,7 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 1;
   overflow: hidden;
+  touch-action: pan-y;
   font: 14px/21px 'Lucida Grande', 'Lucida Sans Unicode', Helvetica, Arial, Verdana, sans-serif;
   color: #333;
   color-scheme: light;
@@ -2199,10 +2201,27 @@ onBeforeUnmount(() => {
 }
 
 :global(.room-copy-success.el-message-box) {
-  width: min(300px, calc(100vw - 48px));
+  width: min(390px, calc(100vw - 28px));
   max-width: none;
-  padding: 12px 16px 14px;
+  padding: 0;
+  border: 1px solid #ececef;
   border-radius: 10px;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+:global(.room-copy-success-overlay .el-overlay-message-box) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 35vh;
+  padding-bottom: 35dvh;
+  box-sizing: border-box;
+}
+
+:global(.room-copy-success-overlay .el-overlay-message-box::after) {
+  display: none;
 }
 
 :global(.room-copy-success .el-message-box__header) {
@@ -2210,18 +2229,41 @@ onBeforeUnmount(() => {
 }
 
 :global(.room-copy-success .el-message-box__content) {
-  padding: 10px 0;
+  padding: 14px 12px;
 }
 
 :global(.room-copy-success .el-message-box__message) {
   justify-content: center;
-  color: #00b83f;
+  color: #5e6066;
   font-size: 16px;
 }
 
 :global(.room-copy-success .el-message-box__btns) {
   justify-content: center;
-  padding: 4px 0 0;
+  padding: 0;
+  border-top: 1px solid #ececef;
+}
+
+:global(.room-copy-success .el-message-box__btns .el-button) {
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: #61c776;
+  background: transparent;
+  box-shadow: none;
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:global(.room-copy-success .el-message-box__btns .el-button:hover),
+:global(.room-copy-success .el-message-box__btns .el-button:focus),
+:global(.room-copy-success .el-message-box__btns .el-button:focus-visible) {
+  color: #61c776;
+  background: transparent;
+  outline: none;
 }
 
 :global(.room-cancel-failure.el-message-box) {

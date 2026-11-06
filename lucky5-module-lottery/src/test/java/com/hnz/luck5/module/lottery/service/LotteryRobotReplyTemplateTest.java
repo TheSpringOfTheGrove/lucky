@@ -178,8 +178,8 @@ class LotteryRobotReplyTemplateTest {
         assertThat(template.balance("露露", List.of(), new BigDecimal("20031")))
                 .isEqualTo("@露露\n【今日房源】：\n\n【您目前余】\n20031")
                 .doesNotContain("目前无房源");
-        assertThat(template.profitLoss("露露", new BigDecimal("1265.70")))
-                .isEqualTo("@露露\nyk：1265.7");
+        assertThat(template.profitLoss("广西一哥", new BigDecimal("-1857.08")))
+                .isEqualTo("@广西一哥\n盈亏：-1857.08");
         assertThat(template.periodSummary(List.of("[露露]654倒二定各10", "[露露]654倒二定各10")))
                 .isEqualTo("本期成功订单\n[露露]654倒二定各10\n[露露]654倒二定各10\n------------");
     }
