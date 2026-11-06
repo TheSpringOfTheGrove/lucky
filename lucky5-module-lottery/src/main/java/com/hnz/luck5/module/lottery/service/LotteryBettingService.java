@@ -105,17 +105,23 @@ public class LotteryBettingService {
         if (content.isBlank()) {
             throw exception(BET_CONTENT_INVALID);
         }
-        // A standalone four-position size pattern is a four-digit fixed bet, not repeated
-        // independent 大/小 bets (which would also collapse duplicate selections below).
-        Matcher fourSizes = Pattern.compile("^([大小]{4})各(\\d+(?:\\.\\d+)?)$").matcher(content);
-        if (fourSizes.matches()) {
+        // Four consecutive size/parity attributes each constrain one fixed position.
+        // Keep shorter combinations as independent basic bets.
+        Matcher fourAttributes = Pattern.compile("^([大小单双]{4})各(\\d+(?:\\.\\d+)?)$").matcher(content);
+        if (fourAttributes.matches()) {
             StringBuilder positioned = new StringBuilder();
             String positions = "千百十个";
             for (int index = 0; index < positions.length(); index++) {
-                positioned.append(positions.charAt(index))
-                        .append(fourSizes.group(1).charAt(index) == '大' ? "56789" : "01234");
+                String digits = switch (fourAttributes.group(1).charAt(index)) {
+                    case '大' -> "56789";
+                    case '小' -> "01234";
+                    case '单' -> "13579";
+                    case '双' -> "02468";
+                    default -> throw exception(BET_CONTENT_INVALID);
+                };
+                positioned.append(positions.charAt(index)).append(digits);
             }
-            positioned.append("各").append(fourSizes.group(2));
+            positioned.append("各").append(fourAttributes.group(2));
             return parseReference(positioned.toString(), odds).stream().map(IndexedBet::bet).toList();
         }
         List<IndexedBet> values = new ArrayList<>();
