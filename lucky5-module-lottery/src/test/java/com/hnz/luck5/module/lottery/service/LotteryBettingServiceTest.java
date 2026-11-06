@@ -77,6 +77,47 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesFourCharacterFixedGroupsWithSharedAmount() {
+        List<LotteryBettingService.ParsedCommand> commands = service.parseCommands(
+                "123*\n*123\n7*89\n**78各1；", odds);
+
+        assertThat(commands).hasSize(1);
+        assertThat(commands.get(0).items()).hasSize(4);
+        assertThat(commands.get(0).items()).extracting(LotteryBettingService.ParsedBet::play)
+                .containsExactly("三定位", "三定位", "三定位", "二定位");
+        assertThat(commands.get(0).items()).extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("123X", "X123", "7X89", "XX78");
+        assertThat(commands.get(0).items()).allSatisfy(bet ->
+                assertThat(bet.amount()).isEqualByComparingTo("1"));
+    }
+
+    @Test
+    void parsesPunctuationSeparatedFixedGroupsIncludingFourDigits() {
+        assertThat(service.parse("123*.*123/7*89、**78，1234@5678各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("123X", "X123", "7X89", "XX78", "1234", "5678");
+        assertThat(service.parse("1234/5678各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::play)
+                .containsExactly("四定位", "四定位");
+        assertThat(service.parse("1234各1", odds)).extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1234");
+    }
+
+    @Test
+    void parsesFixedGroupsWithSeparateAmountsAndPreservesDuplicates() {
+        assertThat(service.parseCommands("7*89各1\n*123各1", odds)).hasSize(2);
+        assertThat(service.parse("123*各1/123*各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("123X", "123X");
+        assertThat(service.parse("1234各1@5678各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1234", "5678");
+        assertThat(service.parse("***7各1", odds)).extracting(LotteryBettingService.ParsedBet::play)
+                .containsExactly("一定位");
+        assertThatThrownBy(() -> service.parse("****各1", odds)).hasMessageContaining("无法识别");
+    }
+
+    @Test
     void parsesFullFourPositionCartesianCommand() {
         List<LotteryBettingService.ParsedBet> bets = service.parse(
                 "千0123456789百0123456789十0123456789尾0123456789各0.1", odds);
