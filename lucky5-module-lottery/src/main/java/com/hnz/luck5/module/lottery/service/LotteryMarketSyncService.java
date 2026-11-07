@@ -979,8 +979,8 @@ public class LotteryMarketSyncService {
     }
 
     /**
-     * Marks a market-visible OPEN issue as formally available for answering. The previous formally opened issue must
-     * already be settled; otherwise this issue remains a harmless preview with {@code openedAt == null}.
+     * Marks a market-visible OPEN issue as formally available for answering. A drawn previous period blocked only
+     * by manual market review stays unsettled, but must not prevent new-period bets.
      */
     private boolean tryOpenForAnswering(Long userId, IssueDO issue, String fromStatus, LocalDateTime now) {
         if (issue == null || !"OPEN".equals(issue.getStatus()) || issue.getOpenedAt() != null
@@ -992,10 +992,12 @@ public class LotteryMarketSyncService {
                         .lt(IssueDO::getPeriod, issue.getPeriod()).isNotNull(IssueDO::getOpenedAt)
                         .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
         // A market preview may skip a period without ever opening it. It must not hide the last period that
-        // actually accepted bets: that period's payout must commit before another period can open.
-        // Only the latest formally opened period gates us, so an older abandoned row cannot block newer
-        // periods once a later formally opened period has settled.
-        if (previousIssue != null && !"SETTLED".equals(previousIssue.getStatus())) {
+        // actually accepted bets: its payout normally commits before another period opens. The only exception
+        // is a drawn issue whose settlement has failed solely on a still-unresolved manual market review.
+        // Only the latest formally opened period gates us, so an older isolated row cannot block newer periods.
+        boolean isolatedManualReview = previousIssue != null && !"SETTLED".equals(previousIssue.getStatus())
+                && isManualReviewOnlySettlementBlocker(userId, previousIssue);
+        if (previousIssue != null && !"SETTLED".equals(previousIssue.getStatus()) && !isolatedManualReview) {
             return false;
         }
         int opened = issueMapper.update(null, new LambdaUpdateWrapper<IssueDO>()
@@ -1004,8 +1006,25 @@ public class LotteryMarketSyncService {
                 .set(IssueDO::getOpenedAt, now));
         if (opened != 1) return false;
         issue.setOpenedAt(now);
-        transition(userId, issue.getPeriod(), fromStatus, "OPEN", "结算完成后开始答题", "");
+        transition(userId, issue.getPeriod(), fromStatus, "OPEN",
+                isolatedManualReview ? "前期订单待核对，隔离后开始答题" : "结算完成后开始答题", "");
         return true;
+    }
+
+    private boolean isManualReviewOnlySettlementBlocker(Long userId, IssueDO previousIssue) {
+        if (!isReadyDrawnSettlement(previousIssue) || previousIssue.getError() == null
+                || !previousIssue.getError().contains("订单正在核对")) return false;
+        LambdaQueryWrapper<OrderDO> marketOrders = new LambdaQueryWrapper<OrderDO>()
+                .eq(OrderDO::getUserId, userId).eq(OrderDO::getPeriod, previousIssue.getPeriod())
+                .eq(OrderDO::getStatus, "未开奖")
+                .in(OrderDO::getDeliveryMode, "MARKET_ADAPTER", "MIXED_MARKET");
+        long manualReviewCount = DataPermissionUtils.executeIgnore(() -> orderMapper.selectCount(
+                marketOrders.clone().eq(OrderDO::getMarketStatus, "MANUAL_REVIEW")));
+        if (manualReviewCount == 0) return false;
+        long otherUncertainCount = DataPermissionUtils.executeIgnore(() -> orderMapper.selectCount(
+                marketOrders.clone().and(status -> status.isNull(OrderDO::getMarketStatus)
+                        .or().notIn(OrderDO::getMarketStatus, "CONFIRMED", "NOT_REQUIRED", "MANUAL_REVIEW"))));
+        return otherUncertainCount == 0;
     }
 
     private String releaseWaitingIssue(Long userId, LocalDateTime now) {
@@ -1227,6 +1246,9 @@ public class LotteryMarketSyncService {
                     new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId)
                             .lt(IssueDO::getPeriod, latest.getPeriod()).isNotNull(IssueDO::getOpenedAt)
                             .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
+            if (isReadyDrawnSettlement(blocking) && isManualReviewOnlySettlementBlocker(userId, blocking)) {
+                return null;
+            }
             if (isReadyDrawnSettlement(blocking) || isRecoverableStaleSettlement(blocking, staleBefore)) {
                 return blocking;
             }
@@ -1245,11 +1267,14 @@ public class LotteryMarketSyncService {
                             .lt(IssueDO::getPeriod, latest.getPeriod())
                             .orderByDesc(IssueDO::getPeriod).last("LIMIT 1")));
         }
-        if (isReadyDrawnSettlement(candidate)) return candidate;
+        if (isReadyDrawnSettlement(candidate) && !isManualReviewOnlySettlementBlocker(userId, candidate)) {
+            return candidate;
+        }
         if (isRecoverableStaleSettlement(candidate, staleBefore)) return candidate;
         IssueDO localRecovery = findFailedHistoricalLocalCandidate(userId);
         if (localRecovery != null) return localRecovery;
         IssueDO acceptedMarket = findAcceptedWithoutIdentifiersHistoricalCandidate(userId);
+        if (isManualReviewOnlySettlementBlocker(userId, acceptedMarket)) return null;
         return acceptedMarket == null ? findRecoverableHistoricalDraw(latest.getTenantId(), userId) : acceptedMarket;
     }
 

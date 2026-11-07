@@ -156,7 +156,7 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
-    void logsCompleteBatchReceiptWhileRedactingAuthenticationSecrets() {
+    void logsBatchReceiptFieldsWithoutSecretsOrExternalIdentifiers() {
         batchResponseWithIds = true;
         batchResponseWithSecret = true;
         Logger logger = (Logger) LoggerFactory.getLogger(Wa55MarketOrderClient.class);
@@ -168,13 +168,34 @@ class Wa55MarketOrderClientTest {
                     request("route-1", "四定位", "5874", "1", "guid-1", false),
                     request("route-2", "四定位", "8888", "1", "guid-2", false)));
             List<String> messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
-                    .filter(message -> message.startsWith("Lucky5 market batch receipt:"))
+                    .filter(message -> message.startsWith("Lucky5 market submit receipt:"))
                     .toList();
             assertThat(messages).singleElement().satisfies(message -> assertThat(message)
-                    .contains("itemCount=2", "\"FinalBetCount\":2", "\"FinalMoney\":2",
-                            "\"BetId\":\"BATCH-BET-1\"", "\"SerialNo\":\"BATCH-SERIAL-1\"",
-                            "\"AccessToken\":\"[REDACTED]\"", "\"Password\":\"[REDACTED]\"")
-                    .doesNotContain("sample-token", "sample-password"));
+                    .contains("itemCount=2", "expectedMoney=2.00", "\"acceptedCount\":2",
+                            "\"acceptedMoney\":2", "\"hasBetId\":true", "\"hasSerialNo\":true")
+                    .doesNotContain("sample-token", "sample-password", "BATCH-BET-1", "BATCH-SERIAL-1"));
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    @Test
+    void logsSingleBetReceiptSoCountAndAmountMismatchesCanBeDiagnosed() {
+        Logger logger = (Logger) LoggerFactory.getLogger(Wa55MarketOrderClient.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            client(true).submit(credentials(), issuePeriod, List.of(
+                    request("route-1", "四定位", "5874", "1", "guid-1", false)));
+            List<String> messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.startsWith("Lucky5 market submit receipt:"))
+                    .toList();
+            assertThat(messages).singleElement().satisfies(message -> assertThat(message)
+                    .contains("itemCount=1", "expectedMoney=1.00", "\"acceptedCount\":1",
+                            "\"acceptedMoney\":1", "\"hasBetId\":true", "\"hasSerialNo\":true")
+                    .doesNotContain("BET-1", "SERIAL-1"));
         } finally {
             logger.detachAppender(appender);
             appender.stop();

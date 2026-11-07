@@ -307,6 +307,29 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
+    void doesNotRetryTheIsolatedManualReviewPeriodOnEverySettlementSweep() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        IssueDO preview = openIssue(218L, "20261106218");
+        IssueDO blocked = openIssue(217L, "20261106217");
+        blocked.setOpenedAt(nowMinusMinutes(5));
+        blocked.setStatus("DRAWN");
+        blocked.setResult("12345");
+        blocked.setDrawConfirmations(1);
+        blocked.setError("订单正在核对，暂不能结算");
+        when(issueMapper.selectOne(any())).thenReturn(preview, blocked);
+        when(orderMapper.selectCount(any())).thenReturn(1L, 0L);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
+
+        IssueDO candidate = ReflectionTestUtils.invokeMethod(service, "findLiveSettlementCandidate", 229L,
+                LocalDateTime.of(2026, 11, 6, 18, 10));
+
+        assertThat(candidate).isNull();
+        assertThat(blocked.getStatus()).isEqualTo("DRAWN");
+    }
+
+    @Test
     void closesTheOpenPeriodWhenTheMarketAdvancesToAClosedPreview() {
         IssueMapper issueMapper = mock(IssueMapper.class);
         IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
@@ -382,6 +405,65 @@ class LotteryMarketSyncServiceTest {
         assertThat(next.getOpenedAt()).isNull();
         // The first update only clears the stale CLOSED-preview timestamp; openedAt must remain untouched.
         verify(issueMapper, times(1)).update(any(), any());
+    }
+
+    @Test
+    void opensNextIssueWhenDrawnPreviousIssueIsBlockedOnlyByManualReview() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        LotteryIssueFreshnessPolicy freshnessPolicy = mock(LotteryIssueFreshnessPolicy.class);
+        IssueDO next = openIssue(218L, "20261106218");
+        IssueDO previous = openIssue(217L, "20261106217");
+        previous.setOpenedAt(nowMinusMinutes(5));
+        previous.setStatus("DRAWN");
+        previous.setResult("12345");
+        previous.setDrawConfirmations(1);
+        previous.setError("订单正在核对，暂不能结算");
+        when(issueMapper.selectOne(any())).thenReturn(previous);
+        when(issueMapper.update(any(), any())).thenReturn(1);
+        when(orderMapper.selectCount(any())).thenReturn(1L, 0L);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "issueFreshnessPolicy", freshnessPolicy);
+        LocalDateTime now = LocalDateTime.of(2026, 11, 6, 18, 10);
+
+        Boolean opened = ReflectionTestUtils.invokeMethod(service, "tryOpenForAnswering", 229L, next,
+                "WAITING_SETTLEMENT", now);
+
+        assertThat(opened).isTrue();
+        assertThat(next.getOpenedAt()).isEqualTo(now);
+        assertThat(previous.getStatus()).isEqualTo("DRAWN");
+        verify(issueMapper).update(any(), any());
+        verify(orderMapper, times(2)).selectCount(any());
+        verify(transitionMapper).insert(any(IssueTransitionDO.class));
+    }
+
+    @Test
+    void keepsNextIssueWaitingWhenAnotherUncertainMarketOrderExists() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        LotteryIssueFreshnessPolicy freshnessPolicy = mock(LotteryIssueFreshnessPolicy.class);
+        IssueDO next = openIssue(218L, "20261106218");
+        IssueDO previous = openIssue(217L, "20261106217");
+        previous.setOpenedAt(nowMinusMinutes(5));
+        previous.setStatus("DRAWN");
+        previous.setResult("12345");
+        previous.setDrawConfirmations(1);
+        previous.setError("订单正在核对，暂不能结算");
+        when(issueMapper.selectOne(any())).thenReturn(previous);
+        when(orderMapper.selectCount(any())).thenReturn(1L, 1L);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
+        ReflectionTestUtils.setField(service, "issueFreshnessPolicy", freshnessPolicy);
+
+        Boolean opened = ReflectionTestUtils.invokeMethod(service, "tryOpenForAnswering", 229L, next,
+                "WAITING_SETTLEMENT", LocalDateTime.of(2026, 11, 6, 18, 10));
+
+        assertThat(opened).isFalse();
+        assertThat(next.getOpenedAt()).isNull();
+        verify(issueMapper, never()).update(any(), any());
     }
 
     @Test

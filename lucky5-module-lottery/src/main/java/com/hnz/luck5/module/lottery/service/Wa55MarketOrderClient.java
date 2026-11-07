@@ -105,11 +105,10 @@ public class Wa55MarketOrderClient {
                 throw new MarketProtocolException("盘口提交结果不确定（批次 " + group.guid() + "）："
                         + ex.getMessage(), false, confirmations, true, ex);
             }
-            if (group.requests().size() > 1) {
-                // Keep the complete upstream receipt for diagnosis; credentials and session tokens are never logged.
-                LOGGER.info("Lucky5 market batch receipt: batchGuid={}, itemCount={}, response={}",
-                        group.guid(), group.requests().size(), marketReceiptForLog(payload));
-            }
+            // Log every returned write receipt, including /Member/Bet single-item responses. Only allowlisted
+            // numeric fields and identifier-presence flags are retained; never log credentials, bet text or IDs.
+            LOGGER.info("Lucky5 market submit receipt: batchGuid={}, itemCount={}, expectedMoney={}, response={}",
+                    group.guid(), group.requests().size(), group.totalAmount(), submitReceiptForLog(payload));
             try {
                 assertSuccess(payload, "盘口拒绝下注");
             } catch (MarketSessionExpiredException ex) {
@@ -387,6 +386,26 @@ public class Wa55MarketOrderClient {
         JsonNode copy = payload.deepCopy();
         redactMarketSecrets(copy);
         return copy.toString();
+    }
+
+    private String submitReceiptForLog(JsonNode payload) {
+        JsonNode data = first(payload, "Data", "data");
+        ObjectNode receipt = objectMapper.createObjectNode();
+        receipt.put("status", number(first(payload, "Status", "status"), -1));
+        receipt.put("completedStatus", number(first(data, "CompletedStatus", "completed_status"), -1));
+        receipt.put("lackStatus", number(first(data, "LackStatus", "lack_status"), -1));
+        receipt.put("acceptedCount", number(first(data, "FinalBetCount", "final_bet_count", "BetCount", "bet_count"), -1));
+        BigDecimal amount = decimal(first(data, "FinalMoney", "final_money", "Money", "money", "BetMoney", "bet_money"));
+        if (amount == null) receipt.putNull("acceptedMoney");
+        else receipt.put("acceptedMoney", amount);
+        receipt.put("hasBetId", !text(first(data, "BetId", "bet_id", "Id", "id")).isBlank());
+        receipt.put("hasSerialNo", !text(first(data, "SerialNo", "serial_no")).isBlank());
+        if (data != null && data.isObject()) {
+            List<String> fieldNames = new ArrayList<>();
+            data.fieldNames().forEachRemaining(fieldNames::add);
+            receipt.putPOJO("dataFields", fieldNames);
+        }
+        return receipt.toString();
     }
 
     private void redactMarketSecrets(JsonNode node) {
