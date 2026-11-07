@@ -61,6 +61,7 @@ public class Wa55MarketOrderClient {
      * reuse and avoids making every player wait for a fresh login handshake.
      */
     private final Map<String, Session> sessionCache = new ConcurrentHashMap<>();
+    private final Wa55MarketLineSelector lineSelector = new Wa55MarketLineSelector();
 
     @Resource
     private ObjectMapper objectMapper;
@@ -761,6 +762,23 @@ public class Wa55MarketOrderClient {
 
     private Session connectFresh(Credentials credentials) {
         URI configured = normalizeBase(credentials.url());
+        String ownerSessionKey = sessionCacheKey(credentials);
+        URI selected = lineSelector.select(configured, ownerSessionKey);
+        if (!selected.equals(configured)) {
+            try {
+                return connectAt(credentials, selected);
+            } catch (RuntimeException ex) {
+                // A speed-test winner is not necessarily usable for this owner's account. Keep the configured
+                // address as the safe fallback and avoid probing the failed line on every subsequent login.
+                lineSelector.failed(ownerSessionKey, configured, selected);
+                LOGGER.warn("Lucky5 market selected line login failed: selected={}, fallback={}, errorType={}",
+                        selected.getHost(), configured.getHost(), ex.getClass().getSimpleName());
+            }
+        }
+        return connectAt(credentials, configured);
+    }
+
+    private Session connectAt(Credentials credentials, URI configured) {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         HttpClient client = HttpClient.newBuilder().cookieHandler(cookies).followRedirects(HttpClient.Redirect.ALWAYS)
                 .connectTimeout(Duration.ofSeconds(15)).build();
