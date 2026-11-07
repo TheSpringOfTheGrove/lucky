@@ -145,6 +145,8 @@ public interface LotteryService {
 
     Map<String, Object> getRoomMessageHistory(LotteryRoomReqVO.MessageHistory reqVO);
 
+    String getRoomDrawImage(LotteryRoomReqVO.Credential reqVO, Long messageId);
+
     List<Map<String, Object>> getRoomBetReplies(LotteryRoomReqVO.BetReplies reqVO);
 
     Map<String, Object> roomPlaceBet(LotteryRoomReqVO.Bet reqVO);

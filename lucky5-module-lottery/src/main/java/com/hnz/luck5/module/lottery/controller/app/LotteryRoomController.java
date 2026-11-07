@@ -9,10 +9,15 @@ import jakarta.annotation.Resource;
 import jakarta.annotation.security.PermitAll;
 import jakarta.validation.Valid;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 import static com.hnz.luck5.framework.common.pojo.CommonResult.success;
 
@@ -50,6 +55,16 @@ public class LotteryRoomController {
     @GetMapping("/messages/history")
     public CommonResult<Map<String, Object>> getMessageHistory(@Valid LotteryRoomReqVO.MessageHistory reqVO) {
         return success(lotteryService.getRoomMessageHistory(reqVO));
+    }
+
+    @GetMapping(value = "/messages/{id}/draw-image", produces = "image/svg+xml")
+    public ResponseEntity<byte[]> getDrawImage(@PathVariable Long id, @Valid LotteryRoomReqVO.Credential reqVO) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("image/svg+xml"))
+                .cacheControl(CacheControl.maxAge(1, TimeUnit.DAYS).cachePrivate())
+                .header("X-Content-Type-Options", "nosniff")
+                .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+                .body(lotteryService.getRoomDrawImage(reqVO, id).getBytes(StandardCharsets.UTF_8));
     }
 
     @PostMapping("/bets")

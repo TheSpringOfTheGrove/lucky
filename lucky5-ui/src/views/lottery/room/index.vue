@@ -9,6 +9,7 @@ import {
   getRoomDrawStateApi,
   getRoomMessageHistoryApi,
   getRoomSessionApi,
+  roomDrawImageSrc,
   sendRoomMessageApi,
   type RoomCredential,
   type RoomDraw,
@@ -825,7 +826,11 @@ const loadSession = async (quiet = false) => {
       trackedBetMessageIds.value = trackedBetMessageIds.value.filter((messageId) => {
         const trackedMessage = nextSession.messages.find((message) => message.id === messageId)
         const trackedOrder = nextSession.orders.find((order) => order.id === trackedMessage?.orderId)
-        return Boolean(trackedOrder?.processing) || trackedMessage?.reply?.trim().endsWith('提交中')
+        return (
+          (!trackedMessage && Date.now() < betReplyFastPollUntilMs.value) ||
+          Boolean(trackedOrder?.processing) ||
+          trackedMessage?.reply?.trim().endsWith('提交中')
+        )
       })
       if (!trackedBetMessageIds.value.length) betReplyFastPollUntilMs.value = 0
     }
@@ -929,10 +934,17 @@ const scheduleBetReplyRefresh = () => {
       if (sequence !== betReplyRequestSequence || !session.value) return
       // Only invalidate a full snapshot when a reply changed; ordinary pending polls must not starve group chat.
       if (
-        replies.some((reply) =>
-          session.value?.messages.some(
-            (message) => message.id === reply.id && message.reply !== reply.reply
-          )
+        replies.some(
+          (reply) =>
+            session.value?.messages.some(
+              (message) => message.id === reply.id && message.reply !== reply.reply
+            ) ||
+            localMessages.value.some(
+              (message) =>
+                message.kind === 'robot' &&
+                message.serverMessageId === reply.id &&
+                message.content !== reply.reply
+            )
         )
       )
         sessionRequestSequence++
@@ -944,6 +956,10 @@ const scheduleBetReplyRefresh = () => {
             status: reply.status,
             replyUpdatedAt: reply.replyUpdatedAt
           })
+        for (const localMessage of localMessages.value) {
+          if (localMessage.kind === 'robot' && localMessage.serverMessageId === reply.id)
+            localMessage.content = reply.reply
+        }
         const order = session.value.orders.find((item) => item.id === reply.orderId)
         if (order) order.processing = reply.processing
         if (!reply.processing) {
@@ -1086,6 +1102,8 @@ const submitChat = async () => {
     if (result.commandType === 'BET' && result.reply?.trim().endsWith('提交中')) {
       trackedBetMessageIds.value = [...new Set([...trackedBetMessageIds.value, result.messageId])]
       betReplyFastPollUntilMs.value = Math.max(betReplyFastPollUntilMs.value, Date.now() + 30_000)
+      // Start the lightweight receipt check before the full room refresh can delay it.
+      scheduleBetReplyRefresh()
     }
     if (result.commandType === 'DRAW_REQUEST' && result.drawImage) {
       const matchingDraw = session.value.draws.find((draw) => draw.period === result.period)
@@ -1396,7 +1414,8 @@ onBeforeUnmount(() => {
                 <template v-if="message.type === 'draw' && message.draw">
                   <img
                     class="draw-history-image"
-                    :src="message.drawImage"
+                    :src="roomDrawImageSrc(credential, message.drawImage || '')"
+                    loading="lazy"
                     :alt="`第 ${message.draw.period} 期开奖图`"
                   />
                 </template>

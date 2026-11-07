@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hnz.luck5.module.lottery.dal.dataobject.DrawDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -78,6 +80,33 @@ class LotteryRoomDrawMessagesTest {
         assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(service, "recentRoomDrawMessageQuery",
                 7L, IntStream.range(0, 21).mapToObj(String::valueOf).toList()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void roomSessionUsesLazyImageUrlInsteadOfRepeatingTheSvg() {
+        MessageDO saved = message(42L, "DRAW_REQUEST");
+        saved.setDrawImage("<svg>large immutable draw snapshot</svg>");
+        saved.setMemberId("member-1");
+        MemberDO member = new MemberDO();
+        member.setId("member-1");
+        member.setName("tester");
+
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                saved, member, Map.of(), Map.of());
+
+        assertThat(result.get("drawImage"))
+                .isEqualTo("/app-api/lottery/room/messages/42/draw-image");
+        assertThat(result.toString()).doesNotContain("large immutable draw snapshot");
+    }
+
+    @Test
+    void drawImageLookupIsBoundToTheCurrentOwnerAndMessage() {
+        LambdaQueryWrapper<MessageDO> query = ReflectionTestUtils.invokeMethod(service,
+                "roomDrawImageQuery", 7L, 42L);
+
+        assertThat(query.getSqlSegment()).contains("user_id =", "id =", "command_type IN");
+        assertThat(query.getParamNameValuePairs().values())
+                .contains(7L, 42L, "DRAW_RESULT", "DRAW_REQUEST");
     }
 
     private MessageDO message(Long id, String command) {

@@ -3149,6 +3149,29 @@ public class LotteryServiceImpl implements LotteryService {
         });
     }
 
+    @Override
+    public String getRoomDrawImage(LotteryRoomReqVO.Credential reqVO, Long messageId) {
+        return TenantUtils.execute(reqVO.getTenantId(), () -> {
+            RoomAccess access = requireRoomAccess(reqVO);
+            MessageDO message = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                    roomDrawImageQuery(access.member().getUserId(), messageId)));
+            boolean ownRequest = message != null && (Objects.equals(message.getMemberId(), access.member().getId())
+                    || message.getMemberId() == null && Objects.equals(message.getMember(), access.member().getName()));
+            if (message == null || StrUtil.isBlank(message.getDrawImage())
+                    || "DRAW_REQUEST".equals(message.getCommandType()) && !ownRequest) {
+                throw exception(ROOM_CREDENTIAL_INVALID);
+            }
+            return LotteryDrawHistoryImageRenderer.completeSnapshot(message.getDrawImage());
+        });
+    }
+
+    private LambdaQueryWrapper<MessageDO> roomDrawImageQuery(Long userId, Long messageId) {
+        return new LambdaQueryWrapper<MessageDO>()
+                .eq(MessageDO::getId, messageId)
+                .eq(MessageDO::getUserId, userId)
+                .in(MessageDO::getCommandType, COMMAND_DRAW_RESULT, "DRAW_REQUEST");
+    }
+
     private Map<String, Object> getRoomSessionInternal(MemberDO member, String roomMode) {
         LotteryConfigDO config = requireConfig(member.getUserId());
         SystemStateDO state = requireState(member.getUserId());
@@ -3449,7 +3472,8 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, Object> result = messageMap(item);
         if (Set.of(COMMAND_DRAW_RESULT, "DRAW_REQUEST").contains(item.getCommandType())
                 && StrUtil.isNotBlank(item.getDrawImage())) {
-            result.put("drawImage", messageDrawImage(item));
+            // Keep the live session small. The immutable image is fetched only when visible and browser-cached.
+            result.put("drawImage", "/app-api/lottery/room/messages/" + item.getId() + "/draw-image");
         }
         boolean own = Objects.equals(item.getMemberId(), member.getId())
                 || item.getMemberId() == null && Objects.equals(item.getMember(), member.getName());

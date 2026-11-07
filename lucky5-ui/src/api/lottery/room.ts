@@ -179,6 +179,11 @@ const credentialQuery = (credential: RoomCredential) => {
   return query.toString()
 }
 
+export const roomDrawImageSrc = (credential: RoomCredential, image: string) =>
+  image.startsWith('/app-api/lottery/room/messages/')
+    ? `${image}?${credentialQuery(credential)}`
+    : image
+
 const normalizeDraw = (draw: RoomDraw): RoomDraw => {
   const source =
     Array.isArray(draw.numbers) && draw.numbers.length ? draw.numbers.join('') : draw.result || ''
