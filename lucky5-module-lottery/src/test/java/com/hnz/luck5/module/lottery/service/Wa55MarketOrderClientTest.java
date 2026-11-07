@@ -43,6 +43,9 @@ class Wa55MarketOrderClientTest {
     private String issuePeriod = "20260811001";
     private int openStatus = 0;
     private int mismatchAtCall = -1;
+    private int missingSingleCountAtCall = -1;
+    private int wrongSingleCountAtCall = -1;
+    private int missingSingleCompletionAtCall = -1;
     private int missingIdAtCall = -1;
     private int malformedAtCall = -1;
     private int rejectAtCall = -1;
@@ -200,6 +203,45 @@ class Wa55MarketOrderClientTest {
             logger.detachAppender(appender);
             appender.stop();
         }
+    }
+
+    @Test
+    void confirmsSingleBetWhenMarketOmitsCountButReturnsCompleteReceiptAndExactMoney() {
+        missingSingleCountAtCall = 1;
+
+        Wa55MarketOrderClient.SubmissionBatch result = client(true).submit(credentials(), issuePeriod,
+                List.of(request("route-1", "四定位", "1123", "1", "guid-1", false)));
+
+        assertThat(result.confirmations()).singleElement().satisfies(confirmation -> {
+            assertThat(confirmation.betCount()).isEqualTo(1);
+            assertThat(confirmation.acceptedAmount()).isEqualByComparingTo("1");
+            assertThat(confirmation.marketBetId()).isEqualTo("BET-1");
+            assertThat(confirmation.serialNo()).isEqualTo("SERIAL-1");
+        });
+        assertThat(betCalls).hasValue(1);
+    }
+
+    @Test
+    void explicitWrongSingleBetCountRemainsUncertain() {
+        wrongSingleCountAtCall = 1;
+
+        assertThatThrownBy(() -> client(true).submit(credentials(), issuePeriod,
+                List.of(request("route-1", "四定位", "1123", "1", "guid-1", false))))
+                .isInstanceOfSatisfying(Wa55MarketOrderClient.MarketProtocolException.class, ex -> {
+                    assertThat(ex.submissionUncertain()).isTrue();
+                    assertThat(ex.retryable()).isFalse();
+                });
+    }
+
+    @Test
+    void missingSingleBetCountWithoutCompletionFlagRemainsUncertain() {
+        missingSingleCountAtCall = 1;
+        missingSingleCompletionAtCall = 1;
+
+        assertThatThrownBy(() -> client(true).submit(credentials(), issuePeriod,
+                List.of(request("route-1", "四定位", "1123", "1", "guid-1", false))))
+                .isInstanceOfSatisfying(Wa55MarketOrderClient.MarketProtocolException.class, ex ->
+                        assertThat(ex.submissionUncertain()).isTrue());
     }
 
     @Test
@@ -843,9 +885,13 @@ class Wa55MarketOrderClientTest {
         int count = form.get("betno").split(",").length;
         BigDecimal accepted = new BigDecimal(form.get("betmoney")).multiply(BigDecimal.valueOf(count));
         String money = call == mismatchAtCall ? "0" : accepted.toPlainString();
+        String countField = call == missingSingleCountAtCall ? ""
+                : ",\"BetCount\":" + (call == wrongSingleCountAtCall ? count + 1 : count);
+        String completionFields = call == missingSingleCompletionAtCall ? ""
+                : ",\"CompletedStatus\":1,\"LackStatus\":0";
         json(exchange, "{\"Status\":1,\"Data\":{" +
                 "\"BetId\":\"BET-" + call + "\",\"SerialNo\":\"SERIAL-" + call + "\"," +
-                "\"BetCount\":" + count + ",\"Money\":" + money + ",\"Odds\":99.6}}");
+                "\"Money\":" + money + countField + completionFields + ",\"Odds\":99.6}}");
     }
 
     private void handleBatchBet(HttpExchange exchange) throws IOException {

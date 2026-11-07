@@ -66,6 +66,27 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
+    void manualReviewOnlyDrawnIssueCanBeIsolatedWithoutLambdaCacheLookup() {
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        when(orderMapper.selectCount(any())).thenReturn(1L, 0L);
+        ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
+        IssueDO blocked = new IssueDO();
+        blocked.setStatus("DRAWN");
+        blocked.setPeriod("20261107233");
+        blocked.setResult("12345");
+        blocked.setDrawConfirmations(1);
+        blocked.setError("订单正在核对，暂不能结算");
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service,
+                "isManualReviewOnlySettlementBlocker", 227L, blocked)).isTrue();
+
+        ArgumentCaptor<Wrapper<OrderDO>> queries = ArgumentCaptor.forClass(Wrapper.class);
+        verify(orderMapper, times(2)).selectCount(queries.capture());
+        assertThat(queries.getAllValues()).allSatisfy(query -> assertThat(query.getSqlSegment())
+                .contains("user_id", "period", "delivery_mode", "market_status"));
+    }
+
+    @Test
     void preservesJsonAndNormalizesBlankDetails() {
         assertThat(service.normalizeTransitionDetail("{\"confirmations\":2}"))
                 .isEqualTo("{\"confirmations\":2}");

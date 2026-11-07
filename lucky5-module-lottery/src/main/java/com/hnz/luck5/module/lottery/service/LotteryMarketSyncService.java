@@ -2,6 +2,7 @@ package com.hnz.luck5.module.lottery.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.tenant.core.util.TenantUtils;
@@ -1014,17 +1015,24 @@ public class LotteryMarketSyncService {
     private boolean isManualReviewOnlySettlementBlocker(Long userId, IssueDO previousIssue) {
         if (!isReadyDrawnSettlement(previousIssue) || previousIssue.getError() == null
                 || !previousIssue.getError().contains("订单正在核对")) return false;
-        LambdaQueryWrapper<OrderDO> marketOrders = new LambdaQueryWrapper<OrderDO>()
-                .eq(OrderDO::getUserId, userId).eq(OrderDO::getPeriod, previousIssue.getPeriod())
-                .eq(OrderDO::getStatus, "未开奖")
-                .in(OrderDO::getDeliveryMode, "MARKET_ADAPTER", "MIXED_MARKET");
+        // Avoid cloning a LambdaQueryWrapper here: the cloned wrapper can lose MyBatis-Plus's
+        // lambda column cache and throw while a new issue is being opened. These two fresh,
+        // user-scoped queries must never turn an isolated manual review into a sync failure.
         long manualReviewCount = DataPermissionUtils.executeIgnore(() -> orderMapper.selectCount(
-                marketOrders.clone().eq(OrderDO::getMarketStatus, "MANUAL_REVIEW")));
+                manualReviewBlockerOrders(userId, previousIssue.getPeriod())
+                        .eq("market_status", "MANUAL_REVIEW")));
         if (manualReviewCount == 0) return false;
         long otherUncertainCount = DataPermissionUtils.executeIgnore(() -> orderMapper.selectCount(
-                marketOrders.clone().and(status -> status.isNull(OrderDO::getMarketStatus)
-                        .or().notIn(OrderDO::getMarketStatus, "CONFIRMED", "NOT_REQUIRED", "MANUAL_REVIEW"))));
+                manualReviewBlockerOrders(userId, previousIssue.getPeriod())
+                        .and(status -> status.isNull("market_status")
+                                .or().notIn("market_status", "CONFIRMED", "NOT_REQUIRED", "MANUAL_REVIEW"))));
         return otherUncertainCount == 0;
+    }
+
+    private QueryWrapper<OrderDO> manualReviewBlockerOrders(Long userId, String period) {
+        return new QueryWrapper<OrderDO>().eq("user_id", userId).eq("period", period)
+                .eq("status", "未开奖")
+                .in("delivery_mode", "MARKET_ADAPTER", "MIXED_MARKET");
     }
 
     private String releaseWaitingIssue(Long userId, LocalDateTime now) {
@@ -1315,15 +1323,17 @@ public class LotteryMarketSyncService {
 
     /**
      * Old DRAWN issues normally stay untouched so they cannot crowd out the live settlement queue. The sole
-     * exception is a market order whose batch was conclusively accepted (same count and amount) and was later
-     * promoted from MANUAL_REVIEW because the market never exposed per-row ids. These orders are safe to settle,
-     * but they were previously unable to re-enter the live-only queue.
+     * exceptions are an exactly accepted batch awaiting identifiers and an order explicitly confirmed by its owner
+     * through the audited manual-review action. Neither may starve the live settlement queue.
      */
     private IssueDO findAcceptedWithoutIdentifiersHistoricalCandidate(Long userId) {
         List<OrderDO> accepted = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
                 new LambdaQueryWrapper<OrderDO>().select(OrderDO::getPeriod).eq(OrderDO::getUserId, userId)
                         .eq(OrderDO::getStatus, "未开奖").eq(OrderDO::getMarketStatus, "CONFIRMED")
-                        .likeRight(OrderDO::getMarketError, "盘口已明确受理，逐注明细编号未返回")));
+                        .and(marker -> marker.likeRight(OrderDO::getMarketError,
+                                        "盘口已明确受理，逐注明细编号未返回")
+                                .or().eq(OrderDO::getMarketError,
+                                        LotteryMarketOrderStateService.OWNER_CONFIRMED_MARKET_NOTE))));
         Set<String> periods = accepted.stream().map(OrderDO::getPeriod)
                 .filter(period -> period != null && !period.isBlank()).collect(java.util.stream.Collectors.toSet());
         if (periods.isEmpty()) return null;

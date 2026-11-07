@@ -46,6 +46,7 @@ public class LotteryMarketOrderStateService {
     private static final Set<String> CONFIRMABLE = Set.of("SUBMITTING", "RETRY", "UNKNOWN", "VERIFYING");
     private static final String ACCEPTED_WITHOUT_IDS_NOTE =
             "盘口已明确受理，逐注明细编号未返回；已确认受理，不能退码";
+    static final String OWNER_CONFIRMED_MARKET_NOTE = "老板核对确认盘口已受理，待补偿结算";
 
     @Resource private OrderMapper orderMapper;
     @Resource private MarketRouteItemMapper routeItemMapper;
@@ -547,7 +548,8 @@ public class LotteryMarketOrderStateService {
                 .eq(OrderDO::getStatus, "未开奖").eq(OrderDO::getMarketStatus, "MANUAL_REVIEW")
                 .eq(OrderDO::getVersion, version)
                 .set(OrderDO::getMarketStatus, "CONFIRMED").set(OrderDO::getMarketOrderId, externalOrderId)
-                .set(OrderDO::getMarketError, "").set(OrderDO::getVersion, version + 1));
+                .set(OrderDO::getMarketError, OWNER_CONFIRMED_MARKET_NOTE)
+                .set(OrderDO::getVersion, version + 1));
         if (changed != 1) throw exception(BET_STATE_CHANGED);
         LocalDateTime now = LocalDateTime.now();
         int routeCount = marketRoutes.size();

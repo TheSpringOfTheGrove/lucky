@@ -87,7 +87,10 @@ class LotteryMarketManualReviewTest {
         assertThat(result.routeCount()).isEqualTo(2);
         assertThat(result.amount()).isEqualByComparingTo("0.20");
         assertThat(result.marketStatus()).isEqualTo("CONFIRMED");
-        verify(orderMapper).update(any(), any(LambdaUpdateWrapper.class));
+        ArgumentCaptor<LambdaUpdateWrapper<OrderDO>> orderUpdate = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(orderMapper).update(org.mockito.ArgumentMatchers.isNull(), orderUpdate.capture());
+        assertThat(orderUpdate.getValue().getParamNameValuePairs().values())
+                .contains(LotteryMarketOrderStateService.OWNER_CONFIRMED_MARKET_NOTE);
         verify(routeMapper).update(any(), any(LambdaUpdateWrapper.class));
     }
 

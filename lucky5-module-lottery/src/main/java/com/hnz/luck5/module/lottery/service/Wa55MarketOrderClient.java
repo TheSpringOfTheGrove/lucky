@@ -128,7 +128,20 @@ public class Wa55MarketOrderClient {
             JsonNode data = first(payload, "Data", "data");
             BigDecimal accepted = decimal(first(data, "FinalMoney", "final_money", "Money", "money",
                     "BetMoney", "bet_money"));
-            int betCount = number(first(data, "FinalBetCount", "final_bet_count", "BetCount", "bet_count"), -1);
+            JsonNode betCountField = first(data, "FinalBetCount", "final_bet_count", "BetCount", "bet_count");
+            int betCount = number(betCountField, -1);
+            // /Member/Bet is a single-item write. Some market lines omit BetCount even when they return
+            // CompletedStatus=1, LackStatus=0, the exact money, and both external identifiers. In that
+            // specific case the successful single-item receipt itself establishes a count of one. An
+            // explicit (including malformed) count must still pass the ordinary strict comparison.
+            if (group.requests().size() == 1 && (betCountField == null || betCountField.isNull())
+                    && number(first(data, "CompletedStatus", "completed_status"), -1) == 1
+                    && number(first(data, "LackStatus", "lack_status"), -1) == 0
+                    && accepted != null && accepted.compareTo(group.totalAmount()) == 0
+                    && !text(first(data, "BetId", "bet_id", "Id", "id")).isBlank()
+                    && !text(first(data, "SerialNo", "serial_no")).isBlank()) {
+                betCount = 1;
+            }
             // A completed batch that explicitly accepted nothing is a rejection, not an uncertain write.
             // Never refund the whole order if an earlier group in the same submission was accepted.
             if (number(first(data, "CompletedStatus", "completed_status"), -1) == 1
