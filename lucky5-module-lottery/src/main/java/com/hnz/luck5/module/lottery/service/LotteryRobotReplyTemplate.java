@@ -1,9 +1,11 @@
 package com.hnz.luck5.module.lottery.service;
 
+import com.hnz.luck5.module.lottery.dal.dataobject.AmountRecordDO;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -70,6 +72,18 @@ public class LotteryRobotReplyTemplate {
 
     public String flowUnavailable(String memberName) {
         return "@" + memberName + "\n当前不可查流水";
+    }
+
+    public String amountHistory(String memberName, List<AmountRecordDO> records) {
+        if (records == null || records.isEmpty()) {
+            return "@" + memberName + "\n暂无上下分记录";
+        }
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM-dd HH:mm");
+        String details = records.stream().map(record ->
+                (record.getCreateTime() == null ? "" : record.getCreateTime().format(formatter) + " ")
+                        + record.getType() + "：" + number(record.getAmount())
+                        + "（" + record.getStatus() + "）").reduce((left, right) -> left + "\n" + right).orElse("");
+        return "@" + memberName + "\n最近上下分：\n" + details;
     }
 
     private String fixed(BigDecimal value, int scale) {
