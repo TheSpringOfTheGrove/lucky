@@ -57,6 +57,7 @@ interface ChatItem {
 const route = useRoute()
 const session = ref<RoomSession | null>(null)
 const loading = ref(true)
+const chatReady = ref(false)
 const saving = ref(false)
 const error = ref('')
 const composer = ref('')
@@ -1276,6 +1277,7 @@ watch(
   () => `${credential.value.openId}:${credential.value.roomMode || 'DEFAULT'}`,
   async (credentialKey, previousCredentialKey) => {
     if (!credential.value.openId || credentialKey === previousCredentialKey) return
+    chatReady.value = false
     cancelReceiptSequence++
     if (cancelReceiptTimer) window.clearTimeout(cancelReceiptTimer)
     sessionStartedAt.value = new Date().toISOString()
@@ -1292,17 +1294,37 @@ watch(
     betReplyFastPollUntilMs.value = 0
     bettingCutoffAtMs.value = null
     await loadSession()
-    await scrollToBottom()
+    await revealChatAtBottom()
     composerRef.value?.focus({ preventScroll: true })
   }
 )
+
+const revealChatAtBottom = async () => {
+  if (!session.value) return
+  await scrollToBottom()
+  // Keep the newly mounted message list hidden until both initial layout passes have settled.
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      const stream = chatRef.value
+      if (stream) stream.scrollTop = Math.max(0, stream.scrollHeight - stream.clientHeight)
+      requestAnimationFrame(() => {
+        const latestStream = chatRef.value
+        if (latestStream) {
+          latestStream.scrollTop = Math.max(0, latestStream.scrollHeight - latestStream.clientHeight)
+        }
+        resolve()
+      })
+    })
+  })
+  chatReady.value = true
+}
 
 onMounted(async () => {
   restorePlayerSentAtOverrides()
   window.addEventListener('resize', handleRoomResize)
   document.addEventListener('pointerdown', handleDocumentPointerDown)
   await loadSession()
-  await scrollToBottom()
+  await revealChatAtBottom()
   await nextTick()
   resizeComposer()
   composerRef.value?.focus({ preventScroll: true })
@@ -1344,6 +1366,10 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else-if="session">
+      <div v-if="!chatReady" class="room-state-page room-initial-overlay">
+        <span class="room-loader"></span>
+      </div>
+
       <button
         class="scratch-launcher"
         type="button"
@@ -1365,7 +1391,13 @@ onBeforeUnmount(() => {
         @update:auto-popup="updateAutoScratch"
       />
 
-      <main ref="chatRef" class="chat-stream" aria-live="polite" @scroll.passive="handleChatScroll">
+      <main
+        ref="chatRef"
+        class="chat-stream"
+        :class="{ 'chat-initializing': !chatReady }"
+        aria-live="polite"
+        @scroll.passive="handleChatScroll"
+      >
         <div ref="chatContentRef" class="chat-content">
         <article
           v-for="message in chatMessages"
@@ -1478,7 +1510,12 @@ onBeforeUnmount(() => {
         <span aria-hidden="true">▼</span>{{ unreadMessageKeys.length }}条新消息
       </button>
 
-      <form ref="composerFormRef" class="chat-composer" @submit.prevent>
+      <form
+        ref="composerFormRef"
+        class="chat-composer"
+        :class="{ 'chat-initializing': !chatReady }"
+        @submit.prevent
+      >
         <div class="composer-row">
           <button
             class="keyboard-toggle"
@@ -1924,6 +1961,13 @@ onBeforeUnmount(() => {
   place-items: center;
 }
 
+.room-initial-overlay {
+  position: absolute;
+  z-index: 20;
+  background: #f5f5f7;
+  inset: 0;
+}
+
 .room-state-page-error {
   align-content: center;
   gap: 14px;
@@ -1978,6 +2022,10 @@ onBeforeUnmount(() => {
 
 .chat-content {
   display: flow-root;
+}
+
+.chat-initializing {
+  visibility: hidden;
 }
 
 .new-message-tip {
@@ -2633,6 +2681,7 @@ onBeforeUnmount(() => {
   width: var(--draw-history-width);
   max-width: 95%;
   height: auto;
+  aspect-ratio: 381 / 661;
   margin: 5px auto;
 }
 
