@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.hnz.luck5.module.lottery.dal.dataobject.DrawDO;
+import com.hnz.luck5.module.lottery.dal.dataobject.MemberDO;
 import com.hnz.luck5.module.lottery.dal.dataobject.MessageDO;
 import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -13,6 +14,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -78,6 +80,43 @@ class LotteryRoomDrawMessagesTest {
         assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(service, "recentRoomDrawMessageQuery",
                 7L, IntStream.range(0, 21).mapToObj(String::valueOf).toList()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void groupHistoryIncludesAllMemberQueriesButNotTransferRequests() {
+        LambdaQueryWrapper<MessageDO> query = ReflectionTestUtils.invokeMethod(service,
+                "sharedRoomMessageQuery", 7L, 123L);
+
+        assertThat(query.getSqlSegment()).contains("user_id =", "channel =", "command_type IN", "id <", "LIMIT 100");
+        assertThat(query.getParamNameValuePairs().values())
+                .contains(7L, "网页群", 123L, "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY")
+                .doesNotContain("DEPOSIT_REQUEST", "WITHDRAW_REQUEST");
+    }
+
+    @Test
+    void anotherGroupMemberCanSeeQueryRepliesButNotTransferReplies() {
+        MemberDO viewer = new MemberDO();
+        viewer.setId("viewer");
+        viewer.setName("viewer");
+        for (String command : List.of("BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY")) {
+            MessageDO query = message(42L, command);
+            query.setMemberId("sender");
+            query.setMember("sender");
+            query.setContent("查余额");
+            query.setReply("@sender\n查询结果");
+
+            Map<String, Object> result = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                    query, viewer, Map.of(), Map.of());
+
+            assertThat(result.get("own")).isEqualTo(false);
+            assertThat(result.get("reply")).isEqualTo("@sender\n查询结果");
+        }
+        MessageDO transfer = message(43L, "DEPOSIT_REQUEST");
+        transfer.setMemberId("sender");
+        transfer.setReply("@sender\n上分成功");
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                transfer, viewer, Map.of(), Map.of());
+        assertThat(result.get("reply")).isEqualTo("");
     }
 
     private MessageDO message(Long id, String command) {
