@@ -195,10 +195,6 @@ public class LotteryRobotReplyTemplate {
         return "@" + memberName + "\n退码结果待确认，请联系管理员";
     }
 
-    public String marketBetPending(String memberName, String period, String content) {
-        return "@" + memberName + "\n提交中";
-    }
-
     public String betFailed(String memberName, BigDecimal refunded) {
         return "@" + memberName + "\n下注失败\n下注金额" + number(refunded) + "已退回";
     }

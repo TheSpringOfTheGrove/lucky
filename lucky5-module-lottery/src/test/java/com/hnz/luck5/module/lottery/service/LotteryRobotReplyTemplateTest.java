@@ -122,8 +122,6 @@ class LotteryRobotReplyTemplateTest {
 
     @Test
     void shouldOnlyExposeFinalBetOutcomeToPlayer() {
-        assertThat(template.marketBetPending("露露", "20260809194", "654倒二定各10"))
-                .isEqualTo("@露露\n提交中");
         assertThat(template.betReceiptAwaitingDetails("露露", "20260809194", "654倒二定各10", 3, 36,
                 new BigDecimal("360.00"), new BigDecimal("26764.45")))
                 .isEqualTo("@露露\n【入住时间】194\n654倒二定各10\n【户型审核成功】√√√"
