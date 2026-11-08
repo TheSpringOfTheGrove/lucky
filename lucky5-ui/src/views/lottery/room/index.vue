@@ -713,7 +713,9 @@ const showCancelFailure = (reason?: string) =>
   ElMessageBox.alert(cancelFailureText(reason), '', {
     confirmButtonText: '确定',
     showClose: false,
-    customClass: 'room-cancel-failure'
+    center: true,
+    modalClass: 'room-notice-overlay',
+    customClass: 'room-notice-box'
   }).catch(() => undefined)
 
 const copyInstruction = async (message: ChatItem) => {
@@ -740,8 +742,8 @@ const copyInstruction = async (message: ChatItem) => {
       confirmButtonText: '确定',
       showClose: false,
       center: true,
-      modalClass: 'room-copy-success-overlay',
-      customClass: 'room-copy-success'
+      modalClass: 'room-notice-overlay',
+      customClass: 'room-notice-box'
     })
   } catch (reason) {
     if (reason !== 'cancel' && reason !== 'close') ElMessage.error('复制失败')
@@ -1232,10 +1234,13 @@ const submitQuickGenerated = async (content: string) => {
 
 const cancelOrder = async (order: Pick<RoomOrder, 'id' | 'period'>) => {
   try {
-    await ElMessageBox.confirm(`确认退回第 ${order.period} 期订单？`, '退码', {
-      type: 'warning',
+    await ElMessageBox.confirm(`确认退回第 ${order.period} 期订单？`, '', {
       confirmButtonText: '确认退码',
-      cancelButtonText: '取消'
+      cancelButtonText: '取消',
+      showClose: false,
+      center: true,
+      modalClass: 'room-notice-overlay',
+      customClass: 'room-notice-box'
     })
     saving.value = true
     const result = await cancelRoomOrderApi(credential.value, order.id)
@@ -2219,7 +2224,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-:global(.room-copy-success.el-message-box) {
+:global(.room-notice-box.el-message-box) {
   width: min(390px, calc(100vw - 28px));
   max-width: none;
   padding: 0;
@@ -2227,9 +2232,10 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   overflow: hidden;
   box-shadow: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
-:global(.room-copy-success-overlay .el-overlay-message-box) {
+:global(.room-notice-overlay .el-overlay-message-box) {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2239,90 +2245,62 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
 }
 
-:global(.room-copy-success-overlay .el-overlay-message-box::after) {
+:global(.room-notice-overlay .el-overlay-message-box::after) {
   display: none;
 }
 
-:global(.room-copy-success .el-message-box__header) {
+:global(.room-notice-box .el-message-box__header) {
   display: none;
 }
 
-:global(.room-copy-success .el-message-box__content) {
+:global(.room-notice-box .el-message-box__content) {
   padding: 14px 12px;
 }
 
-:global(.room-copy-success .el-message-box__message) {
+:global(.room-notice-box .el-message-box__message) {
   justify-content: center;
   color: #5e6066;
   font-size: 16px;
+  line-height: 22px;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
-:global(.room-copy-success .el-message-box__btns) {
+:global(.room-notice-box .el-message-box__btns) {
+  display: flex;
   justify-content: center;
   padding: 0;
   border-top: 1px solid #ececef;
 }
 
-:global(.room-copy-success .el-message-box__btns .el-button) {
-  width: 100%;
+:global(.room-notice-box .el-message-box__btns .el-button) {
+  flex: 1 1 0;
   height: 44px;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: 0;
-  color: #61c776;
+  color: #5e6066;
   background: transparent;
   box-shadow: none;
   font-size: 16px;
+  font-weight: 400;
   -webkit-tap-highlight-color: transparent;
 }
 
-:global(.room-copy-success .el-message-box__btns .el-button:hover),
-:global(.room-copy-success .el-message-box__btns .el-button:focus),
-:global(.room-copy-success .el-message-box__btns .el-button:focus-visible) {
+:global(.room-notice-box .el-message-box__btns .el-button + .el-button) {
+  border-left: 1px solid #ececef;
+}
+
+:global(.room-notice-box .el-message-box__btns .el-button--primary) {
   color: #61c776;
+}
+
+:global(.room-notice-box .el-message-box__btns .el-button:hover),
+:global(.room-notice-box .el-message-box__btns .el-button:focus),
+:global(.room-notice-box .el-message-box__btns .el-button:focus-visible) {
   background: transparent;
   outline: none;
-}
-
-:global(.room-cancel-failure.el-message-box) {
-  width: min(600px, calc(100vw - 32px));
-  max-width: none;
-  padding: 0;
-  border: 0;
-  border-radius: 16px;
-  overflow: hidden;
-  font-family: 'Times New Roman', SimSun, '宋体', serif;
-}
-
-:global(.room-cancel-failure .el-message-box__header) {
-  display: none;
-}
-
-:global(.room-cancel-failure .el-message-box__content) {
-  padding: 11px 20px 15px;
-}
-
-:global(.room-cancel-failure .el-message-box__message) {
-  display: block;
-  font-size: 28px;
-  line-height: 36px;
-  text-align: center;
-}
-
-:global(.room-cancel-failure .el-message-box__btns) {
-  justify-content: center;
-  padding: 19px 0 20px;
-  border-top: 1px solid #eee;
-}
-
-:global(.room-cancel-failure .el-message-box__btns .el-button) {
-  height: auto;
-  padding: 0;
-  border: 0;
-  color: #00c800;
-  background: transparent;
-  font: 400 30px/40px 'Times New Roman', SimSun, '宋体', serif;
 }
 
 .cancel-link {
