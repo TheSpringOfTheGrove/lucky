@@ -20,13 +20,16 @@ import com.hnz.luck5.module.lottery.dal.mysql.MessageMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OperationLogMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.OrderMapper;
 import com.hnz.luck5.module.lottery.dal.mysql.SwitchSettingMapper;
+import com.hnz.luck5.framework.tenant.core.context.TenantContextHolder;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -72,6 +75,7 @@ class LotteryOrderCancelTest {
 
     @BeforeEach
     void setUp() {
+        TenantContextHolder.setTenantId(1L);
         service = new LotteryServiceImpl();
         orderMapper = mock(OrderMapper.class);
         memberMapper = mock(MemberMapper.class);
@@ -91,9 +95,16 @@ class LotteryOrderCancelTest {
         ReflectionTestUtils.setField(service, "operationLogMapper", mock(OperationLogMapper.class));
         ReflectionTestUtils.setField(service, "balanceLedgerService", mock(LotteryBalanceLedgerService.class));
         ReflectionTestUtils.setField(service, "marketOrderStateService", mock(LotteryMarketOrderStateService.class));
+        ReflectionTestUtils.setField(service, "eventPublisher", mock(ApplicationEventPublisher.class));
+        ReflectionTestUtils.setField(service, "marketRouteItemMapper", mock(MarketRouteItemMapper.class));
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         ReflectionTestUtils.setField(service, "transactionManager", transactionManager);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContextHolder.clear();
     }
 
     @Test
@@ -254,7 +265,7 @@ class LotteryOrderCancelTest {
     }
 
     @Test
-    void confirmedMarketOrderWithoutExternalBetIdsCannotRefundLocally() {
+    void confirmedMarketOrderWithoutExternalBetIdsRefundsLocallyBeforeExternalCancel() {
         OrderDO order = pendingOrder("PLAYER", "网页群");
         order.setDeliveryMode("MARKET_ADAPTER");
         order.setMarketStatus("CONFIRMED");
@@ -281,22 +292,26 @@ class LotteryOrderCancelTest {
         when(routeMapper.selectList(any())).thenReturn(java.util.List.of(route));
         when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
 
-        assertThatThrownBy(() -> service.cancelOrder("O-1"))
-                .hasMessageContaining("订单正在核对");
+        when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
 
-        assertThat(member.getBalance()).isEqualByComparingTo("50");
-        assertThat(member.getTotalBet()).isEqualByComparingTo("100");
+        assertThat(service.cancelOrder("O-1")).containsEntry("status", "已退码");
+        assertThat(order.getMarketStatus()).isEqualTo("CANCEL_REQUESTED");
+        assertThat(member.getBalance()).isEqualByComparingTo("150.00");
+        assertThat(member.getTotalBet()).isEqualByComparingTo("0.00");
     }
 
     @Test
-    void repeatCancelDuringMarketProcessingReportsProcessingWithoutRefund() {
+    void marketSubmissionInProgressDoesNotDelayLocalRefund() {
         OrderDO order = pendingOrder("PLAYER", "网页群");
         order.setDeliveryMode("MARKET_ADAPTER");
-        order.setMarketStatus("CANCEL_REQUESTED");
+        order.setMarketStatus("SUBMITTING");
         MemberDO member = new MemberDO();
         member.setId("M-1");
         member.setUserId(142L);
         member.setBalance(new BigDecimal("50"));
+        member.setTotalBet(new BigDecimal("100"));
+        member.setVersion(0);
         Wa55MarketOrderClient marketClient = mock(Wa55MarketOrderClient.class);
         LotteryMarketOrderStateService stateService = mock(LotteryMarketOrderStateService.class);
         ReflectionTestUtils.setField(service, "marketOrderClient", marketClient);
@@ -305,11 +320,13 @@ class LotteryOrderCancelTest {
         when(memberMapper.selectById("M-1")).thenReturn(member);
         when(issueMapper.selectOne(any())).thenReturn(openIssue(order.getPeriod()));
         when(marketClient.isRealWritesEnabled()).thenReturn(true);
-        when(stateService.hasCompleteCancelReferences(142L, "O-1")).thenReturn(true);
+        when(orderMapper.update(any(OrderDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(memberMapper.update(any(MemberDO.class), any(LambdaUpdateWrapper.class))).thenReturn(1);
 
-        assertThat(service.cancelOrder("O-1")).containsEntry("status", "退码处理中");
-        assertThat(member.getBalance()).isEqualByComparingTo("50");
-        verifyNoInteractions(messageMapper);
+        assertThat(service.cancelOrder("O-1")).containsEntry("status", "已退码");
+        assertThat(order.getMarketStatus()).isEqualTo("CANCEL_REQUESTED");
+        assertThat(member.getBalance()).isEqualByComparingTo("150.00");
+        verify(messageMapper).insert(any(MessageDO.class));
     }
 
     @Test

@@ -3,11 +3,13 @@ package com.hnz.luck5.module.lottery.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import javax.net.ssl.SSLHandshakeException;
 import java.math.BigDecimal;
@@ -47,6 +49,7 @@ import java.util.regex.Pattern;
 public class Wa55MarketOrderClient {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Wa55MarketOrderClient.class);
+    private static final Logger MARKET_REQUEST_LOG = LoggerFactory.getLogger("LUCKY5_MARKET_REQUEST");
 
     private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
@@ -847,10 +850,93 @@ public class Wa55MarketOrderClient {
     private JsonNode postForm(Session session, String path, Map<String, String> values) {
         String body = values.entrySet().stream().map(item -> encode(item.getKey()) + "=" + encode(item.getValue()))
                 .reduce((left, right) -> left + "&" + right).orElse("");
-        return json(session.client(), request(URI.create(session.baseUrl()).resolve(path + "?_="
+        HttpRequest request = request(URI.create(session.baseUrl()).resolve(path + "?_="
                         + System.currentTimeMillis())).header("X-Requested-With", "XMLHttpRequest")
                 .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                .POST(HttpRequest.BodyPublishers.ofString(body)).build());
+                .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+        boolean orderWrite = path.equals("/Member/Bet") || path.equals("/Member/BatchBet")
+                || path.equals("/Member/CancelMemberBet");
+        if (!orderWrite) return json(session.client(), request);
+        long startedAt = System.nanoTime();
+        String rawResponse = null;
+        String error = null;
+        int httpStatus = 0;
+        try {
+            HttpResponse<String> response = session.client().send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            httpStatus = response.statusCode();
+            rawResponse = response.body();
+            if (httpStatus < 200 || httpStatus >= 300) {
+                throw new MarketProtocolException("盘口请求失败：HTTP " + httpStatus,
+                        httpStatus >= 500, List.of());
+            }
+            return objectMapper.readTree(rawResponse);
+        } catch (MarketProtocolException ex) {
+            error = ex.getMessage();
+            throw ex;
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            error = "盘口请求被中断";
+            throw new MarketProtocolException(error, true, List.of(), ex);
+        } catch (Exception ex) {
+            if (isTlsValidationFailure(ex)) {
+                error = "盘口 HTTPS 证书或域名无效";
+                throw new MarketProtocolException(error, false, List.of(), ex);
+            }
+            error = rawResponse == null ? "盘口请求失败：" + ex.getMessage() : "盘口返回了无法解析的数据";
+            throw new MarketProtocolException(error, true, List.of(), ex);
+        } finally {
+            logMarketRequest(path, request.uri().toString(), values, httpStatus, rawResponse, error,
+                    (System.nanoTime() - startedAt) / 1_000_000);
+        }
+    }
+
+    private void logMarketRequest(String path, String url, Map<String, String> values,
+                                  int httpStatus, String rawResponse, String error, long elapsedMs) {
+        try {
+            Map<String, Object> event = new LinkedHashMap<>();
+            event.put("type", path.equals("/Member/CancelMemberBet") ? "退码请求提交" : "提交");
+            event.put("player", MDC.get("marketMember"));
+            event.put("instruction", MDC.get("marketInstruction"));
+            event.put("orderId", MDC.get("marketOrder"));
+            event.put("url", url);
+            event.put("httpStatus", httpStatus);
+            Map<String, String> safeRequest = new LinkedHashMap<>();
+            values.forEach((key, value) -> safeRequest.put(key,
+                    key.matches("(?i).*(password|passwd|token|cookie|secret|authorization).*") ? "[REDACTED]" : value));
+            event.put("request", safeRequest);
+            if (rawResponse != null) {
+                try {
+                    event.put("response", redactMarketResponse(objectMapper.readTree(rawResponse)));
+                } catch (Exception ex) {
+                    // Non-JSON upstream pages may contain account data; record size, not unredacted HTML.
+                    event.put("response", "[NON_JSON length=" + rawResponse.length() + "]");
+                }
+            }
+            if (error != null) event.put("error", error);
+            event.put("elapsedMs", elapsedMs);
+            MARKET_REQUEST_LOG.info("{}", objectMapper.writeValueAsString(event));
+        } catch (Exception ex) {
+            LOGGER.error("盘口请求审计日志写入失败 order={} path={}", MDC.get("marketOrder"), path, ex);
+        }
+    }
+
+    private JsonNode redactMarketResponse(JsonNode node) {
+        JsonNode copy = node.deepCopy();
+        if (copy.isObject()) {
+            ObjectNode object = (ObjectNode) copy;
+            object.fields().forEachRemaining(entry -> {
+                if (entry.getKey().matches("(?i).*(password|passwd|token|cookie|secret|authorization).*")) {
+                    object.put(entry.getKey(), "[REDACTED]");
+                } else {
+                    object.set(entry.getKey(), redactMarketResponse(entry.getValue()));
+                }
+            });
+        } else if (copy.isArray()) {
+            ArrayNode array = (ArrayNode) copy;
+            for (int i = 0; i < array.size(); i++) array.set(i, redactMarketResponse(array.get(i)));
+        }
+        return copy;
     }
 
     private void assertSuccess(JsonNode payload, String prefix) {

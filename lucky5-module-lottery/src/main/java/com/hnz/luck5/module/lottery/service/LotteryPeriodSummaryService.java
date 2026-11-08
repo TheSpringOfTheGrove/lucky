@@ -83,11 +83,7 @@ public class LotteryPeriodSummaryService {
     }
 
     private boolean isAcceptedForSummary(OrderDO order) {
-        String deliveryMode = order.getDeliveryMode();
-        if (!"MARKET_ADAPTER".equals(deliveryMode) && !"MIXED_MARKET".equals(deliveryMode)) {
-            return true; // 本地单、历史本地单和本地吃码单在创建时即已受理
-        }
-        return "CONFIRMED".equals(order.getMarketStatus()) || "SETTLED".equals(order.getMarketStatus());
+        return true; // 玩家单以本地扣款成功为受理依据，外盘结果只供老板核对。
     }
 
     private void upsert(Long userId, String period, String externalId, SummaryMessage summary, MessageDO existing) {

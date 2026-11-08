@@ -218,6 +218,31 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
+    void retriesFailedHistoricalSettlementForLocallyAcceptedMarketOrder() {
+        OrderMapper orderMapper = mock(OrderMapper.class);
+        OrderDO order = new OrderDO();
+        order.setPeriod("20261022207");
+        order.setStatus("未开奖");
+        order.setDeliveryMode("MARKET_ADAPTER");
+        order.setMarketStatus("MANUAL_REVIEW");
+        when(orderMapper.selectList(any())).thenReturn(List.of(order));
+        ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
+
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueDO issue = openIssue(207L, order.getPeriod());
+        issue.setStatus("DRAWN");
+        issue.setResult("12345");
+        issue.setDrawConfirmations(1);
+        issue.setError("先前结算失败");
+        when(issueMapper.selectList(any())).thenReturn(List.of(issue));
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+
+        IssueDO candidate = ReflectionTestUtils.invokeMethod(service, "findFailedHistoricalLocalCandidate", 229L);
+
+        assertThat(candidate).isSameAs(issue);
+    }
+
+    @Test
     void settlesTheImmediatePreviousDrawnIssueBehindAnUnopenedPreview() {
         IssueMapper issueMapper = mock(IssueMapper.class);
         IssueDO preview = openIssue(209L, "20260906209");

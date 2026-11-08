@@ -109,14 +109,17 @@ class LotteryPeriodSummaryServiceTest {
     }
 
     @Test
-    void excludesUnconfirmedMarketOrdersFromSuccessfulSummary() {
+    void includesLocallyAcceptedMarketOrdersBeforeExternalConfirmation() {
         OrderDO pending = order("O1", "M1", "玩家", "1234各1");
         pending.setDeliveryMode("MARKET_ADAPTER");
         pending.setMarketStatus("SUBMITTING");
         when(messageMapper.selectList(any())).thenReturn(List.of());
         when(orderMapper.selectList(any())).thenReturn(List.of(pending));
         service.publish(7L, "20260809194");
-        verify(messageMapper, times(0)).insert(any(MessageDO.class));
+        ArgumentCaptor<MessageDO> captor = ArgumentCaptor.forClass(MessageDO.class);
+        verify(messageMapper, times(2)).insert(captor.capture());
+        assertThat(captor.getAllValues()).extracting(MessageDO::getReply)
+                .containsOnly("本期成功订单\n[玩家]1234各1\n------------");
     }
 
     private OrderDO order(String id, String memberId, String memberName, String content) {
