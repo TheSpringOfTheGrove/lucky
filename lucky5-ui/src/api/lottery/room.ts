@@ -119,6 +119,7 @@ export interface RoomSession {
     reply: string
     commandType: string
     messageType: 'PLAYER' | 'AUTO_PROXY'
+    adminTransfer?: boolean
     own: boolean
     memberAvatar?: number
     createdAt: string
