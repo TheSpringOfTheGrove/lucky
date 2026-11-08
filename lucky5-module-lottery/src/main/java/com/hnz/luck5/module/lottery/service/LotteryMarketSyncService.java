@@ -1221,9 +1221,8 @@ public class LotteryMarketSyncService {
         }
         IssueDO candidate = latest;
         if (!List.of("DRAWN", "SETTLING").contains(candidate.getStatus())) {
-            // A newer answering period must not block recovery of a previously failed local-only settlement.
-            // The recovery method remains deliberately scoped to local orders, so no external-market uncertainty is
-            // retried while the live period is open.
+            // A newer answering period must not block recovery of a previously failed local settlement.
+            // External submission state is now independent of player settlement.
             if (latest.getOpenedAt() != null) {
                 IssueDO failedLocal = findFailedHistoricalLocalCandidate(userId);
                 return failedLocal == null ? findRecoverableHistoricalDraw(latest.getTenantId(), userId) : failedLocal;
@@ -1247,15 +1246,11 @@ public class LotteryMarketSyncService {
                 tenantId, userId));
     }
 
-    /**
-     * A local-only order never waits for a third-party market reconciliation. If settlement failed only because of
-     * a transient application or schema problem, it is safe to retry one oldest affected period after the live queue
-     * has drained. External-market periods deliberately stay out of this recovery path.
-     */
+    /** Retry one oldest locally accepted period after the live settlement queue has drained. */
     private IssueDO findFailedHistoricalLocalCandidate(Long userId) {
         List<OrderDO> localOrders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
                 new LambdaQueryWrapper<OrderDO>().select(OrderDO::getPeriod).eq(OrderDO::getUserId, userId)
-                        .eq(OrderDO::getStatus, "未开奖").eq(OrderDO::getDeliveryMode, "LOCAL_ONLY")));
+                        .eq(OrderDO::getStatus, "未开奖")));
         Set<String> periods = localOrders.stream().map(OrderDO::getPeriod)
                 .filter(period -> period != null && !period.isBlank()).collect(java.util.stream.Collectors.toSet());
         if (periods.isEmpty()) return null;
@@ -1265,15 +1260,7 @@ public class LotteryMarketSyncService {
                         .isNotNull(IssueDO::getResult).ne(IssueDO::getResult, "")
                         .ne(IssueDO::getResult, LotteryDrawVerificationService.ZERO_RESULT)
                         .ge(IssueDO::getDrawConfirmations, 1).orderByAsc(IssueDO::getPeriod)));
-        return candidates.stream().filter(issue -> allPeriodOrdersAreLocal(userId, issue.getPeriod())).findFirst()
-                .orElse(null);
-    }
-
-    private boolean allPeriodOrdersAreLocal(Long userId, String period) {
-        List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(
-                new LambdaQueryWrapper<OrderDO>().select(OrderDO::getDeliveryMode).eq(OrderDO::getUserId, userId)
-                        .eq(OrderDO::getPeriod, period)));
-        return !orders.isEmpty() && orders.stream().allMatch(order -> "LOCAL_ONLY".equals(order.getDeliveryMode()));
+        return candidates.isEmpty() ? null : candidates.get(0);
     }
 
     /**

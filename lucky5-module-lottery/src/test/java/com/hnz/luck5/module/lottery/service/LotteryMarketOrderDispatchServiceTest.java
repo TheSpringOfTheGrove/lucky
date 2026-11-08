@@ -182,7 +182,6 @@ class LotteryMarketOrderDispatchServiceTest {
                 "order-1", "20260811001", false, credentials, requests);
         when(marketClient.isRealWritesEnabled()).thenReturn(true);
         when(stateService.claimCancel(9L, "order-1")).thenReturn(context);
-        when(stateService.isCancellationWindowOpen(9L, "20260811001")).thenReturn(true);
         doThrow(new Wa55MarketOrderClient.MarketProtocolException(
                 "退码已截止", false, List.of())).when(marketClient)
                 .cancel(credentials, "20260811001", requests);
@@ -203,7 +202,6 @@ class LotteryMarketOrderDispatchServiceTest {
                 "order-1", "20260811001", false, credentials, requests);
         when(marketClient.isRealWritesEnabled()).thenReturn(true);
         when(stateService.claimCancel(9L, "order-1")).thenReturn(context);
-        when(stateService.isCancellationWindowOpen(9L, "20260811001")).thenReturn(true);
         doThrow(new Wa55MarketOrderClient.MarketProtocolException(
                 "请求超时", false, List.of(), true, null)).when(marketClient)
                 .cancel(credentials, "20260811001", requests);
@@ -215,7 +213,7 @@ class LotteryMarketOrderDispatchServiceTest {
     }
 
     @Test
-    void doesNotCallMarketCancelAfterCutoff() {
+    void stillAttemptsMarketCancelWhenLocallyAcceptedBeforeCutoff() {
         Wa55MarketOrderClient.Credentials credentials = new Wa55MarketOrderClient.Credentials(
                 "https://market.example", "owner", "secret");
         List<Wa55MarketOrderClient.CancelRequest> requests = List.of(
@@ -224,12 +222,11 @@ class LotteryMarketOrderDispatchServiceTest {
                 "order-1", "20260811001", false, credentials, requests);
         when(marketClient.isRealWritesEnabled()).thenReturn(true);
         when(stateService.claimCancel(9L, "order-1")).thenReturn(context);
-        when(stateService.isCancellationWindowOpen(9L, "20260811001")).thenReturn(false);
 
         service.cancel(9L, "order-1");
 
-        verify(stateService).markCancelRejected(9L, "order-1", "该期已封盘，不能退码");
-        verify(marketClient, never()).cancel(any(), any(), any());
+        verify(marketClient).cancel(credentials, "20260811001", requests);
+        verify(stateService).finalizeCancel(9L, "order-1", "system", false);
     }
 
     @Test
