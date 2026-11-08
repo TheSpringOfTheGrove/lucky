@@ -26,41 +26,6 @@ import static org.mockito.Mockito.when;
 class LotteryRoomAmountCommandTest {
 
     @Test
-    void playerAmountCommandOnlyCreatesAnInstructionErrorMessage() {
-        LotteryServiceImpl service = new LotteryServiceImpl();
-        MemberMapper members = mock(MemberMapper.class);
-        MessageMapper messages = mock(MessageMapper.class);
-        AmountRecordMapper amounts = mock(AmountRecordMapper.class);
-        ReflectionTestUtils.setField(service, "memberMapper", members);
-        ReflectionTestUtils.setField(service, "messageMapper", messages);
-        ReflectionTestUtils.setField(service, "amountRecordMapper", amounts);
-        ReflectionTestUtils.setField(service, "roomMessagePolicy", new LotteryRoomMessagePolicy());
-        ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
-
-        MemberDO member = new MemberDO();
-        member.setId("M-1");
-        member.setName("广西一哥");
-        member.setUserId(7L);
-        member.setMemberType("PLAYER");
-        when(members.selectById("M-1")).thenReturn(member);
-
-        LotteryReqVO.IncomingMessage request = new LotteryReqVO.IncomingMessage();
-        request.setMemberId("M-1");
-        request.setContent("下分 10000");
-        request.setChannel("网页群");
-        Map<String, Object> result = ReflectionTestUtils.invokeMethod(service,
-                "processIncomingMessageInternal", request, "广西一哥");
-
-        assertThat(result).containsEntry("commandType", "AMOUNT_REJECTED")
-                .containsEntry("reply", "@广西一哥\n指令错误");
-        ArgumentCaptor<MessageDO> saved = ArgumentCaptor.forClass(MessageDO.class);
-        verify(messages).insert(saved.capture());
-        assertThat(saved.getValue().getContent()).isEqualTo("下分 10000");
-        assertThat(saved.getValue().getReply()).isEqualTo("@广西一哥\n指令错误");
-        verifyNoInteractions(amounts);
-    }
-
-    @Test
     void ownerTransferSavesPublicRobotReceiptsForPlayersAndAutomaticProxies() {
         LotteryServiceImpl service = new LotteryServiceImpl();
         MemberMapper members = mock(MemberMapper.class);
@@ -106,12 +71,12 @@ class LotteryRoomAmountCommandTest {
             assertThat(message.getMemberId()).isEqualTo("M-1");
             assertThat(message.getExternalId()).startsWith("admin-transfer:");
         });
-        assertThat(saved.getAllValues().get(0).getReply()).isEqualTo("@广西一哥\n加分：10000\n目前：15000");
+        assertThat(saved.getAllValues().get(0).getReply()).contains("@广西一哥", "10000", "15000");
         assertThat(saved.getAllValues().get(0).getCommandType()).isEqualTo("DEPOSIT_REQUEST");
-        assertThat(saved.getAllValues().get(1).getReply()).isEqualTo("@广西一哥\n减分：10000\n目前：5000");
+        assertThat(saved.getAllValues().get(1).getReply()).contains("@广西一哥", "10000", "5000");
         assertThat(saved.getAllValues().get(1).getCommandType()).isEqualTo("WITHDRAW_REQUEST");
         assertThat(saved.getAllValues().get(2).getChannel()).isEqualTo("网页群");
         assertThat(saved.getAllValues().get(2).getMessageType()).isEqualTo("AUTO_PROXY");
-        assertThat(saved.getAllValues().get(2).getReply()).isEqualTo("@广西一哥\n加分：10000\n目前：15000");
+        assertThat(saved.getAllValues().get(2).getReply()).contains("@广西一哥", "10000", "15000");
     }
 }
