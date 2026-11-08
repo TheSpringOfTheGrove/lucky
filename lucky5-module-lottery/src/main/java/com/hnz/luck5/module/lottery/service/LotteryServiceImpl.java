@@ -2785,6 +2785,19 @@ public class LotteryServiceImpl implements LotteryService {
             MessageDO message = saveCommandMessage(member, reqVO, "FLOW", reply);
             return map("messageId", message.getId(), "reply", reply, "commandType", "FLOW");
         }
+        if (messageType == LotteryRoomMessagePolicy.MessageType.AMOUNT_HISTORY) {
+            List<AmountRecordDO> records = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
+                    new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
+                            .eq(AmountRecordDO::getMemberId, member.getId())
+                            .in(AmountRecordDO::getType, "上分", "下分")
+                            .and(query -> query.isNull(AmountRecordDO::getRecordSource)
+                                    .or().ne(AmountRecordDO::getRecordSource, TYPE_AUTO_PROXY))
+                            .orderByDesc(AmountRecordDO::getCreateTime)
+                            .orderByDesc(AmountRecordDO::getId).last("LIMIT 10")));
+            String reply = robotReplyTemplate.amountHistory(member.getName(), records);
+            MessageDO message = saveCommandMessage(member, reqVO, "AMOUNT_HISTORY", reply);
+            return map("messageId", message.getId(), "reply", reply, "commandType", "AMOUNT_HISTORY");
+        }
         if (messageType == LotteryRoomMessagePolicy.MessageType.FLOW_REBATE) {
             // The owner finance row also serializes the admin and automatic rebate paths.
             lockOwnerFinance(member.getUserId());
