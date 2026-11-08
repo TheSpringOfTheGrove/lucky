@@ -96,7 +96,7 @@ class LotteryMessageQueryTest {
         viewer.setId("M-1");
         assertThat(ReflectionTestUtils.<Map<String, Object>>invokeMethod(service, "roomMessageMap",
                 drawResult, viewer, Map.of(), Map.of()))
-                .containsEntry("drawImage", "/app-api/lottery/room/messages/2/draw-image");
+                .containsEntry("drawImage", image);
 
         request.setPageSize(2);
         request.setPageNo(2);
