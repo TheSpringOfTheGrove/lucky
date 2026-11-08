@@ -485,7 +485,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         avatar: message.memberAvatar ?? session.value.member.avatar
       })
     }
-    const waitingForFinalResult = Boolean(order?.processing) && !message.reply
+    const waitingForFinalResult = message.commandType === 'BET' && !message.reply
     const silentCancelCommand = message.commandType === 'CANCEL' && !message.reply
     const receiptAction =
       ['BET', 'CANCEL_SUCCESS'].includes(message.commandType)
@@ -832,7 +832,7 @@ const loadSession = async (quiet = false) => {
       trackedBetMessageIds.value = trackedBetMessageIds.value.filter((messageId) => {
         const trackedMessage = nextSession.messages.find((message) => message.id === messageId)
         const trackedOrder = nextSession.orders.find((order) => order.id === trackedMessage?.orderId)
-        return Boolean(trackedOrder?.processing) || trackedMessage?.reply?.trim().endsWith('提交中')
+        return Boolean(trackedOrder?.processing) || (Boolean(trackedMessage) && !trackedMessage?.reply)
       })
       if (!trackedBetMessageIds.value.length) betReplyFastPollUntilMs.value = 0
     }
@@ -1093,14 +1093,6 @@ watch(composer, async () => {
   resizeComposer()
 })
 
-const shouldShowBetSubmitting = (content: string) => {
-  const normalized = content.trim()
-  if (!normalized || ['查', '余额', '盈亏', 'yk', 'YK', '跟', '停止', '取消', '奖'].includes(normalized)) return false
-  if (/^(?:上|下)(?:分)?\d+(?:\.\d+)?$/.test(normalized)) return false
-  if (/^退(?:码)?\s*[A-Za-z0-9_-]+$/.test(normalized)) return false
-  return true
-}
-
 const submitChat = async () => {
   const content = composer.value.trim()
   if (!content || !session.value || saving.value) return
@@ -1119,24 +1111,10 @@ const submitChat = async () => {
     avatar: session.value.member.avatar
   }
   const optimisticRobotMessageId = `pending-robot-message-${externalId}`
-  const optimisticRobotMessage: ChatItem | null = shouldShowBetSubmitting(content)
-    ? {
-        id: optimisticRobotMessageId,
-        kind: 'robot',
-        type: 'text',
-        content: `@${session.value.member.name}\n提交中`,
-        createdAt: dayjs(optimisticMessage.createdAt).add(1, 'millisecond').toISOString(),
-        displayTimeAt: dayjs(optimisticMessage.createdAt).add(1, 'millisecond').toISOString()
-      }
-    : null
   bottomPanel.value = ''
   saving.value = true
   composer.value = ''
-  localMessages.value = [
-    ...localMessages.value,
-    optimisticMessage,
-    ...(optimisticRobotMessage ? [optimisticRobotMessage] : [])
-  ]
+  localMessages.value = [...localMessages.value, optimisticMessage]
   await scrollToBottom()
   try {
     const result = await sendRoomMessageApi(credential.value, {
@@ -1147,9 +1125,7 @@ const submitChat = async () => {
     })
     optimisticMessage.serverMessageId = result.messageId
     rememberPlayerSentAt(result.messageId, submittedAt)
-    if (optimisticRobotMessage) optimisticRobotMessage.serverMessageId = result.messageId
-    if (optimisticRobotMessage && result.reply) optimisticRobotMessage.content = result.reply
-    if (result.commandType === 'BET' && result.reply?.trim().endsWith('提交中')) {
+    if (result.commandType === 'BET' && !result.reply?.trim()) {
       trackedBetMessageIds.value = [...new Set([...trackedBetMessageIds.value, result.messageId])]
       betReplyFastPollUntilMs.value = Math.max(betReplyFastPollUntilMs.value, Date.now() + 30_000)
     }
