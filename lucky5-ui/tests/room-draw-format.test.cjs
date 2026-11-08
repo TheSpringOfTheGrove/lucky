@@ -76,7 +76,7 @@ test('already saved messages need no extra session refresh and no HTML fallback 
   state.context.refreshCompletedDrawMessage([state.draw])
   assert.equal(state.refreshes, 0)
   assert.doesNotMatch(source, /lottery-table|drawSequenceAnchors|drawNumberClass/)
-  assert.match(source, /:src="roomDrawImageSrc\(credential, message\.drawImage \|\| ''\)"/)
+  assert.match(source, /:src="message\.drawImage"/)
   assert.match(source, /refreshCompletedDrawMessage\(nextState\.draws\)/)
 })
 
@@ -101,7 +101,7 @@ test('group room shows another member query, rejected command and balance transf
   context.visibleRoomMessages.value = [
     { id: 94, commandType: 'FLOW', own: false, member: '甲', content: '流水', reply: '@甲\n普通流水：10', createdAt },
     { id: 95, commandType: 'AMOUNT_REJECTED', own: false, member: '甲', content: '上100', reply: '@甲\n指令错误', createdAt },
-    { id: 96, commandType: 'DEPOSIT_REQUEST', own: false, member: '甲', content: '上100', reply: '@甲\n加分：100', createdAt },
+    { id: 96, commandType: 'DEPOSIT_REQUEST', adminTransfer: true, own: false, member: '甲', content: '上100', reply: '@甲\n加分：100', createdAt },
     { id: 97, commandType: 'WITHDRAW_REQUEST', messageType: 'AUTO_PROXY', own: false,
       member: '托甲', content: '下20', reply: '@托甲\n减分：20', createdAt }
   ]
