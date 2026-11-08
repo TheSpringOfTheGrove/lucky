@@ -48,7 +48,6 @@ class LotteryMarketManualReviewTest {
     private MemberMapper memberMapper;
     private MessageMapper messageMapper;
     private BetItemMapper betItemMapper;
-    private LotteryBalanceLedgerService ledgerService;
 
     @BeforeEach
     void setUp() {
@@ -58,13 +57,11 @@ class LotteryMarketManualReviewTest {
         memberMapper = mock(MemberMapper.class);
         messageMapper = mock(MessageMapper.class);
         betItemMapper = mock(BetItemMapper.class);
-        ledgerService = mock(LotteryBalanceLedgerService.class);
         ReflectionTestUtils.setField(service, "orderMapper", orderMapper);
         ReflectionTestUtils.setField(service, "routeItemMapper", routeMapper);
         ReflectionTestUtils.setField(service, "memberMapper", memberMapper);
         ReflectionTestUtils.setField(service, "messageMapper", messageMapper);
         ReflectionTestUtils.setField(service, "betItemMapper", betItemMapper);
-        ReflectionTestUtils.setField(service, "balanceLedgerService", ledgerService);
         ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
     }
 
@@ -107,15 +104,11 @@ class LotteryMarketManualReviewTest {
     }
 
     @Test
-    void notAcceptedDecisionRefundsOnlyAfterManualReviewClaim() {
+    void notAcceptedDecisionPreservesLocalPlayerBalance() {
         OrderDO order = manualReviewOrder();
         MemberDO member = member();
         when(orderMapper.selectOne(any())).thenReturn(order);
         when(orderMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
-        when(memberMapper.selectById("M-1")).thenReturn(member);
-        when(memberMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
-        when(messageMapper.selectOne(any())).thenReturn(null);
-        when(messageMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
         when(routeMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
 
         LotteryMarketOrderStateService.ManualReviewResult result =
@@ -123,26 +116,22 @@ class LotteryMarketManualReviewTest {
 
         assertThat(result.marketStatus()).isEqualTo("FAILED");
         assertThat(result.amount()).isEqualByComparingTo("0.20");
-        assertThat(member.getBalance()).isEqualByComparingTo("10.20");
-        verify(ledgerService).recordAppliedChange(any(), any(), any(), any(), any(), any(), any());
+        assertThat(member.getBalance()).isEqualByComparingTo("10.00");
+        verify(memberMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
     }
 
     @Test
-    void confirmedMarketCancellationPublishesSeparateRobotNotice() {
+    void confirmedMarketCancellationDoesNotRefundPlayerTwice() {
         OrderDO order = manualReviewOrder();
-        MemberDO member = member();
-        when(orderMapper.selectOne(any())).thenReturn(order);
+        order.setStatus("已退码");
+        order.setMarketStatus("CANCEL_PENDING");
         when(orderMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
-        when(memberMapper.selectById("M-1")).thenReturn(member);
-        when(memberMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
         when(routeMapper.update(any(), any(LambdaUpdateWrapper.class))).thenReturn(1);
 
         service.finalizeCancel(229L, "O-1", "玩家1", false);
 
-        ArgumentCaptor<MessageDO> notice = ArgumentCaptor.forClass(MessageDO.class);
-        verify(messageMapper).insert(notice.capture());
-        assertThat(notice.getValue().getCommandType()).isEqualTo("CANCEL_SUCCESS");
-        assertThat(notice.getValue().getReply()).contains("tui碼成功");
+        verify(memberMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
+        verify(messageMapper, never()).insert(any(MessageDO.class));
         verify(messageMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
     }
 

@@ -7,6 +7,7 @@ import com.hnz.luck5.module.lottery.dal.dataobject.OrderDO;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -41,6 +42,7 @@ public class LotteryMarketOrderDispatchService {
         accountLockService.execute(tenantId, userId,
                 () -> submitLocked(userId, orderId, needsDetailLookup));
         if (needsDetailLookup.get()) betIdEnrichmentService.enqueue(tenantId, userId, orderId);
+        if (stateService.needsMarketCancellation(userId, orderId)) cancel(userId, orderId);
     }
 
     private void submitLocked(Long userId, String orderId, AtomicBoolean needsDetailLookup) {
@@ -56,7 +58,11 @@ public class LotteryMarketOrderDispatchService {
         try {
             Wa55MarketOrderClient.SubmissionBatch result;
             try {
-                result = marketClient.submit(context.credentials(), context.period(), context.requests());
+                try (MDC.MDCCloseable member = MDC.putCloseable("marketMember", context.memberName());
+                     MDC.MDCCloseable instruction = MDC.putCloseable("marketInstruction", context.instruction());
+                     MDC.MDCCloseable order = MDC.putCloseable("marketOrder", orderId)) {
+                    result = marketClient.submit(context.credentials(), context.period(), context.requests());
+                }
             } finally {
                 clientMs = (System.nanoTime() - startedAt) / 1_000_000;
             }
@@ -103,14 +109,13 @@ public class LotteryMarketOrderDispatchService {
             } else if (!ex.confirmations().isEmpty()) {
                 stateService.applyConfirmations(userId, orderId, ex.confirmations());
                 stateService.markPartialRejected(userId, orderId, ex.getMessage());
-                cancel(userId, orderId);
             } else if (ex.retryable() && context.attempts() < MAX_AUTOMATIC_ATTEMPTS) {
                 stateService.markRetry(userId, orderId, ex.getMessage(), LocalDateTime.now().plusSeconds(10));
             } else if (ex.retryable()) {
-                stateService.failAndRefund(userId, orderId,
+                stateService.markSubmissionFailed(userId, orderId,
                         "盘口连续三次连接失败，订单未提交：" + ex.getMessage());
             } else {
-                stateService.failAndRefund(userId, orderId, ex.getMessage());
+                stateService.markSubmissionFailed(userId, orderId, ex.getMessage());
             }
         } catch (RuntimeException ex) {
             stateService.markManualReview(userId, orderId,
@@ -203,22 +208,19 @@ public class LotteryMarketOrderDispatchService {
     private void cancelLocked(Long userId, String orderId) {
         long startedAt = System.nanoTime();
         LotteryMarketOrderStateService.CancelContext context = stateService.claimCancel(userId, orderId);
-        if (context == null) return;
+        if (context == null) {
+            if (stateService.needsMarketCancellation(userId, orderId)) {
+                betIdEnrichmentService.enqueue(TenantContextHolder.getRequiredTenantId(), userId, orderId);
+            }
+            return;
+        }
         long claimMs = (System.nanoTime() - startedAt) / 1_000_000;
         long requestMs = 0;
         long finalizeMs = 0;
         String outcome = "skipped";
         try {
-            if (!stateService.isCancellationWindowOpen(userId, context.period())) {
-                String reason = "该期已封盘，不能退码";
-                if (context.rejectedSubmission()) {
-                    stateService.markCancelFailed(userId, orderId, reason);
-                } else {
-                    stateService.markCancelRejected(userId, orderId, reason);
-                }
-                outcome = "closed";
-                return;
-            }
+            // The player's legal cancellation was completed locally before this asynchronous worker ran.
+            // Attempt upstream even if the issue closed while the request waited in the queue.
             if (context.requests().isEmpty()) {
                 long finalizeStartedAt = System.nanoTime();
                 stateService.finalizeCancel(userId, orderId, "system", context.rejectedSubmission());
@@ -229,7 +231,11 @@ public class LotteryMarketOrderDispatchService {
             try {
                 long requestStartedAt = System.nanoTime();
                 try {
-                    marketClient.cancel(context.credentials(), context.period(), context.requests());
+                    try (MDC.MDCCloseable member = MDC.putCloseable("marketMember", context.memberName());
+                         MDC.MDCCloseable instruction = MDC.putCloseable("marketInstruction", context.instruction());
+                         MDC.MDCCloseable order = MDC.putCloseable("marketOrder", orderId)) {
+                        marketClient.cancel(context.credentials(), context.period(), context.requests());
+                    }
                 } finally {
                     requestMs = (System.nanoTime() - requestStartedAt) / 1_000_000;
                 }
