@@ -1431,6 +1431,8 @@ onBeforeUnmount(() => {
           <div class="chat-row">
             <img
               class="chat-avatar"
+              loading="lazy"
+              decoding="async"
               :src="message.kind === 'robot' ? robotAvatar : lotteryPlayerAvatarSrc(message.avatar ?? session.member.avatar)"
               :alt="message.kind === 'robot' ? '机器人' : message.senderName || session.member.name"
               @pointerdown="beginMessageLongPress(() => appendMention(message))"

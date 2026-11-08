@@ -20,14 +20,14 @@ const playerAvatars = [
   avatar939
 ]
 
-const generatedAvatarAssets = import.meta.glob('/src/assets/lottery/player-avatars/avatar_*.png', {
+const generatedAvatarAssets = import.meta.glob('/src/assets/lottery/player-avatars/avatar_*.webp', {
   eager: true,
   import: 'default',
   query: '?url'
 }) as Record<string, string>
 
 for (let avatar = 10; avatar <= 35; avatar += 1) {
-  const source = generatedAvatarAssets[`/src/assets/lottery/player-avatars/avatar_${avatar}.png`]
+  const source = generatedAvatarAssets[`/src/assets/lottery/player-avatars/avatar_${avatar}.webp`]
   if (source) playerAvatars.push(source)
 }
 

@@ -16,9 +16,6 @@ import { setupGlobCom } from '@/components'
 // 引入 element-plus
 import { setupElementPlus } from '@/plugins/elementPlus'
 
-// 引入 form-create
-import { setupFormCreate } from '@/plugins/formCreate'
-
 // 引入全局样式
 import '@/styles/index.scss'
 import '@/styles/lottery.less'
@@ -57,6 +54,21 @@ window.addEventListener('vite:preloadError', (event) => {
 // 创建实例
 const setupAll = async () => {
   const app = createApp(App)
+  let formCreateReady = false
+  // The public player room does not use form-create. Keep it out of the room's initial download,
+  // while installing it before any admin route renders (including navigation from a room).
+  router.beforeResolve(async (to) => {
+    if (
+      formCreateReady ||
+      ['LotteryRoom', 'LotteryRoomShort', 'LotteryGroupRoom', 'LotteryPrivateRoom'].includes(
+        String(to.name)
+      )
+    )
+      return
+    const { setupFormCreate } = await import('@/plugins/formCreate')
+    setupFormCreate(app)
+    formCreateReady = true
+  })
 
   await setupI18n(app)
 
@@ -65,8 +77,6 @@ const setupAll = async () => {
   setupGlobCom(app)
 
   setupElementPlus(app)
-
-  setupFormCreate(app)
 
   setupRouter(app)
 

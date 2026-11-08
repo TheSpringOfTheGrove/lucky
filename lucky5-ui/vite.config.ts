@@ -101,9 +101,7 @@ export default ({command, mode}: ConfigEnv): UserConfig => {
                     },
                     codeSplitting: {
                         groups: [
-                            { name: 'echarts', test: /node_modules[\\/]echarts[\\/]/ }, // 将 echarts 单独打包，参考 https://gitee.com/lucky5code/lucky5-ui-admin-vue3/issues/IAB1SX 讨论
-                            { name: 'form-create', test: /node_modules[\\/]@form-create[\\/]element-ui[\\/]/ }, // 参考 https://github.com/lucky5code/lucky5-ui-admin-vue3/issues/148 讨论
-                            { name: 'form-designer', test: /node_modules[\\/]@form-create[\\/]designer[\\/]/ }
+                            { name: 'echarts', test: /node_modules[\\/]echarts[\\/]/ } // 将 echarts 单独打包，参考 https://gitee.com/lucky5code/lucky5-ui-admin-vue3/issues/IAB1SX 讨论
                         ]
                     }
                 },

@@ -38,6 +38,7 @@ import 'highlight.js/styles/github.css' // 导入代码高亮样式
 import xml from 'highlight.js/lib/languages/java'
 import json from 'highlight.js/lib/languages/json'
 import formCreate from '@form-create/element-ui'
+import FcDesigner from '@form-create/designer'
 
 defineOptions({ name: 'InfraBuild' })
 
