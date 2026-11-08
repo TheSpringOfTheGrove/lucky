@@ -109,6 +109,43 @@ class LotteryRoomDrawMessagesTest {
                 .contains(7L, 42L, "DRAW_RESULT", "DRAW_REQUEST");
     }
 
+    @Test
+    void groupHistoryIncludesAllMemberQueriesButNotTransferRequests() {
+        LambdaQueryWrapper<MessageDO> query = ReflectionTestUtils.invokeMethod(service,
+                "sharedRoomMessageQuery", 7L, 123L);
+
+        assertThat(query.getSqlSegment()).contains("user_id =", "channel =", "command_type IN", "id <", "LIMIT 100");
+        assertThat(query.getParamNameValuePairs().values())
+                .contains(7L, "网页群", 123L, "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY")
+                .doesNotContain("DEPOSIT_REQUEST", "WITHDRAW_REQUEST");
+    }
+
+    @Test
+    void anotherGroupMemberCanSeeQueryRepliesButNotTransferReplies() {
+        MemberDO viewer = new MemberDO();
+        viewer.setId("viewer");
+        viewer.setName("viewer");
+        for (String command : List.of("BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY")) {
+            MessageDO query = message(42L, command);
+            query.setMemberId("sender");
+            query.setMember("sender");
+            query.setContent("查余额");
+            query.setReply("@sender\n查询结果");
+
+            Map<String, Object> result = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                    query, viewer, Map.of(), Map.of());
+
+            assertThat(result.get("own")).isEqualTo(false);
+            assertThat(result.get("reply")).isEqualTo("@sender\n查询结果");
+        }
+        MessageDO transfer = message(43L, "DEPOSIT_REQUEST");
+        transfer.setMemberId("sender");
+        transfer.setReply("@sender\n上分成功");
+        Map<String, Object> result = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                transfer, viewer, Map.of(), Map.of());
+        assertThat(result.get("reply")).isEqualTo("");
+    }
+
     private MessageDO message(Long id, String command) {
         MessageDO message = new MessageDO();
         message.setId(id);

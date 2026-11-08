@@ -86,6 +86,12 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String COMMAND_PAYOUT_SUMMARY = "PAYOUT_SUMMARY";
     private static final String COMMAND_PERIOD_SUMMARY = "PERIOD_SUMMARY";
     private static final String COMMAND_DRAW_RESULT = "DRAW_RESULT";
+    private static final Set<String> ROOM_SHARED_QUERY_COMMANDS = Set.of(
+            "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY");
+    private static final Set<String> ROOM_SHARED_COMMANDS = Set.of(
+            "BET", "BET_REJECTED", "CHAT", COMMAND_SETTLEMENT, COMMAND_PERIOD_SUMMARY,
+            COMMAND_PAYOUT_SUMMARY, COMMAND_DRAW_RESULT, LotteryCancelNoticePublisher.COMMAND_TYPE,
+            "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY");
     private static final Set<String> DRAW_RESULT_COMMANDS = Set.of("DRAW", "DRAW_RESULT", "LOTTERY_RESULT");
     private static final String ROOM_MODE_GROUP = "GROUP";
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
@@ -3384,6 +3390,14 @@ public class LotteryServiceImpl implements LotteryService {
                         .or().notLikeRight(MessageDO::getExternalId, "auto-proxy-topup:"));
     }
 
+    private LambdaQueryWrapper<MessageDO> sharedRoomMessageQuery(Long userId, Long beforeId) {
+        return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
+                .in(MessageDO::getCommandType, ROOM_SHARED_COMMANDS)
+                .lt(beforeId != null, MessageDO::getId, beforeId)
+                .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100");
+    }
+
     private List<MessageDO> roomMessages(MemberDO member, String roomMode, Long beforeId) {
         String channel = ROOM_MODE_PRIVATE.equals(roomMode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
         // Keep the legacy member-name fallback, but run it separately. Combining it with the stable member_id in
@@ -3421,13 +3435,7 @@ public class LotteryServiceImpl implements LotteryService {
             return mergeMessages(mergeMessages(ownMessages, settlements, 80), drawResults, 100);
         }
         List<MessageDO> sharedMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                        .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
-                        .in(MessageDO::getCommandType, "BET", "BET_REJECTED", "CHAT", COMMAND_SETTLEMENT,
-                                COMMAND_PERIOD_SUMMARY, COMMAND_PAYOUT_SUMMARY, COMMAND_DRAW_RESULT,
-                                LotteryCancelNoticePublisher.COMMAND_TYPE)
-                        .lt(beforeId != null, MessageDO::getId, beforeId)
-                        .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
+                sharedRoomMessageQuery(member.getUserId(), beforeId)));
         return mergeMessages(ownMessages, sharedMessages, 100);
     }
 
@@ -3495,7 +3503,7 @@ public class LotteryServiceImpl implements LotteryService {
         boolean sharedDrawResult = COMMAND_DRAW_RESULT.equals(item.getCommandType());
         boolean sharedCancelSuccess = LotteryCancelNoticePublisher.COMMAND_TYPE.equals(item.getCommandType());
         String sharedReply = sharedPayoutSummary || sharedSettlement || sharedPeriodSummary || sharedDrawResult
-                || sharedCancelSuccess
+                || sharedCancelSuccess || ROOM_SHARED_QUERY_COMMANDS.contains(item.getCommandType())
                 ? roomRobotReply(item) : "";
         String playerReply = roomRobotReply(item);
         if (playerReply.contains("盘口") || playerReply.contains("外盘")) {

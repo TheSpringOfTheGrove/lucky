@@ -458,7 +458,8 @@ const chatMessages = computed<ChatItem[]>(() => {
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
       message.own === false &&
-      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType) &&
+      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS',
+        'BALANCE', 'FLOW', 'PROFIT_LOSS', 'FLOW_REBATE', 'AMOUNT_HISTORY'].includes(message.commandType) &&
       Boolean(message.reply)
     if (
       message.content?.trim() &&
