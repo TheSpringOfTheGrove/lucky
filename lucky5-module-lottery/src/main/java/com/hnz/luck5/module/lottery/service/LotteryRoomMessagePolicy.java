@@ -18,6 +18,7 @@ public class LotteryRoomMessagePolicy {
         BALANCE,
         PROFIT_LOSS,
         FLOW,
+        AMOUNT_HISTORY,
         FLOW_REBATE,
         AMOUNT,
         CANCEL,
@@ -39,13 +40,14 @@ public class LotteryRoomMessagePolicy {
      */
     public MessageType classify(String rawContent) {
         String content = rawContent == null ? "" : rawContent.trim();
-        if (Set.of("查", "余额").contains(content)) {
+        if (Set.of("查", "余额", "查余额").contains(content)) {
             return MessageType.BALANCE;
         }
-        if (Set.of("盈亏", "yk", "YK").contains(content)) {
+        if (Set.of("盈亏", "查盈亏", "yk", "YK").contains(content)) {
             return MessageType.PROFIT_LOSS;
         }
-        if ("流水".equals(content)) return MessageType.FLOW;
+        if (Set.of("流水", "查流水").contains(content)) return MessageType.FLOW;
+        if ("查上下分".equals(content)) return MessageType.AMOUNT_HISTORY;
         if ("回流水".equals(content)) return MessageType.FLOW_REBATE;
         if (AMOUNT_COMMAND.matcher(content).matches()) {
             return MessageType.AMOUNT;

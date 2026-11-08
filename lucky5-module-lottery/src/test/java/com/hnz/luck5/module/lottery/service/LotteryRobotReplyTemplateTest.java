@@ -1,8 +1,10 @@
 package com.hnz.luck5.module.lottery.service;
 
+import com.hnz.luck5.module.lottery.dal.dataobject.AmountRecordDO;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -10,6 +12,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LotteryRobotReplyTemplateTest {
 
     private final LotteryRobotReplyTemplate template = new LotteryRobotReplyTemplate();
+
+    @Test
+    void shouldShowOnlyTheRequestedMembersTransferHistory() {
+        AmountRecordDO approved = new AmountRecordDO();
+        approved.setCreateTime(LocalDateTime.of(2026, 11, 8, 10, 30));
+        approved.setType("上分");
+        approved.setAmount(new BigDecimal("100.00"));
+        approved.setStatus("已通过");
+        AmountRecordDO pending = new AmountRecordDO();
+        pending.setCreateTime(LocalDateTime.of(2026, 11, 7, 22, 5));
+        pending.setType("下分");
+        pending.setAmount(new BigDecimal("20.50"));
+        pending.setStatus("待审核");
+
+        assertThat(template.amountHistory("阿杰", List.of(approved, pending)))
+                .isEqualTo("@阿杰\n最近上下分：\n11-08 10:30 上分：100（已通过）"
+                        + "\n11-07 22:05 下分：20.5（待审核）");
+        assertThat(template.amountHistory("阿杰", List.of())).isEqualTo("@阿杰\n暂无上下分记录");
+    }
 
     @Test
     void shouldFormatFlowAndFlowRebateLikeReferenceRoom() {
