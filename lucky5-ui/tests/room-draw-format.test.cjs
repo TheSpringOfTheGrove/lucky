@@ -76,21 +76,45 @@ test('already saved messages need no extra session refresh and no HTML fallback 
   state.context.refreshCompletedDrawMessage([state.draw])
   assert.equal(state.refreshes, 0)
   assert.doesNotMatch(source, /lottery-table|drawSequenceAnchors|drawNumberClass/)
-  assert.match(source, /:src="message\.drawImage"/)
+  assert.match(source, /:src="roomDrawImageSrc\(credential, message\.drawImage \|\| ''\)"/)
   assert.match(source, /refreshCompletedDrawMessage\(nextState\.draws\)/)
 })
 
-test('cached automatic funding never renders a fake player request or robot approval', () => {
+test('automatic funding renders its saved robot reply without inventing a player request', () => {
   const { context } = fixture()
   const createdAt = '2026-09-27T22:15:00'
   context.visibleRoomMessages.value = [{ id: 91, messageType: 'AUTO_PROXY', commandType: 'DEPOSIT_REQUEST',
-    own: true, content: '上1000', reply: '自动托虚拟积分不足，系统自动审核', createdAt }]
+    own: false, member: '小托', content: '上1000', reply: '@小托\n加分：1000\n目前：1000', createdAt }]
   context.session.value.amountRecords = [
     { id: 'AUTO-1', recordSource: 'AUTO_PROXY', type: '上分', amount: 1000, remark: '', createdAt },
     { id: 'LEGACY-1', type: '上分', amount: 1000, remark: '自动托虚拟积分不足，系统自动审核', createdAt }
   ]
-  assert.equal(context.chatMessages.value.some(message => /91|AUTO-1|LEGACY-1/.test(message.id)), false)
-  assert.equal(context.chatMessages.value.some(message => /自动托|上1000/.test(message.content)), false)
+  assert.equal(context.chatMessages.value.some(message => message.id === 'member-message-91'), false)
+  assert.ok(context.chatMessages.value.some(message =>
+    message.id === 'robot-message-91' && message.content === '@小托\n加分：1000\n目前：1000'))
+  assert.equal(context.chatMessages.value.some(message => /AUTO-1|LEGACY-1/.test(message.id)), false)
+})
+
+test('group room shows another member query, rejected command and balance transfer replies', () => {
+  const { context } = fixture()
+  const createdAt = '2026-09-27T22:15:00'
+  context.visibleRoomMessages.value = [
+    { id: 94, commandType: 'FLOW', own: false, member: '甲', content: '流水', reply: '@甲\n普通流水：10', createdAt },
+    { id: 95, commandType: 'AMOUNT_REJECTED', own: false, member: '甲', content: '上100', reply: '@甲\n指令错误', createdAt },
+    { id: 96, commandType: 'DEPOSIT_REQUEST', own: false, member: '甲', content: '上100', reply: '@甲\n加分：100', createdAt },
+    { id: 97, commandType: 'WITHDRAW_REQUEST', messageType: 'AUTO_PROXY', own: false,
+      member: '托甲', content: '下20', reply: '@托甲\n减分：20', createdAt }
+  ]
+  const messages = context.chatMessages.value
+  assert.ok(messages.some(message => message.id === 'member-message-94' && message.kind === 'other'))
+  assert.ok(messages.some(message => message.id === 'robot-message-94' && message.content === '@甲\n普通流水：10'))
+  assert.ok(messages.some(message => message.id === 'robot-message-95' && message.content === '@甲\n指令错误'))
+  assert.ok(messages.some(message => message.id === 'robot-message-96' && message.content === '@甲\n加分：100'))
+  assert.ok(messages.some(message => message.id === 'robot-message-97' && message.content === '@托甲\n减分：20'))
+  assert.equal(messages.some(message => ['member-message-96', 'member-message-97'].includes(message.id)), false)
+
+  context.session.value.room.mode = 'PRIVATE'
+  assert.equal(context.chatMessages.value.some(message => message.id === 'robot-message-97'), false)
 })
 
 test('real player funding is still visible with the standard approval', () => {

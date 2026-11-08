@@ -25,19 +25,28 @@ class LotteryRoomInternalFundingTest {
         viewer = new MemberDO();
         viewer.setId("M-1");
         viewer.setUserId(7L);
-        viewer.setMemberType("PLAYER"); // Changing today's member type must not unhide old internal funding.
+        viewer.setMemberType("PLAYER");
     }
 
     @Test
-    void groupAndPrivateMessageQueriesHideInternalTransfersButKeepAutoProxyBets() {
+    void groupAndPrivateMemberQueriesKeepAutomaticProxyTransfers() {
         for (String channel : new String[]{"网页群", "网页私聊"}) {
             LambdaQueryWrapper<MessageDO> query = ReflectionTestUtils.invokeMethod(service,
                     "roomMemberMessageQuery", viewer, channel);
-            assertThat(query.getSqlSegment()).contains("user_id =", "channel =", "message_type IS NULL",
-                    "message_type <>", "command_type NOT IN", "external_id IS NULL", "external_id NOT LIKE");
-            assertThat(query.getParamNameValuePairs().values()).contains(7L, channel, "AUTO_PROXY",
-                    "DEPOSIT_REQUEST", "WITHDRAW_REQUEST", "auto-proxy-topup:%").doesNotContain("BET");
+            assertThat(query.getSqlSegment()).contains("user_id =", "channel =")
+                    .doesNotContain("message_type", "command_type", "external_id");
+            assertThat(query.getParamNameValuePairs().values()).containsExactlyInAnyOrder(7L, channel);
         }
+    }
+
+    @Test
+    void groupHistoryAlsoLoadsLegacySystemChannelAutomaticProxyTransfers() {
+        LambdaQueryWrapper<MessageDO> query = ReflectionTestUtils.invokeMethod(service,
+                "legacyAutoProxyTransferQuery", 7L, 123L);
+        assertThat(query.getSqlSegment()).contains("user_id =", "channel =", "message_type =",
+                "command_type IN", "id <", "LIMIT 100");
+        assertThat(query.getParamNameValuePairs().values()).contains(7L, "系统", "AUTO_PROXY",
+                "DEPOSIT_REQUEST", "WITHDRAW_REQUEST", 123L);
     }
 
     @Test

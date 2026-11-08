@@ -111,7 +111,8 @@ class LotteryMessageQueryTest {
         MemberDO viewer = new MemberDO();
         viewer.setId("M-1");
         assertThat(ReflectionTestUtils.<Map<String, Object>>invokeMethod(service, "roomMessageMap",
-                drawResult, viewer, Map.of(), Map.of())).containsEntry("drawImage", image);
+                drawResult, viewer, Map.of(), Map.of()))
+                .containsEntry("drawImage", "/app-api/lottery/room/messages/2/draw-image");
 
         request.setPageSize(2);
         request.setPageNo(2);

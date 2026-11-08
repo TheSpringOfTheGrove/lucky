@@ -86,12 +86,6 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String COMMAND_PAYOUT_SUMMARY = "PAYOUT_SUMMARY";
     private static final String COMMAND_PERIOD_SUMMARY = "PERIOD_SUMMARY";
     private static final String COMMAND_DRAW_RESULT = "DRAW_RESULT";
-    private static final Set<String> ROOM_SHARED_QUERY_COMMANDS = Set.of(
-            "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY");
-    private static final Set<String> ROOM_SHARED_COMMANDS = Set.of(
-            "BET", "BET_REJECTED", "CHAT", COMMAND_SETTLEMENT, COMMAND_PERIOD_SUMMARY,
-            COMMAND_PAYOUT_SUMMARY, COMMAND_DRAW_RESULT, LotteryCancelNoticePublisher.COMMAND_TYPE,
-            "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY");
     private static final Set<String> DRAW_RESULT_COMMANDS = Set.of("DRAW", "DRAW_RESULT", "LOTTERY_RESULT");
     private static final String ROOM_MODE_GROUP = "GROUP";
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
@@ -997,6 +991,23 @@ public class LotteryServiceImpl implements LotteryService {
         record.setAuditedBy(loginName());
         record.setUserId(member.getUserId());
         amountRecordMapper.insert(record);
+        MessageDO message = new MessageDO();
+        message.setChannel(CHANNEL_WEB_GROUP);
+        message.setMemberId(member.getId());
+        message.setMember(member.getName());
+        message.setPeriod("");
+        message.setContent(("上分".equals(reqVO.getType()) ? "上" : "下")
+                + robotReplyTemplate.number(reqVO.getAmount()));
+        message.setStatus("已通过");
+        message.setExternalId("admin-transfer:" + recordId);
+        message.setError("");
+        message.setCommandType("上分".equals(reqVO.getType()) ? "DEPOSIT_REQUEST" : "WITHDRAW_REQUEST");
+        message.setMessageType(isAutoProxy(member) ? TYPE_AUTO_PROXY : TYPE_PLAYER);
+        message.setReply(roomDisplayText(robotReplyTemplate.amountAudited(member.getName(), reqVO.getType(),
+                reqVO.getAmount(), "已通过", member.getBalance())));
+        message.setProcessedAt(LocalDateTime.now());
+        message.setUserId(member.getUserId());
+        messageMapper.insert(message);
         log(member.getName(), reqVO.getType() + " " + reqVO.getAmount());
     }
 
@@ -1650,7 +1661,7 @@ public class LotteryServiceImpl implements LotteryService {
             transfer.setRemark("自动托虚拟积分不足，系统自动审核");
             String memberKey = UUID.nameUUIDFromBytes(memberId.getBytes(StandardCharsets.UTF_8))
                     .toString().replace("-", "");
-            return approveAutoProxyTransfer(member, transfer, period, "系统",
+            return approveAutoProxyTransfer(member, transfer, period, CHANNEL_WEB_GROUP,
                     "auto-proxy-topup:" + memberKey + ":" + period, "自动托:" + member.getName());
         });
     }
@@ -3330,18 +3341,23 @@ public class LotteryServiceImpl implements LotteryService {
 
     private LambdaQueryWrapper<MessageDO> roomMemberMessageQuery(MemberDO member, String channel) {
         return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                .eq(MessageDO::getChannel, channel)
-                .and(query -> query.isNull(MessageDO::getMessageType)
-                        .or().ne(MessageDO::getMessageType, TYPE_AUTO_PROXY)
-                        .or().notIn(MessageDO::getCommandType, "DEPOSIT_REQUEST", "WITHDRAW_REQUEST"))
-                .and(query -> query.isNull(MessageDO::getExternalId)
-                        .or().notLikeRight(MessageDO::getExternalId, "auto-proxy-topup:"));
+                .eq(MessageDO::getChannel, channel);
     }
 
     private LambdaQueryWrapper<MessageDO> sharedRoomMessageQuery(Long userId, Long beforeId) {
         return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
                 .eq(MessageDO::getChannel, CHANNEL_WEB_GROUP)
-                .in(MessageDO::getCommandType, ROOM_SHARED_COMMANDS)
+                // The group room shares every persisted room message for this owner, including
+                // admin and automatic-proxy balance changes. Private-room messages remain isolated.
+                .lt(beforeId != null, MessageDO::getId, beforeId)
+                .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100");
+    }
+
+    private LambdaQueryWrapper<MessageDO> legacyAutoProxyTransferQuery(Long userId, Long beforeId) {
+        return new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                .eq(MessageDO::getChannel, "系统")
+                .eq(MessageDO::getMessageType, TYPE_AUTO_PROXY)
+                .in(MessageDO::getCommandType, "DEPOSIT_REQUEST", "WITHDRAW_REQUEST")
                 .lt(beforeId != null, MessageDO::getId, beforeId)
                 .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100");
     }
@@ -3374,7 +3390,9 @@ public class LotteryServiceImpl implements LotteryService {
         }
         List<MessageDO> sharedMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
                 sharedRoomMessageQuery(member.getUserId(), beforeId)));
-        return mergeMessages(ownMessages, sharedMessages, 100);
+        List<MessageDO> legacyAutoProxyTransfers = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
+                legacyAutoProxyTransferQuery(member.getUserId(), beforeId)));
+        return mergeMessages(mergeMessages(ownMessages, sharedMessages, 100), legacyAutoProxyTransfers, 100);
     }
 
     private List<MessageDO> withRecentRoomDrawMessages(Long userId, List<MessageDO> messages, List<DrawDO> draws) {
@@ -3434,14 +3452,6 @@ public class LotteryServiceImpl implements LotteryService {
         }
         boolean own = Objects.equals(item.getMemberId(), member.getId())
                 || item.getMemberId() == null && Objects.equals(item.getMember(), member.getName());
-        boolean sharedPayoutSummary = COMMAND_PAYOUT_SUMMARY.equals(item.getCommandType());
-        boolean sharedSettlement = COMMAND_SETTLEMENT.equals(item.getCommandType());
-        boolean sharedPeriodSummary = COMMAND_PERIOD_SUMMARY.equals(item.getCommandType());
-        boolean sharedDrawResult = COMMAND_DRAW_RESULT.equals(item.getCommandType());
-        boolean sharedCancelSuccess = LotteryCancelNoticePublisher.COMMAND_TYPE.equals(item.getCommandType());
-        String sharedReply = sharedPayoutSummary || sharedSettlement || sharedPeriodSummary || sharedDrawResult
-                || sharedCancelSuccess || ROOM_SHARED_QUERY_COMMANDS.contains(item.getCommandType())
-                ? roomRobotReply(item) : "";
         String playerReply = roomRobotReply(item);
         if (playerReply.contains("盘口") || playerReply.contains("外盘")) {
             playerReply = "";
@@ -3465,7 +3475,7 @@ public class LotteryServiceImpl implements LotteryService {
                     ? item.getOrderId() : "");
             result.put("reply", Set.of("BET", "BET_REJECTED").contains(item.getCommandType())
                     ? robotReplyTemplate.publicBetReceipt(item.getMember(), playerReply)
-                    : sharedReply);
+                    : playerReply);
         }
         return result;
     }
