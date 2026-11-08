@@ -83,22 +83,24 @@ class LotteryRoomDrawMessagesTest {
     }
 
     @Test
-    void groupHistoryIncludesAllMemberQueriesButNotTransferRequests() {
+    void groupHistoryIncludesAllOwnerMessagesIncludingAutomaticProxyFunding() {
         LambdaQueryWrapper<MessageDO> query = ReflectionTestUtils.invokeMethod(service,
                 "sharedRoomMessageQuery", 7L, 123L);
 
-        assertThat(query.getSqlSegment()).contains("user_id =", "channel =", "command_type IN", "id <", "LIMIT 100");
+        assertThat(query.getSqlSegment()).contains("user_id =", "channel =", "id <", "LIMIT 100")
+                .doesNotContain("command_type", "message_type", "external_id");
         assertThat(query.getParamNameValuePairs().values())
-                .contains(7L, "网页群", 123L, "BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY")
-                .doesNotContain("DEPOSIT_REQUEST", "WITHDRAW_REQUEST");
+                .containsExactlyInAnyOrder(7L, "网页群", 123L);
     }
 
     @Test
-    void anotherGroupMemberCanSeeQueryRepliesButNotTransferReplies() {
+    void anotherGroupMemberCanSeeAllPlayerRepliesIncludingTransfersAndRejections() {
         MemberDO viewer = new MemberDO();
         viewer.setId("viewer");
         viewer.setName("viewer");
-        for (String command : List.of("BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY")) {
+        for (String command : List.of("BALANCE", "FLOW", "PROFIT_LOSS", "FLOW_REBATE", "AMOUNT_HISTORY",
+                "DEPOSIT_REQUEST", "WITHDRAW_REQUEST", "AMOUNT_REJECTED", "FOLLOW", "FOLLOW_STOP",
+                "CANCEL_CURRENT", "DRAW_REQUEST")) {
             MessageDO query = message(42L, command);
             query.setMemberId("sender");
             query.setMember("sender");
@@ -111,12 +113,14 @@ class LotteryRoomDrawMessagesTest {
             assertThat(result.get("own")).isEqualTo(false);
             assertThat(result.get("reply")).isEqualTo("@sender\n查询结果");
         }
-        MessageDO transfer = message(43L, "DEPOSIT_REQUEST");
-        transfer.setMemberId("sender");
-        transfer.setReply("@sender\n上分成功");
-        Map<String, Object> result = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
-                transfer, viewer, Map.of(), Map.of());
-        assertThat(result.get("reply")).isEqualTo("");
+        MessageDO proxyFunding = message(43L, "DEPOSIT_REQUEST");
+        proxyFunding.setMemberId("proxy");
+        proxyFunding.setMessageType("AUTO_PROXY");
+        proxyFunding.setReply("@proxy\n上分：100\n目前：500");
+        Map<String, Object> publicFunding = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
+                proxyFunding, viewer, Map.of(), Map.of());
+        assertThat(publicFunding).containsEntry("own", false)
+                .containsEntry("reply", "@proxy\n上分：100\n目前：500");
     }
 
     private MessageDO message(Long id, String command) {
