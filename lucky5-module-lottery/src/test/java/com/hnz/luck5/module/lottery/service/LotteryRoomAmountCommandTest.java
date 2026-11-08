@@ -61,7 +61,7 @@ class LotteryRoomAmountCommandTest {
     }
 
     @Test
-    void ownerTransferSavesARecipientOnlyRobotReceiptWithTheNewBalance() {
+    void ownerTransferSavesPublicRobotReceiptsForPlayersAndAutomaticProxies() {
         LotteryServiceImpl service = new LotteryServiceImpl();
         MemberMapper members = mock(MemberMapper.class);
         MessageMapper messages = mock(MessageMapper.class);
@@ -95,9 +95,13 @@ class LotteryRoomAmountCommandTest {
         service.transferMember("M-1", transfer);
         transfer.setType("下分");
         service.transferMember("M-1", transfer);
+        member.setMemberType("BOT");
+        member.setBalance(new BigDecimal("5000"));
+        transfer.setType("上分");
+        service.transferMember("M-1", transfer);
 
         ArgumentCaptor<MessageDO> saved = ArgumentCaptor.forClass(MessageDO.class);
-        verify(messages, times(2)).insert(saved.capture());
+        verify(messages, times(3)).insert(saved.capture());
         assertThat(saved.getAllValues()).allSatisfy(message -> {
             assertThat(message.getMemberId()).isEqualTo("M-1");
             assertThat(message.getExternalId()).startsWith("admin-transfer:");
@@ -106,5 +110,8 @@ class LotteryRoomAmountCommandTest {
         assertThat(saved.getAllValues().get(0).getCommandType()).isEqualTo("DEPOSIT_REQUEST");
         assertThat(saved.getAllValues().get(1).getReply()).isEqualTo("@广西一哥\n减分：10000\n目前：5000");
         assertThat(saved.getAllValues().get(1).getCommandType()).isEqualTo("WITHDRAW_REQUEST");
+        assertThat(saved.getAllValues().get(2).getChannel()).isEqualTo("网页群");
+        assertThat(saved.getAllValues().get(2).getMessageType()).isEqualTo("AUTO_PROXY");
+        assertThat(saved.getAllValues().get(2).getReply()).isEqualTo("@广西一哥\n加分：10000\n目前：15000");
     }
 }

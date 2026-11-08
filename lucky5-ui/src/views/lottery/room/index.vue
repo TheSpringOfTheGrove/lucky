@@ -378,15 +378,11 @@ const chatMessages = computed<ChatItem[]>(() => {
 
   const displayedDrawPeriods = new Set<string>()
   for (const message of visibleRoomMessages.value) {
-    if (
-      message.messageType === 'AUTO_PROXY' &&
-      ['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType)
-    ) continue
     if (message.commandType === 'DRAW_REQUEST' && message.drawImage) {
       const matchingDraw = session.value.draws.find((draw) => draw.period === message.period)
       messages.push({
         id: `member-message-${message.id}`,
-        kind: 'member',
+        kind: message.own === false ? 'other' : 'member',
         type: 'text',
         content: message.content,
         createdAt: message.createdAt,
@@ -456,11 +452,7 @@ const chatMessages = computed<ChatItem[]>(() => {
       ? orderById.value[message.orderId]
       : undefined
     const showSharedRobotReply =
-      session.value.room.mode === 'GROUP' &&
-      message.own === false &&
-      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS',
-        'BALANCE', 'FLOW', 'PROFIT_LOSS', 'FLOW_REBATE', 'AMOUNT_HISTORY'].includes(message.commandType) &&
-      Boolean(message.reply)
+      session.value.room.mode === 'GROUP' && message.own === false && Boolean(message.reply)
     if (
       message.content?.trim() &&
       !['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType) &&
