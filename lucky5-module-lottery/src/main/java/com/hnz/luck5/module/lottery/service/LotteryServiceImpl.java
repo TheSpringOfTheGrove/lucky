@@ -619,6 +619,7 @@ public class LotteryServiceImpl implements LotteryService {
     /** The audit view and room replay the same receipt, including its current cancel state. */
     private String roomRobotReply(MessageDO item) {
         String reply = roomDisplayText(normalizeCheckMarks(value(item.getReply(), "")));
+        if ("BET".equals(item.getCommandType()) && reply.endsWith("提交中")) return "";
         if (DRAW_RESULT_COMMANDS.contains(value(item.getCommandType(), ""))
                 && value(item.getContent(), "").replaceAll("\\D", "").matches("\\d{5}")) {
             return robotReplyTemplate.drawResult(item.getPeriod(), item.getContent());
@@ -1864,9 +1865,8 @@ public class LotteryServiceImpl implements LotteryService {
         message.setError("");
         message.setCommandType("BET");
         message.setMessageType(orderType);
-        message.setReply(roomDisplayText(realMarketOrder && Set.of("PENDING", "SUBMITTING", "RETRY").contains(order.getMarketStatus())
-                ? robotReplyTemplate.marketBetPending(member.getName(), order.getPeriod(), order.getContent())
-                : robotReplyTemplate.betReceipt(member.getName(), order.getPeriod(), order.getContent(),
+        message.setReply(realMarketOrder && Set.of("PENDING", "SUBMITTING", "RETRY").contains(order.getMarketStatus())
+                ? "" : roomDisplayText(robotReplyTemplate.betReceipt(member.getName(), order.getPeriod(), order.getContent(),
                         periodSequence, parsed.size(), total, balance)));
         message.setProcessedAt(LocalDateTime.now());
         message.setCreateTime(roomMessageCreateTime(reqVO.getSentAt()));
@@ -2940,8 +2940,7 @@ public class LotteryServiceImpl implements LotteryService {
             throw ex;
         }
         String reply = Set.of("PENDING", "SUBMITTING", "RETRY").contains(result.marketStatus())
-                ? robotReplyTemplate.marketBetPending(result.member(), result.period(), content)
-                : robotReplyTemplate.betReceipt(result.member(), result.period(), content,
+                ? "" : robotReplyTemplate.betReceipt(result.member(), result.period(), content,
                         result.periodSequence(), result.itemCount(), result.amount(), result.balance());
         MessageDO message = messageMapper.selectById(result.messageId());
         if (message != null) {
@@ -3449,7 +3448,7 @@ public class LotteryServiceImpl implements LotteryService {
             String messageStatus = value(item.getStatus(), "");
             result.put("status", Set.of("已退码", "退码处理中", "退码待确认", "退码失败").contains(messageStatus)
                     ? messageStatus
-                    : playerReply.isBlank() || playerReply.endsWith("提交中") ? "处理中"
+                    : playerReply.isBlank() ? "处理中"
                             : playerReply.contains("下注失败") ? "失败" : "成功");
         }
         if (!own) {
