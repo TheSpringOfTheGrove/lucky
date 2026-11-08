@@ -3457,6 +3457,7 @@ public class LotteryServiceImpl implements LotteryService {
             playerReply = "";
         }
         result.put("own", own);
+        result.put("adminTransfer", StrUtil.startWith(item.getExternalId(), "admin-transfer:"));
         Integer memberAvatar = StrUtil.isNotBlank(item.getMemberId()) ? avatarByMemberId.get(item.getMemberId())
                 : avatarByMemberName.get(item.getMember());
         result.put("memberAvatar", value(memberAvatar, 1));

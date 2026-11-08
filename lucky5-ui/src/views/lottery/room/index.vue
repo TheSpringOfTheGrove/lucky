@@ -462,8 +462,12 @@ const chatMessages = computed<ChatItem[]>(() => {
       : undefined
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' && message.own === false && Boolean(message.reply)
+    const backgroundTransfer =
+      ['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType) &&
+      (message.adminTransfer || message.messageType === 'AUTO_PROXY')
     if (
       message.content?.trim() &&
+      !backgroundTransfer &&
       !['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType)
     ) {
       messages.push({
