@@ -37,6 +37,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
@@ -576,6 +577,22 @@ class LotteryMarketSyncServiceTest {
                 draw.drawTime(), draw.updatedAt(), "{}");
         assertThat((List<?>) ReflectionTestUtils.invokeMethod(service, "acceptedDraws", "by123开奖",
                 List.of(correctedByWinner))).isEmpty();
+    }
+
+    @Test
+    void ignoresOffSessionBackupDrawsBeforeClaimingOrCreatingIssues() {
+        LotteryDrawVerificationService verification = new LotteryDrawVerificationService();
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        ReflectionTestUtils.setField(service, "drawVerificationService", verification);
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        Wa55MarketClient.Draw draw = new Wa55MarketClient.Draw("20261110061", "12345",
+                LocalDateTime.of(2026, 11, 10, 5, 5, 12), LocalDateTime.now(), "{}");
+
+        assertThat((List<?>) ReflectionTestUtils.invokeMethod(service, "acceptedDraws", "by123开奖", List.of(draw)))
+                .isEmpty();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service, "upsertDrawIssue", 229L, draw,
+                "by123开奖", LocalDateTime.now())).isFalse();
+        verifyNoInteractions(issueMapper);
     }
 
     @Test

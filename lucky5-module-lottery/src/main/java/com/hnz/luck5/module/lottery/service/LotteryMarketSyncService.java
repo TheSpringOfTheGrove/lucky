@@ -765,6 +765,7 @@ public class LotteryMarketSyncService {
         List<Wa55MarketClient.Draw> accepted = new ArrayList<>();
         for (Wa55MarketClient.Draw draw : draws) {
             if (draw.period() == null || !draw.period().matches("\\d{8,20}")
+                    || !LotteryMarketSessionPolicy.isTradablePeriod(draw.period())
                     || !drawVerificationService.isTrusted(draw.result())) continue;
             String result = draw.result().trim().replace(",", "");
             String claim = source + "|" + result;
@@ -897,7 +898,8 @@ public class LotteryMarketSyncService {
     }
 
     private SnapshotPersistence upsertCurrentIssue(Long userId, Wa55MarketClient.Issue snapshot, LocalDateTime now) {
-        if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")) {
+        if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")
+                || !LotteryMarketSessionPolicy.isTradablePeriod(snapshot.period())) {
             return new SnapshotPersistence(false, List.of(), List.of());
         }
         List<String> closedPeriods = new ArrayList<>();
@@ -909,7 +911,8 @@ public class LotteryMarketSyncService {
         // The upstream may still report OPEN during our local ten-second safety window. Persist CLOSED here,
         // rather than relying only on the request guard, so the room transition and period summary fire once.
         if ("OPEN".equals(nextStatus)
-                && (issueFreshnessPolicy.isSnapshotBettingClosed(snapshot.observedAt(), snapshot.remainingSeconds(), now)
+                && (!LotteryMarketSessionPolicy.isOpenTime(snapshot.period(), now)
+                || issueFreshnessPolicy.isSnapshotBettingClosed(snapshot.observedAt(), snapshot.remainingSeconds(), now)
                 || (issue != null && "CLOSED".equals(issue.getStatus()) && issue.getOpenedAt() != null))) {
             nextStatus = "CLOSED";
         }
@@ -979,6 +982,7 @@ public class LotteryMarketSyncService {
      */
     private boolean tryOpenForAnswering(Long userId, IssueDO issue, String fromStatus, LocalDateTime now) {
         if (issue == null || !"OPEN".equals(issue.getStatus()) || issue.getOpenedAt() != null
+                || !LotteryMarketSessionPolicy.isOpenTime(issue.getPeriod(), now)
                 || issueFreshnessPolicy.isStale(issue) || issueFreshnessPolicy.isBettingClosed(issue)) {
             return false;
         }
@@ -1015,7 +1019,7 @@ public class LotteryMarketSyncService {
         issue.setRemainingSeconds(snapshot.remainingSeconds());
         issue.setServerTime(snapshot.serverTime());
         issue.setSourceObservedAt(snapshot.observedAt());
-        issue.setNextPeriod(snapshot.nextPeriod());
+        issue.setNextPeriod(LotteryMarketSessionPolicy.nextTradablePeriod(snapshot.nextPeriod()));
         if (snapshot.drawTime() != null) issue.setDrawTime(snapshot.drawTime());
         issue.setRawSnapshot(snapshot.raw());
     }
@@ -1026,7 +1030,8 @@ public class LotteryMarketSyncService {
 
     private boolean upsertDrawIssue(Long userId, Wa55MarketClient.Draw draw, String source, LocalDateTime now,
                                     Set<String> newlyDrawnPeriods) {
-        if (!draw.period().matches("\\d{8,20}")) return false;
+        if (!draw.period().matches("\\d{8,20}")
+                || !LotteryMarketSessionPolicy.isTradablePeriod(draw.period())) return false;
         IssueDO issue = findIssue(userId, draw.period());
         if (issue != null && issue.getDrawFirstSeenAt() != null
                 && drawVerificationService.isTrusted(issue.getResult())

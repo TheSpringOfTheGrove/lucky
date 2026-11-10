@@ -467,8 +467,9 @@ const chatMessages = computed<ChatItem[]>(() => {
     const showSharedRobotReply =
       session.value.room.mode === 'GROUP' &&
       message.own === false &&
-      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType) &&
+      ['BET', 'BET_REJECTED', 'SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS', 'DAILY_CLOSING_GREETING'].includes(message.commandType) &&
       Boolean(message.reply)
+    const showDailyClosingGreeting = message.commandType === 'DAILY_CLOSING_GREETING' && Boolean(message.reply)
     if (
       message.content?.trim() &&
       !['SETTLEMENT', 'PERIOD_SUMMARY', 'PAYOUT_SUMMARY', 'CANCEL_SUCCESS'].includes(message.commandType)
@@ -492,7 +493,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         ? parseReceiptAction(message.reply || '')
         : undefined
     if (
-      (message.own !== false || showSharedRobotReply) &&
+      (message.own !== false || showSharedRobotReply || showDailyClosingGreeting) &&
       message.commandType !== 'CHAT' &&
       !silentCancelCommand &&
       !waitingForFinalResult
@@ -524,7 +525,9 @@ const chatMessages = computed<ChatItem[]>(() => {
         cancelPeriod: message.period,
         receiptAction,
         sequenceRank:
-          message.commandType === 'PERIOD_SUMMARY'
+          message.commandType === 'DAILY_CLOSING_GREETING'
+            ? 60
+            : message.commandType === 'PERIOD_SUMMARY'
             ? 20
             : message.commandType === 'SETTLEMENT'
               ? 30
