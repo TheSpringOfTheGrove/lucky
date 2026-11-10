@@ -465,6 +465,7 @@ const chatMessages = computed<ChatItem[]>(() => {
     const backgroundTransfer =
       ['DEPOSIT_REQUEST', 'WITHDRAW_REQUEST'].includes(message.commandType) &&
       (message.adminTransfer || message.messageType === 'AUTO_PROXY')
+    const showDailyClosingGreeting = message.commandType === 'DAILY_CLOSING_GREETING' && Boolean(message.reply)
     if (
       message.content?.trim() &&
       !backgroundTransfer &&
@@ -489,7 +490,7 @@ const chatMessages = computed<ChatItem[]>(() => {
         ? parseReceiptAction(message.reply || '')
         : undefined
     if (
-      (message.own !== false || showSharedRobotReply) &&
+      (message.own !== false || showSharedRobotReply || showDailyClosingGreeting) &&
       message.commandType !== 'CHAT' &&
       !silentCancelCommand &&
       !waitingForFinalResult
@@ -521,7 +522,9 @@ const chatMessages = computed<ChatItem[]>(() => {
         cancelPeriod: message.period,
         receiptAction,
         sequenceRank:
-          message.commandType === 'PERIOD_SUMMARY'
+          message.commandType === 'DAILY_CLOSING_GREETING'
+            ? 60
+            : message.commandType === 'PERIOD_SUMMARY'
             ? 20
             : message.commandType === 'SETTLEMENT'
               ? 30
