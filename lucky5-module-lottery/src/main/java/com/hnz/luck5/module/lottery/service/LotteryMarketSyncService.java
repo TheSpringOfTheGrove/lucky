@@ -765,6 +765,7 @@ public class LotteryMarketSyncService {
         List<Wa55MarketClient.Draw> accepted = new ArrayList<>();
         for (Wa55MarketClient.Draw draw : draws) {
             if (draw.period() == null || !draw.period().matches("\\d{8,20}")
+                    || !LotteryMarketSessionPolicy.isTradablePeriod(draw.period())
                     || !drawVerificationService.isTrusted(draw.result())) continue;
             String result = draw.result().trim().replace(",", "");
             String claim = source + "|" + result;
@@ -897,7 +898,8 @@ public class LotteryMarketSyncService {
     }
 
     private SnapshotPersistence upsertCurrentIssue(Long userId, Wa55MarketClient.Issue snapshot, LocalDateTime now) {
-        if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")) {
+        if (snapshot.period() == null || !snapshot.period().matches("\\d{8,20}")
+                || !LotteryMarketSessionPolicy.isTradablePeriod(snapshot.period())) {
             return new SnapshotPersistence(false, List.of(), List.of());
         }
         List<String> closedPeriods = new ArrayList<>();
@@ -906,6 +908,10 @@ public class LotteryMarketSyncService {
         boolean terminal = issue != null && List.of("DRAW_PENDING", "DRAW_ABNORMAL", "DRAWN", "SETTLING", "SETTLED")
                 .contains(issue.getStatus());
         String nextStatus = terminal ? issue.getStatus() : snapshot.status();
+        // A morning preview must not open period 097 before the 08:00 trading session.
+        if ("OPEN".equals(nextStatus) && !LotteryMarketSessionPolicy.isOpenTime(snapshot.period(), now)) {
+            nextStatus = "CLOSED";
+        }
         List<IssueDO> previous = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "OPEN")
                         .ne(IssueDO::getPeriod, snapshot.period())));
@@ -972,6 +978,7 @@ public class LotteryMarketSyncService {
      */
     private boolean tryOpenForAnswering(Long userId, IssueDO issue, String fromStatus, LocalDateTime now) {
         if (issue == null || !"OPEN".equals(issue.getStatus()) || issue.getOpenedAt() != null
+                || !LotteryMarketSessionPolicy.isOpenTime(issue.getPeriod(), now)
                 || issueFreshnessPolicy.isStale(issue) || issueFreshnessPolicy.isBettingClosed(issue)) {
             return false;
         }
@@ -1008,7 +1015,7 @@ public class LotteryMarketSyncService {
         issue.setRemainingSeconds(snapshot.remainingSeconds());
         issue.setServerTime(snapshot.serverTime());
         issue.setSourceObservedAt(snapshot.observedAt());
-        issue.setNextPeriod(snapshot.nextPeriod());
+        issue.setNextPeriod(LotteryMarketSessionPolicy.nextTradablePeriod(snapshot.nextPeriod()));
         if (snapshot.drawTime() != null) issue.setDrawTime(snapshot.drawTime());
         issue.setRawSnapshot(snapshot.raw());
     }
@@ -1019,7 +1026,8 @@ public class LotteryMarketSyncService {
 
     private boolean upsertDrawIssue(Long userId, Wa55MarketClient.Draw draw, String source, LocalDateTime now,
                                     Set<String> newlyDrawnPeriods) {
-        if (!draw.period().matches("\\d{8,20}")) return false;
+        if (!draw.period().matches("\\d{8,20}")
+                || !LotteryMarketSessionPolicy.isTradablePeriod(draw.period())) return false;
         IssueDO issue = findIssue(userId, draw.period());
         if (issue != null && issue.getDrawFirstSeenAt() != null
                 && drawVerificationService.isTrusted(issue.getResult())

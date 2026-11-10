@@ -42,6 +42,10 @@ public class LotteryRobotReplyTemplate {
                 + "|" + draw.dragonTiger();
     }
 
+    public String dailyClosingGreeting() {
+        return "祝各位老板生活愉快 好梦哦💤";
+    }
+
     public String balance(String memberName, List<CurrentOrder> currentOrders, BigDecimal balance) {
         String orders = currentOrders.isEmpty() ? "目前无房源" : currentOrders.stream()
                 .map(order -> "[挂牌时间]" + periodSuffix(order.period()) + "\n" + displayCommands(order.content())

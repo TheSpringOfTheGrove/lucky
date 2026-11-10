@@ -67,6 +67,21 @@ class LotteryIssueFreshnessPolicyTest {
         assertThat(policy.isBettingClosed(issue, updatedAt)).isTrue();
     }
 
+    @Test
+    void neverOpensPhantomOvernightPeriodsOrTheMorningIssueBeforeEight() {
+        LocalDateTime beforeOpen = LocalDateTime.of(2026, 11, 10, 7, 59, 59);
+        IssueDO phantom = issue("OPEN", beforeOpen, 600);
+        phantom.setPeriod("20261110061");
+        assertThat(policy.isBettingClosed(phantom, beforeOpen)).isTrue();
+        assertThat(policy.effectiveStatus(phantom, beforeOpen)).isEqualTo("CLOSED");
+
+        IssueDO morning = issue("OPEN", beforeOpen, 600);
+        morning.setPeriod("20261110097");
+        assertThat(policy.isBettingClosed(morning, beforeOpen)).isTrue();
+        assertThat(policy.effectiveStatus(morning, beforeOpen)).isEqualTo("CLOSED");
+        assertThat(policy.isBettingClosed(morning, beforeOpen.plusSeconds(1))).isFalse();
+    }
+
     private IssueDO issue(String status, LocalDateTime serverTime, int remainingSeconds) {
         IssueDO issue = new IssueDO();
         issue.setStatus(status);

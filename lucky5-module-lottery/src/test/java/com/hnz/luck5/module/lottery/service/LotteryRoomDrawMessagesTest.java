@@ -11,6 +11,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,6 +33,7 @@ class LotteryRoomDrawMessagesTest {
         service = new LotteryServiceImpl();
         mapper = mock(MessageMapper.class);
         ReflectionTestUtils.setField(service, "messageMapper", mapper);
+        ReflectionTestUtils.setField(service, "robotReplyTemplate", new LotteryRobotReplyTemplate());
     }
 
     @Test
@@ -121,6 +123,31 @@ class LotteryRoomDrawMessagesTest {
                 proxyFunding, viewer, Map.of(), Map.of());
         assertThat(publicFunding).containsEntry("own", false)
                 .containsEntry("reply", "@proxy\n上分：100\n目前：500");
+    }
+
+    @Test
+    void publishesOneGreetingAfterTheLastDailyDraw() {
+        MessageDO existing = message(60L, "DAILY_CLOSING_GREETING");
+        existing.setExternalId("daily-closing-greeting:20261110060");
+        when(mapper.selectOne(any())).thenReturn(null, existing);
+        LocalDateTime drawTime = LocalDateTime.of(2026, 11, 10, 5, 0, 12);
+
+        ReflectionTestUtils.invokeMethod(service, "publishDailyClosingGreetingIfMissing",
+                7L, "20261110060", drawTime);
+        ReflectionTestUtils.invokeMethod(service, "publishDailyClosingGreetingIfMissing",
+                7L, "20261110060", drawTime);
+        ReflectionTestUtils.invokeMethod(service, "publishDailyClosingGreetingIfMissing",
+                7L, "20261110059", drawTime);
+
+        ArgumentCaptor<MessageDO> capture = ArgumentCaptor.forClass(MessageDO.class);
+        verify(mapper, times(1)).insert(capture.capture());
+        MessageDO greeting = capture.getValue();
+        assertThat(greeting.getUserId()).isEqualTo(7L);
+        assertThat(greeting.getPeriod()).isEqualTo("20261110060");
+        assertThat(greeting.getCommandType()).isEqualTo("DAILY_CLOSING_GREETING");
+        assertThat(greeting.getExternalId()).isEqualTo("daily-closing-greeting:20261110060");
+        assertThat(greeting.getReply()).isEqualTo("祝各位老板生活愉快 好梦哦💤");
+        assertThat(greeting.getCreateTime()).isEqualTo(drawTime.plusSeconds(1));
     }
 
     private MessageDO message(Long id, String command) {
