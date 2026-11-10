@@ -23,14 +23,14 @@ import { lotteryPlayerAvatarSrc } from '../utils/playerAvatar'
 import { receiptAction as parseReceiptAction, receiptText } from '../utils/receipt'
 import CancelSuccessReceipt from '../messages/CancelSuccessReceipt.vue'
 import logo from '@/assets/imgs/logo.png'
-import robotAvatar from '@/assets/lottery/robot-avatar-pirate-chenguanxi.png'
+import robotAvatar from '@/assets/lottery/robot-avatar-bounty-chenguanxi.png'
 import scratchButton from '@/assets/lottery/scratch-button-chenguanxi.png'
 import { useRoomChatViewport } from './useRoomChatViewport'
 
 type ChatKind = 'member' | 'other' | 'robot'
 type ChatType = 'text' | 'transition' | 'order' | 'amount' | 'balance' | 'draw'
 
-const ROBOT_DISPLAY_NAME = '赏金女王'
+const ROBOT_DISPLAY_NAME = '赏金机器人'
 const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
 const SCRATCH_PERIOD_SECONDS = 300
 

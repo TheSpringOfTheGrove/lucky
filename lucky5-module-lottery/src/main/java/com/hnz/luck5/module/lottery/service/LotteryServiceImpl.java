@@ -591,7 +591,7 @@ public class LotteryServiceImpl implements LotteryService {
         boolean drawResult = DRAW_RESULT_COMMANDS.contains(value(item.getCommandType(), ""));
         List<Map<String, Object>> rows = new ArrayList<>(2);
         if (StrUtil.isNotBlank(item.getReply()) || drawResult) {
-            rows.add(map("id", "robot-" + item.getId(), "sender", "赏金女王", "sourceMember", sourceMember,
+            rows.add(map("id", "robot-" + item.getId(), "sender", "赏金机器人", "sourceMember", sourceMember,
                     "period", value(item.getPeriod(), ""), "content", roomRobotReply(item), "kind", "robot",
                     "commandType", value(item.getCommandType(), ""), "drawImage", "",
                     "time", date(value(item.getProcessedAt(), item.getCreateTime()))));
