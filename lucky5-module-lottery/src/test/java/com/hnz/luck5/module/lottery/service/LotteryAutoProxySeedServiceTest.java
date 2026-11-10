@@ -60,7 +60,7 @@ class LotteryAutoProxySeedServiceTest {
             assertThat(created.getAutoBetEnabled()).isTrue();
             assertThat(created.getBalance()).isZero();
             assertThat(created.getOpenId()).isNotBlank();
-            assertThat(created.getAvatarPath()).startsWith("player-avatars/");
+            assertThat(created.getAvatarPath()).isEqualTo(LotteryMemberAvatar.path(created.getAvatar()));
         });
         ArgumentCaptor<PresetOrderDO> presets = ArgumentCaptor.forClass(PresetOrderDO.class);
         verify(presetOrderMapper).insert(presets.capture());
