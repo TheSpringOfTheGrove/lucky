@@ -3179,10 +3179,14 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, IssueDO> orderIssuesByPeriod = issuesForOrders(member.getUserId(), orders);
         List<AmountRecordDO> amounts = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
                 roomAmountRecordQuery(member)));
-        List<MessageDO> messages = roomMessages(member, roomMode);
+        List<MessageDO> messages = roomMessages(member, roomMode).stream()
+                .filter(item -> !COMMAND_DRAW_RESULT.equals(item.getCommandType())
+                        || LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod()))
+                .toList();
         List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                 .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
-                .stream().filter(item -> drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
+                .stream().filter(item -> LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod())
+                        && drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
         messages = withRecentRoomDrawMessages(member.getUserId(), messages, draws);
         ensureRoomDrawImages(member.getUserId(), messages);
         Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(member.getUserId(), draws);
@@ -3283,7 +3287,8 @@ public class LotteryServiceImpl implements LotteryService {
     private Map<String, Object> getRoomDrawStateInternal(MemberDO member) {
         List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
                         .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
-                .stream().filter(item -> drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
+                .stream().filter(item -> LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod())
+                        && drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
         Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(member.getUserId(), draws);
         String latestDrawPeriod = draws.isEmpty() ? "" : value(draws.get(0).getPeriod(), "");
         LambdaQueryWrapper<IssueDO> pendingIssueQuery = new LambdaQueryWrapper<IssueDO>()
@@ -3785,7 +3790,8 @@ public class LotteryServiceImpl implements LotteryService {
         List<DrawDO> history = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(
                 new LambdaQueryWrapper<DrawDO>().eq(DrawDO::getUserId, userId)
                         .le(DrawDO::getPeriod, period).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
-                .stream().filter(item -> drawVerificationService.isTrusted(item.getResult())).limit(15).toList();
+                .stream().filter(item -> LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod())
+                        && drawVerificationService.isTrusted(item.getResult())).limit(15).toList();
         if (history.isEmpty()) return "";
         Map<String, LocalDateTime> officialTimes = drawTimesFor(userId, history);
         return drawHistoryImageRenderer.render(history.stream().map(item -> {
