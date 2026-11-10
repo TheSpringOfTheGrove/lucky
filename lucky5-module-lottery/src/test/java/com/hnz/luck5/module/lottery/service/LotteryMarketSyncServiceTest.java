@@ -315,6 +315,36 @@ class LotteryMarketSyncServiceTest {
     }
 
     @Test
+    void closesTenSecondsEarlyAndDoesNotReopenOnALaterOpenSnapshot() {
+        IssueMapper issueMapper = mock(IssueMapper.class);
+        IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
+        IssueDO issue = openIssue(134L, "20260827134");
+        issue.setOpenedAt(nowMinusMinutes(5));
+        when(issueMapper.selectOne(any())).thenReturn(issue);
+        when(issueMapper.selectList(any())).thenReturn(List.of());
+        ReflectionTestUtils.setField(service, "issueMapper", issueMapper);
+        ReflectionTestUtils.setField(service, "issueTransitionMapper", transitionMapper);
+        ReflectionTestUtils.setField(service, "issueFreshnessPolicy", new LotteryIssueFreshnessPolicy());
+        LocalDateTime now = LocalDateTime.of(2026, 8, 27, 11, 9, 20);
+
+        Object first = ReflectionTestUtils.invokeMethod(service, "upsertCurrentIssue", 229L,
+                new Wa55MarketClient.Issue(issue.getPeriod(), "OPEN", 1, 10, now, now,
+                        "20260827135", now.plusSeconds(40), "{}"), now);
+        assertThat(issue.getStatus()).isEqualTo("CLOSED");
+        assertThat(issue.getClosedAt()).isEqualTo(now);
+        List<?> firstClosedPeriods = ReflectionTestUtils.invokeMethod(first, "closedPeriods");
+        assertThat(firstClosedPeriods.stream().map(String::valueOf).toList()).containsExactly(issue.getPeriod());
+
+        // A stale/revised upstream countdown must not reopen a period that was already formally available.
+        Object second = ReflectionTestUtils.invokeMethod(service, "upsertCurrentIssue", 229L,
+                new Wa55MarketClient.Issue(issue.getPeriod(), "OPEN", 1, 30, now, now,
+                        "20260827135", now.plusSeconds(40), "{}"), now);
+        assertThat(issue.getStatus()).isEqualTo("CLOSED");
+        assertThat((List<?>) ReflectionTestUtils.invokeMethod(second, "closedPeriods")).isEmpty();
+        verify(transitionMapper, times(1)).insert(any(IssueTransitionDO.class));
+    }
+
+    @Test
     void doesNotPublishClosingMessagesForAnIssueThatNeverStartedAnswering() {
         IssueMapper issueMapper = mock(IssueMapper.class);
         IssueTransitionMapper transitionMapper = mock(IssueTransitionMapper.class);
