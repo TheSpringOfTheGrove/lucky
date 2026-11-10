@@ -906,6 +906,13 @@ public class LotteryMarketSyncService {
         boolean terminal = issue != null && List.of("DRAW_PENDING", "DRAW_ABNORMAL", "DRAWN", "SETTLING", "SETTLED")
                 .contains(issue.getStatus());
         String nextStatus = terminal ? issue.getStatus() : snapshot.status();
+        // The upstream may still report OPEN during our local ten-second safety window. Persist CLOSED here,
+        // rather than relying only on the request guard, so the room transition and period summary fire once.
+        if ("OPEN".equals(nextStatus)
+                && (issueFreshnessPolicy.isSnapshotBettingClosed(snapshot.observedAt(), snapshot.remainingSeconds(), now)
+                || (issue != null && "CLOSED".equals(issue.getStatus()) && issue.getOpenedAt() != null))) {
+            nextStatus = "CLOSED";
+        }
         List<IssueDO> previous = DataPermissionUtils.executeIgnore(() -> issueMapper.selectList(
                 new LambdaQueryWrapper<IssueDO>().eq(IssueDO::getUserId, userId).eq(IssueDO::getStatus, "OPEN")
                         .ne(IssueDO::getPeriod, snapshot.period())));

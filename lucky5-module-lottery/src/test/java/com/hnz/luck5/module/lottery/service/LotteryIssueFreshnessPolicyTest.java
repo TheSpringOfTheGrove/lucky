@@ -21,15 +21,15 @@ class LotteryIssueFreshnessPolicyTest {
     }
 
     @Test
-    void closesBettingAtMarketCutoffWithoutUsingStaleGraceAsExtraBettingTime() {
+    void closesBettingTenSecondsBeforeMarketWithoutMovingTheStaleDeadline() {
         LocalDateTime serverTime = LocalDateTime.of(2026, 8, 14, 19, 4, 24);
-        IssueDO issue = issue("OPEN", serverTime, 6);
+        IssueDO issue = issue("OPEN", serverTime, 30);
 
-        assertThat(policy.isBettingClosed(issue, serverTime.plusSeconds(5))).isFalse();
-        assertThat(policy.isBettingClosed(issue, serverTime.plusSeconds(6))).isTrue();
-        assertThat(policy.isStale(issue, serverTime.plusSeconds(6))).isFalse();
-        assertThat(policy.effectiveStatus(issue, serverTime.plusSeconds(6))).isEqualTo("CLOSED");
-        assertThat(policy.effectiveStatus(issue, serverTime.plusSeconds(96))).isEqualTo("SOURCE_STALE");
+        assertThat(policy.isBettingClosed(issue, serverTime.plusSeconds(19))).isFalse();
+        assertThat(policy.isBettingClosed(issue, serverTime.plusSeconds(20))).isTrue();
+        assertThat(policy.isStale(issue, serverTime.plusSeconds(20))).isFalse();
+        assertThat(policy.effectiveStatus(issue, serverTime.plusSeconds(20))).isEqualTo("CLOSED");
+        assertThat(policy.effectiveStatus(issue, serverTime.plusSeconds(120))).isEqualTo("SOURCE_STALE");
     }
 
     @Test
@@ -45,15 +45,24 @@ class LotteryIssueFreshnessPolicyTest {
     void usesLocalObservationToCorrectSourceClockSkew() {
         LocalDateTime sourceTime = LocalDateTime.of(2026, 8, 14, 20, 49, 59);
         LocalDateTime observedAt = sourceTime.plusSeconds(5);
-        IssueDO issue = issue("OPEN", sourceTime, 6);
+        IssueDO issue = issue("OPEN", sourceTime, 26);
         issue.setSourceObservedAt(observedAt);
 
-        assertThat(policy.isBettingClosed(issue, observedAt.plusSeconds(5))).isFalse();
-        assertThat(policy.effectiveRemainingSeconds(issue, observedAt.plusSeconds(5))).isEqualTo(1);
-        assertThat(policy.isBettingClosed(issue, observedAt.plusSeconds(6))).isTrue();
+        assertThat(policy.isBettingClosed(issue, observedAt.plusSeconds(15))).isFalse();
+        assertThat(policy.effectiveRemainingSeconds(issue, observedAt.plusSeconds(15))).isEqualTo(1);
+        assertThat(policy.isBettingClosed(issue, observedAt.plusSeconds(16))).isTrue();
         assertThat(policy.authoritativeSourceTime(issue, observedAt.plusSeconds(3)))
                 .isEqualTo(sourceTime.plusSeconds(3));
-        assertThat(policy.authoritativeBettingCutoffTime(issue)).isEqualTo(sourceTime.plusSeconds(6));
+        assertThat(policy.authoritativeBettingCutoffTime(issue)).isEqualTo(sourceTime.plusSeconds(16));
+    }
+
+    @Test
+    void snapshotClosesAtTheSameLocalBoundary() {
+        LocalDateTime observedAt = LocalDateTime.of(2026, 8, 14, 20, 49, 59);
+
+        assertThat(policy.isSnapshotBettingClosed(observedAt, 30, observedAt.plusSeconds(19))).isFalse();
+        assertThat(policy.isSnapshotBettingClosed(observedAt, 30, observedAt.plusSeconds(20))).isTrue();
+        assertThat(policy.isSnapshotBettingClosed(null, 30, observedAt)).isTrue();
     }
 
     @Test

@@ -8,10 +8,11 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 
 /**
- * Applies the upstream betting cutoff and rejects an OPEN issue after the source becomes stale.
+ * Closes local betting ahead of the upstream cutoff and rejects a stale OPEN issue.
  *
  * <p>The grace period only classifies a source as stale. It must never extend betting past the upstream
- * {@code serverTime + remainingSeconds} cutoff.</p>
+ * {@code serverTime + remainingSeconds} cutoff. The lead only changes local betting and cancellation,
+ * not the source freshness deadline or official draw time.</p>
  */
 @Component
 public class LotteryIssueFreshnessPolicy {
@@ -20,6 +21,9 @@ public class LotteryIssueFreshnessPolicy {
 
     @Value("${lottery.draw-source.stale-grace-seconds:90}")
     private long staleGraceSeconds = 90;
+
+    @Value("${lottery.market.local-close-lead-seconds:10}")
+    private long localCloseLeadSeconds = 10;
 
     public boolean isStale(IssueDO issue) {
         return isStale(issue, LocalDateTime.now());
@@ -33,11 +37,18 @@ public class LotteryIssueFreshnessPolicy {
         if (issue == null || !"OPEN".equals(issue.getStatus())) {
             return true;
         }
-        LocalDateTime cutoff = localCutoff(issue);
+        LocalDateTime cutoff = localBettingCutoff(issue);
         if (cutoff == null) {
             // An OPEN snapshot without an authoritative source clock is unsafe for real-money betting.
             return true;
         }
+        return !now.isBefore(cutoff);
+    }
+
+    boolean isSnapshotBettingClosed(LocalDateTime observedAt, int remainingSeconds, LocalDateTime now) {
+        if (observedAt == null) return true;
+        LocalDateTime cutoff = observedAt.plusSeconds(Math.max(0, remainingSeconds))
+                .minusSeconds(Math.max(0, localCloseLeadSeconds));
         return !now.isBefore(cutoff);
     }
 
@@ -74,7 +85,7 @@ public class LotteryIssueFreshnessPolicy {
     }
 
     public int effectiveRemainingSeconds(IssueDO issue, LocalDateTime now) {
-        LocalDateTime cutoff = localCutoff(issue);
+        LocalDateTime cutoff = localBettingCutoff(issue);
         if (cutoff == null || !now.isBefore(cutoff)) return 0;
         long remainingMillis = Duration.between(now, cutoff).toMillis();
         return (int) Math.min(Integer.MAX_VALUE, (remainingMillis + 999) / 1000);
@@ -88,7 +99,12 @@ public class LotteryIssueFreshnessPolicy {
     public LocalDateTime authoritativeBettingCutoffTime(IssueDO issue) {
         if (issue == null || issue.getServerTime() == null) return null;
         long remaining = Math.max(0, issue.getRemainingSeconds() == null ? 0 : issue.getRemainingSeconds());
-        return issue.getServerTime().plusSeconds(remaining);
+        return issue.getServerTime().plusSeconds(remaining).minusSeconds(Math.max(0, localCloseLeadSeconds));
+    }
+
+    private LocalDateTime localBettingCutoff(IssueDO issue) {
+        LocalDateTime cutoff = localCutoff(issue);
+        return cutoff == null ? null : cutoff.minusSeconds(Math.max(0, localCloseLeadSeconds));
     }
 
     private LocalDateTime localCutoff(IssueDO issue) {
