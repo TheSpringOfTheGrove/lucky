@@ -34,7 +34,8 @@ public class LotteryIssueFreshnessPolicy {
     }
 
     boolean isBettingClosed(IssueDO issue, LocalDateTime now) {
-        if (issue == null || !"OPEN".equals(issue.getStatus())) {
+        if (issue == null || !"OPEN".equals(issue.getStatus())
+                || !LotteryMarketSessionPolicy.isOpenTime(issue.getPeriod(), now)) {
             return true;
         }
         LocalDateTime cutoff = localBettingCutoff(issue);
@@ -74,6 +75,9 @@ public class LotteryIssueFreshnessPolicy {
         }
         if (!"OPEN".equals(issue.getStatus())) {
             return issue.getStatus();
+        }
+        if (!LotteryMarketSessionPolicy.isOpenTime(issue.getPeriod(), now)) {
+            return "CLOSED";
         }
         if (isStale(issue, now)) {
             return STATUS_SOURCE_STALE;
