@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>冠希客户 · 玩家头像预览</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Microsoft YaHei", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #142136; background: #f1f5f9; }
+    header { position: sticky; top: 0; z-index: 1; padding: 20px max(24px, calc((100vw - 1200px) / 2)); background: rgba(255,255,255,.95); border-bottom: 1px solid #dce5ed; backdrop-filter: blur(12px); }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    header p { margin: 0; color: #64748b; font-size: 14px; }
+    main { max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }
+    section + section { margin-top: 42px; }
+    h2 { margin: 0 0 16px; font-size: 20px; }
+    h2 span { margin-left: 8px; color: #64748b; font-size: 14px; font-weight: 400; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+    figure { margin: 0; padding: 10px; background: white; border: 1px solid #dce5ed; border-radius: 14px; box-shadow: 0 3px 12px #1025400d; }
+    figure img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 9px; }
+    figcaption { padding: 9px 2px 2px; text-align: center; font-weight: 700; font-size: 14px; }
+    .hint { margin-top: 22px; color: #64748b; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>玩家头像预览</h1>
+    <p>当前分支 chen-guan-xi_fetch · 男生 20 张 / 锦鲤 10 张 · 编号对应程序中的头像编号</p>
+  </header>
+  <main>
+    <section>
+      <h2>男生头像 <span>01–20</span></h2>
+      <div class="grid" id="men"></div>
+    </section>
+    <section>
+      <h2>锦鲤头像 <span>41–50</span></h2>
+      <div class="grid" id="koi"></div>
+    </section>
+    <p class="hint">本页直接读取当前仓库的头像图片；刷新页面即可看到图片文件的最新内容。</p>
+  </main>
+  <script>
+    const base = './lucky5-ui/src/assets/lottery/player-avatars-chenguanxi/';
+    function show(container, start, end) {
+      for (let number = start; number <= end; number++) {
+        const label = String(number).padStart(2, '0');
+        const card = document.createElement('figure');
+        const photo = document.createElement('img');
+        photo.src = `${base}avatar_${label}.jpg`;
+        photo.alt = `头像 ${label}`;
+        photo.loading = 'lazy';
+        const caption = document.createElement('figcaption');
+        caption.textContent = `头像 ${label}`;
+        card.append(photo, caption);
+        container.append(card);
+      }
+    }
+    show(document.getElementById('men'), 1, 20);
+    show(document.getElementById('koi'), 41, 50);
+  </script>
+</body>
+</html>

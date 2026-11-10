@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>冠希客户 · 新头像候选预览</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f1f4f6; color: #172632; }
+    header { background: linear-gradient(115deg, #122b3b, #224a56); color: white; padding: 36px max(22px, calc((100vw - 1180px) / 2)); }
+    h1 { margin: 0 0 8px; font-size: clamp(24px, 4vw, 34px); }
+    header p { margin: 0; color: #c7dbe1; line-height: 1.6; }
+    main { max-width: 1224px; margin: auto; padding: 24px 22px 64px; }
+    .note { padding: 14px 18px; border: 1px solid #bfd9d6; border-radius: 10px; background: #e8f5f2; color: #24554c; line-height: 1.55; }
+    h2 { margin: 34px 0 4px; font-size: 23px; }
+    .intro { margin: 0 0 18px; color: #52616b; }
+    .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+    .card { background: white; border: 1px solid #dfe6e9; border-radius: 14px; padding: 10px; box-shadow: 0 5px 18px #1230470c; }
+    .card button { display: block; padding: 0; border: 0; background: none; width: 100%; cursor: zoom-in; }
+    .card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 9px; }
+    .foot { display: flex; align-items: center; gap: 12px; padding: 10px 2px 2px; }
+    .foot img { width: 46px; height: 46px; border-radius: 50%; object-fit: cover; border: 2px solid #e4e9eb; }
+    .foot strong { font-size: 14px; }
+    .foot span { display: block; font-size: 12px; color: #697782; margin-top: 2px; }
+    dialog { border: 0; border-radius: 16px; padding: 12px; max-width: min(90vw, 750px); background: white; box-shadow: 0 18px 70px #0006; }
+    dialog::backdrop { background: #07131fc9; }
+    dialog img { display: block; width: min(82vw, 710px); max-height: 78vh; object-fit: contain; border-radius: 9px; }
+    .dialog-top { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 0 4px 10px; }
+    .dialog-top button { border: 0; border-radius: 8px; background: #e9eef0; padding: 7px 13px; cursor: pointer; }
+    @media (max-width: 950px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 600px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } main { padding-inline: 12px; } header { padding: 26px 16px; } .card { padding: 7px; } .foot { gap: 6px; } .foot img { width: 36px; height: 36px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>冠希客户 · 新头像候选</h1>
+    <p>男生 10 张 + 锦鲤 10 张。点击图片可放大查看，下方圆形图为房间头像的裁切效果。</p>
+  </header>
+  <main>
+    <div class="note">仅供确认：这 20 张新图暂存于当前客户分支的候选目录，尚未替换程序头像或任何玩家头像。</div>
+    <h2>男生头像 · 10 张</h2>
+    <p class="intro">参考你发的示例，以黑白漫画线稿为主，加入少量蓝紫色动漫风格；发型、表情和角度各不相同。</p>
+    <section class="grid" id="male" aria-label="男生头像候选"></section>
+    <h2>锦鲤头像 · 10 张</h2>
+    <p class="intro">参考你提供的锦鲤壁纸照片：水面、光影和留白为主，避免旧款卡通鱼近景。</p>
+    <section class="grid" id="koi" aria-label="锦鲤头像候选"></section>
+  </main>
+  <dialog id="viewer"><div class="dialog-top"><strong id="viewer-title"></strong><button id="close" type="button">关闭</button></div><img id="viewer-image" alt="头像放大预览"></dialog>
+  <script>
+    const root = './lucky5-ui/public/chenguanxi/avatar-candidates-20261110/';
+    const labels = {
+      male: ['墨镜线稿', '短发比耶', '简笔冷脸', '蓝紫侧影', '眼镜青年', '中发酷感', '耳机侧影', '蓬发少年', '墨镜酷感', '卷发笑脸'],
+      koi: ['红白·暗水', '金光·跃起', '金鲤·蓝水', '红白·夜水', '橙鲤·浅水', '红白黑·荷塘', '金鲤·墨绿', '红白双鲤·碧水', '锦鲤·瀑布', '红白·粉水']
+    };
+    const viewer = document.getElementById('viewer');
+    for (const kind of ['male', 'koi']) {
+      const target = document.getElementById(kind);
+      labels[kind].forEach((description, index) => {
+        const number = String(index + 1).padStart(2, '0');
+        const id = `${kind}-${number}`;
+        const title = `${kind === 'male' ? '男生' : '锦鲤'} ${number}`;
+        const path = `${root}${id}.jpg`;
+        const card = document.createElement('article');
+        card.className = 'card';
+        card.innerHTML = `<button type="button" aria-label="放大查看${title}"><img src="${path}" alt="${title}：${description}" loading="lazy"></button><div class="foot"><img src="${path}" alt="" loading="lazy"><div><strong>${title}</strong><span>${description}</span></div></div>`;
+        card.querySelector('button').addEventListener('click', () => {
+          document.getElementById('viewer-title').textContent = `${title} · ${description}`;
+          document.getElementById('viewer-image').src = path;
+          viewer.showModal();
+        });
+        target.append(card);
+      });
+    }
+    document.getElementById('close').addEventListener('click', () => viewer.close());
+    viewer.addEventListener('click', (event) => { if (event.target === viewer) viewer.close(); });
+  </script>
+</body>
+</html>

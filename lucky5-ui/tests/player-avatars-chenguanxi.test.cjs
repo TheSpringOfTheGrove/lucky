@@ -6,9 +6,9 @@ const { resolve } = require('node:path')
 const avatarDir = resolve(__dirname, '../src/assets/lottery/player-avatars-chenguanxi')
 const accountAvatarDir = resolve(__dirname, '../public/chenguanxi/account-avatars')
 
-test('current customer has sixty compact, numbered avatar assets', () => {
+test('current customer has eighty compact, numbered avatar assets', () => {
   const files = readdirSync(avatarDir).sort()
-  const expected = Array.from({ length: 60 }, (_, index) =>
+  const expected = Array.from({ length: 80 }, (_, index) =>
     `avatar_${String(index + 1).padStart(2, '0')}.jpg`
   )
   assert.deepEqual(files, expected)
@@ -20,11 +20,11 @@ test('current customer has sixty compact, numbered avatar assets', () => {
   }
 })
 
-test('account avatars include the dedicated admin portrait and the same sixty choices', () => {
+test('account avatars include the dedicated admin portrait and the same eighty choices', () => {
   const files = readdirSync(accountAvatarDir).sort()
   const expected = [
     'admin-ceo.jpg',
-    ...Array.from({ length: 60 }, (_, index) =>
+    ...Array.from({ length: 80 }, (_, index) =>
       `avatar_${String(index + 1).padStart(2, '0')}.jpg`
     )
   ]
