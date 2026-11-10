@@ -29,6 +29,7 @@ import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -86,6 +87,7 @@ public class LotteryServiceImpl implements LotteryService {
     private static final String COMMAND_PAYOUT_SUMMARY = "PAYOUT_SUMMARY";
     private static final String COMMAND_PERIOD_SUMMARY = "PERIOD_SUMMARY";
     private static final String COMMAND_DRAW_RESULT = "DRAW_RESULT";
+    private static final String COMMAND_DAILY_CLOSING_GREETING = "DAILY_CLOSING_GREETING";
     private static final Set<String> DRAW_RESULT_COMMANDS = Set.of("DRAW", "DRAW_RESULT", "LOTTERY_RESULT");
     private static final String ROOM_MODE_GROUP = "GROUP";
     private static final String ROOM_MODE_PRIVATE = "PRIVATE";
@@ -3428,7 +3430,7 @@ public class LotteryServiceImpl implements LotteryService {
                             .orderByDesc(MessageDO::getCreateTime).last("LIMIT 30")));
             List<MessageDO> drawResults = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
                     new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, member.getUserId())
-                            .eq(MessageDO::getCommandType, COMMAND_DRAW_RESULT)
+                            .in(MessageDO::getCommandType, COMMAND_DRAW_RESULT, COMMAND_DAILY_CLOSING_GREETING)
                             .lt(beforeId != null, MessageDO::getId, beforeId)
                             .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
             return mergeMessages(mergeMessages(ownMessages, settlements, 80), drawResults, 100);
@@ -3900,6 +3902,7 @@ public class LotteryServiceImpl implements LotteryService {
                         .eq(MessageDO::getExternalId, externalId).last("LIMIT 1")));
         if (existing != null) {
             ensureRoomDrawImages(userId, List.of(existing));
+            publishDailyClosingGreetingIfMissing(userId, draw.getPeriod(), existing.getCreateTime());
             return;
         }
         LotteryBettingService.DrawResult result = bettingService.deriveDraw(normalizedResult);
@@ -3920,6 +3923,36 @@ public class LotteryServiceImpl implements LotteryService {
         message.setCreateTime(draw.getSettledAt() == null ? LocalDateTime.now() : draw.getSettledAt());
         message.setUserId(userId);
         messageMapper.insert(message);
+        publishDailyClosingGreetingIfMissing(userId, draw.getPeriod(), message.getCreateTime());
+    }
+
+    private void publishDailyClosingGreetingIfMissing(Long userId, String period, LocalDateTime drawMessageTime) {
+        if (!LotteryMarketSessionPolicy.isLastDailyPeriod(period)) return;
+        String externalId = "daily-closing-greeting:" + period;
+        MessageDO existing = DataPermissionUtils.executeIgnore(() -> messageMapper.selectOne(
+                new LambdaQueryWrapper<MessageDO>().eq(MessageDO::getUserId, userId)
+                        .eq(MessageDO::getExternalId, externalId).last("LIMIT 1")));
+        if (existing != null) return;
+        MessageDO greeting = new MessageDO();
+        greeting.setUserId(userId);
+        greeting.setChannel(CHANNEL_WEB_GROUP);
+        greeting.setMemberId(null);
+        greeting.setMember("");
+        greeting.setPeriod(period);
+        greeting.setContent("");
+        greeting.setStatus("已发送");
+        greeting.setExternalId(externalId);
+        greeting.setError("");
+        greeting.setCommandType(COMMAND_DAILY_CLOSING_GREETING);
+        greeting.setMessageType(TYPE_PLAYER);
+        greeting.setReply(robotReplyTemplate.dailyClosingGreeting());
+        greeting.setProcessedAt(LocalDateTime.now());
+        greeting.setCreateTime((drawMessageTime == null ? LocalDateTime.now() : drawMessageTime).plusSeconds(1));
+        try {
+            messageMapper.insert(greeting);
+        } catch (DuplicateKeyException ignored) {
+            // Another instance already published the same owner's greeting for this period.
+        }
     }
 
     private void lockOwnerFinance(Long userId) {
