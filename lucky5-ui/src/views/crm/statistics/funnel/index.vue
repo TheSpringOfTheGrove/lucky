@@ -46,7 +46,7 @@
           @change="handleQuery"
         >
           <el-option
-            v-for="item in statusTypeList"
+            v-for="item in statusTypeOptions"
             :key="item.id"
             :label="item.name"
             :value="item.id"
@@ -143,6 +143,12 @@ const queryFormRef = ref() // 搜索的表单
 const deptList = ref<Tree[]>([]) // 部门树形结构
 const userList = ref<UserApi.UserVO[]>([]) // 全量用户清单
 const statusTypeList = ref<BusinessStatusApi.BusinessStatusTypeVO[]>([]) // 商机状态组
+const statusTypeOptions = computed(() =>
+  statusTypeList.value.filter(
+    (item): item is BusinessStatusApi.BusinessStatusTypeVO & { id: number } =>
+      item.id !== undefined
+  )
+)
 
 /** 根据选择的部门筛选员工清单 */
 const userListByDeptId = computed(() =>

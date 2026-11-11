@@ -37,9 +37,6 @@ const loginOut = async () => {
     replace('/login?redirect=/index')
   } catch {}
 }
-const toProfile = async () => {
-  push('/user/profile')
-}
 </script>
 
 <template>

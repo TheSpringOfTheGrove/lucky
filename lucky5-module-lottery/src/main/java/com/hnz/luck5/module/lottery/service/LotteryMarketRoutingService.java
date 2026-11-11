@@ -250,6 +250,9 @@ public class LotteryMarketRoutingService {
 
     boolean supportsMarket(BetItemDO item) {
         String selection = item.getSelection() == null ? "" : item.getSelection().trim();
+        if ("五位二定".equals(item.getPlay())) {
+            return selection.matches("(?i)(?:[0-9]XXX[0-9]|X[0-9]XX[0-9]|XX[0-9]X[0-9]|XXX[0-9][0-9])");
+        }
         if (item.getPlay() != null && item.getPlay().endsWith("字现")) return selection.matches("\\d{2,4}");
         return selection.matches("(?i)[0-9X]{4}");
     }

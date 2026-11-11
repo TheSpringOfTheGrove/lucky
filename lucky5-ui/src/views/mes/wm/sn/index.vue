@@ -136,7 +136,6 @@ import type { WmSnGenerateVO, WmSnGroupVO } from '@/api/mes/wm/sn'
 defineOptions({ name: 'MesWmSn' })
 
 const message = useMessage()
-const { t } = useI18n()
 
 const loading = ref(true)
 const list = ref<WmSnGroupVO[]>([])

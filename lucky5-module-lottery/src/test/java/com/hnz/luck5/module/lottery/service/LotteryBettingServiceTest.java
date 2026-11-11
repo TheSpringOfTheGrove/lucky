@@ -682,8 +682,17 @@ class LotteryBettingServiceTest {
 
         LotteryBettingService.ParsedBet fifth = service.parse("五位二定千1五2各1", odds).get(0);
         assertThat(fifth.selection()).isEqualTo("1XXX2");
-        assertThat(service.isWinning(fifth, service.deriveDraw("10002"))).isFalse();
+        assertThat(service.isWinning(fifth, service.deriveDraw("10002"))).isTrue();
         assertThat(service.isWinning(fifth, service.deriveDraw("10003"))).isFalse();
+    }
+
+    @Test
+    void acceptsImplicitFivePositionTwoFixedCommandAndExcludesRepeatedDigits() {
+        List<LotteryBettingService.ParsedBet> bets = service.parse("百23568901五63957810除双重各1", odds);
+        assertThat(bets).hasSize(57).allSatisfy(bet -> {
+            assertThat(bet.play()).isEqualTo("五位二定");
+            assertThat(bet.selection()).matches("X[0-9]XX[0-9]");
+        });
     }
 
     private OddDO odd(String code, String play, String rate) {

@@ -134,6 +134,48 @@ class Wa55MarketOrderClientTest {
     }
 
     @Test
+    void submitsFivePositionTwoFixedSelectionsWithMarketTypeIdsAndFindsTheirDetails() {
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "五位二定", "XXX12", "1", "guid-1", false),
+                request("route-2", "五位二定", "1XXX2", "1", "guid-2", false),
+                request("route-3", "五位二定", "X1XX2", "1", "guid-3", false),
+                request("route-4", "五位二定", "XX1X2", "1", "guid-4", false));
+
+        Wa55MarketOrderClient.SubmissionBatch submitted = client.submit(credentials(), issuePeriod, requests);
+
+        assertThat(betCalls).hasValue(1);
+        assertThat(batchBets(betForms.get(0))).containsExactly(
+                Map.of("dict_no_type_id", 15, "bet_no", "XXX12", "bet_money", "1"),
+                Map.of("dict_no_type_id", 16, "bet_no", "1XXX2", "bet_money", "1"),
+                Map.of("dict_no_type_id", 17, "bet_no", "X1XX2", "bet_money", "1"),
+                Map.of("dict_no_type_id", 18, "bet_no", "XX1X2", "bet_money", "1"));
+        assertThat(submitted.acceptedBatches()).hasSize(1);
+        List<Wa55MarketOrderClient.BetConfirmation> confirmed = client.verifyAccepted(
+                credentials(), issuePeriod, requests).confirmations();
+        assertThat(confirmed).hasSize(4);
+        client.cancel(credentials(), issuePeriod, confirmed.stream()
+                .map(item -> new Wa55MarketOrderClient.CancelRequest(item.marketBetId(), item.betCount())).toList());
+        assertThat(cancelForm).containsEntry("ids", "BET-1-1|1,BET-1-2|1,BET-1-3|1,BET-1-4|1");
+    }
+
+    @Test
+    void singleFivePositionSelectionAlsoUsesExplicitMarketTypeId() {
+        Wa55MarketOrderClient client = client(true);
+        List<Wa55MarketOrderClient.BetRequest> requests = List.of(
+                request("route-1", "五位二定", "X1XX2", "1", "guid-1", false));
+
+        Wa55MarketOrderClient.SubmissionBatch submitted = client.submit(credentials(), issuePeriod, requests);
+
+        assertThat(betCalls).hasValue(1);
+        assertThat(betForms.get(0)).containsEntry("way", "108");
+        assertThat(batchBets(betForms.get(0))).containsExactly(
+                Map.of("dict_no_type_id", 17, "bet_no", "X1XX2", "bet_money", "1"));
+        assertThat(submitted.acceptedBatches()).hasSize(1);
+        assertThat(client.verifyAccepted(credentials(), issuePeriod, requests).confirmations()).hasSize(1);
+    }
+
+    @Test
     void acceptsExactBatchIdentifiersDirectlyWithoutWaitingForDetailRows() {
         batchResponseWithIds = true;
         Wa55MarketOrderClient client = client(true);

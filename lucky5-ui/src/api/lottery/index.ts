@@ -97,7 +97,7 @@ export const saveMemberApi = (data: Record<string, any>) =>
     : request.post({ url: `${base}/members`, data })
 
 export const getMemberSnapshotsApi = () =>
-  request.get<Record<string, any>[]>({ url: `${base}/members/snapshot` })
+  request.get<Record<string, any>[]>({ url: `${base}/members/snapshot`, silentError: true })
 
 export const transferMemberApi = (id: string, amount: number, type: '上分' | '下分') =>
   request.post({ url: `${base}/members/${id}/transfer`, data: { amount, type } })

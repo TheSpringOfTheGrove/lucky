@@ -55,6 +55,7 @@ public class Wa55MarketOrderClient {
     private static final Pattern LOGIN_LINK = Pattern.compile("href=[\"']([^\"']*/Member/Login\\?[^\"']*)[\"']",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern NORMAL_SELECTION = Pattern.compile("(?i)[0-9X]{4}");
+    private static final Pattern FIVE_POSITION_TWO_SELECTION = Pattern.compile("(?i)(?:[0-9]XXX[0-9]|X[0-9]XX[0-9]|XX[0-9]X[0-9]|XXX[0-9][0-9])");
     private static final Pattern XIAN_SELECTION = Pattern.compile("[0-9]{2,4}");
 
     /**
@@ -139,6 +140,10 @@ public class Wa55MarketOrderClient {
                 String betId = text(first(data, "BetId", "bet_id", "Id", "id"));
                 String serialNo = text(first(data, "SerialNo", "serial_no"));
                 if (betId.isBlank() || serialNo.isBlank()) {
+                    if ("五位二定".equals(group.requests().get(0).play())) {
+                        acceptedBatches.add(acceptedBatch(group, serialNo));
+                        continue;
+                    }
                     throw new MarketProtocolException("盘口返回成功但缺少注单标识", false, confirmations,
                             true, null);
                 }
@@ -261,6 +266,7 @@ public class Wa55MarketOrderClient {
                         if (betId.isBlank() || !seenIds.add(betId) || !rowSerial.isBlank()
                                 && !serial.equals(rowSerial) || type <= 0 || amount == null || count != 1
                                 || !(NORMAL_SELECTION.matcher(selection).matches()
+                                        || FIVE_POSITION_TWO_SELECTION.matcher(selection).matches()
                                         || XIAN_SELECTION.matcher(selection).matches())
                                 || explicitlyCancelled(row)) {
                             valid = false;
@@ -459,6 +465,7 @@ public class Wa55MarketOrderClient {
                     continue;
                 }
                 boolean validSelection = NORMAL_SELECTION.matcher(selection).matches()
+                        || FIVE_POSITION_TWO_SELECTION.matcher(selection).matches()
                         || XIAN_SELECTION.matcher(selection).matches();
                 if (!validSelection) {
                     invalidSelection++;
@@ -518,7 +525,8 @@ public class Wa55MarketOrderClient {
     }
 
     private JsonNode submitGroupRequest(Session session, String expectedPeriod, BetGroup group) {
-        if (group.requests().size() == 1) {
+        // Five-position pairs require an explicit type id even for a single selection.
+        if (group.requests().size() == 1 && !"五位二定".equals(group.requests().get(0).play())) {
             return postForm(session, "/Member/Bet", Map.of(
                     "betno", group.selections(),
                     "is_xian", group.xian() ? "1" : "0",
@@ -568,6 +576,10 @@ public class Wa55MarketOrderClient {
         }
         String pattern = selection.replaceAll("\\d", "口");
         return switch (pattern) {
+            case "XXX口口" -> 15;
+            case "口XXX口" -> 16;
+            case "X口XX口" -> 17;
+            case "XX口X口" -> 18;
             case "口XXX" -> 19;
             case "X口XX" -> 20;
             case "XX口X" -> 21;
@@ -638,7 +650,9 @@ public class Wa55MarketOrderClient {
         }
         String selection = request.selection() == null ? "" : request.selection().trim();
         boolean valid = request.xian() ? XIAN_SELECTION.matcher(selection).matches()
-                : NORMAL_SELECTION.matcher(selection).matches();
+                : "五位二定".equals(request.play())
+                        ? FIVE_POSITION_TWO_SELECTION.matcher(selection).matches()
+                        : NORMAL_SELECTION.matcher(selection).matches();
         if (!valid) throw new MarketProtocolException("当前盘口不支持该下注选项：" + selection, false, List.of());
         if (request.guid() == null || request.guid().isBlank()) {
             throw new MarketProtocolException("盘口下注幂等标识不能为空", false, List.of());

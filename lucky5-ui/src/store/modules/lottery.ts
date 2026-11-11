@@ -313,6 +313,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     async refreshMembers() {
       if (this.membersRefreshing) return false
       this.membersRefreshing = true
+      const startedAt = Date.now()
       try {
         const snapshots = await getMemberSnapshotsApi()
         const snapshotById = new Map(snapshots.map((item) => [item.id, item]))
@@ -321,7 +322,12 @@ const useLucky5StoreBase = defineStore('lucky5', {
           ...(snapshotById.get(member.id) || {})
         }))
         return true
-      } catch {
+      } catch (error: any) {
+        console.warn('[Lucky5] 会员余额和状态自动刷新失败', {
+          endpoint: '/lottery/members/snapshot',
+          elapsedMs: Date.now() - startedAt,
+          message: error?.message || String(error)
+        })
         return false
       } finally {
         this.membersRefreshing = false
@@ -475,7 +481,7 @@ const useLucky5StoreBase = defineStore('lucky5', {
     saveOdds() {
       return this.perform(() => saveOddsApi(this.odds), '赔率已保存')
     },
-    saveDiscounts(members: Record<string, any>[] = this.members) {
+    saveDiscounts(members: Record<string, any>[]) {
       const payload = members.map(
         ({ id, normalRate, lhhRate, partner, partnerNormalRate, partnerLhhRate, puller, tag }) => ({
           id,

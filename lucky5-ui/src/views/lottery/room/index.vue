@@ -152,7 +152,7 @@ const restorePlayerSentAtOverrides = () => {
       Object.entries(parsed).filter(
         ([messageId, sentAt]) => Number.isFinite(Number(messageId)) && typeof sentAt === 'string'
       )
-    )
+    ) as Record<number, string>
   } catch {
     playerSentAtOverrides.value = {}
   }
@@ -757,7 +757,6 @@ const messageTime = (value: string) =>
   dayjs(value).isSame(dayjs(), 'day')
     ? dayjs(value).format('HH:mm')
     : dayjs(value).format('MM-DD HH:mm')
-const bubbleTime = (value: string) => dayjs(value).format('HH:mm:ss')
 const handleChatScroll = () => {
   updateChatScroll()
   const stream = chatRef.value

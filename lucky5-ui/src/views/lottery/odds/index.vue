@@ -57,16 +57,13 @@ const playTypeLabel = computed(() => {
   return '普通+龙虎和'
 })
 const visibleRows = computed(() => {
-  // 五位二定仍保留在 rows 中以免保存普通赔率时覆盖已有独立配置，
-  // 但按后台要求不在赔率设置页展示。
-  const normalRows = rows.filter((row) => row.id !== 'regex5d2')
   if (playType.value === 0) {
-    return normalRows.filter((row) => !dragonTigerOddsIds.has(row.id))
+    return rows.filter((row) => !dragonTigerOddsIds.has(row.id))
   }
   if (playType.value === 1) {
-    return normalRows.filter((row) => dragonTigerOddsIds.has(row.id))
+    return rows.filter((row) => dragonTigerOddsIds.has(row.id))
   }
-  return normalRows
+  return rows
 })
 
 watch(

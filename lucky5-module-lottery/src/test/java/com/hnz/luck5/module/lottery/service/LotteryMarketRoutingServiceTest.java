@@ -62,15 +62,14 @@ class LotteryMarketRoutingServiceTest {
     }
 
     @Test
-    void rejectsUnsupportedFivePositionSelectionBeforePersistingAnyRoute() {
+    void acceptsFivePositionSelectionForMarketRouting() {
         MemberDO member = new MemberDO();
         member.setEatEnabled(false);
         BetItemDO item = item("五位二定", "0XXX3");
         item.setAmount(new BigDecimal("15.00"));
         item.setOdds(new BigDecimal("96"));
 
-        assertThatThrownBy(() -> service.planCompact(229L, "20261022250", member, List.of(item)))
-                .hasMessageContaining("五位二定");
+        assertThat(service.planCompact(229L, "20261022250", member, List.of(item)).allocations()).hasSize(1);
         verifyNoInteractions(batchInsertService);
     }
 
@@ -97,6 +96,8 @@ class LotteryMarketRoutingServiceTest {
         assertThat(service.supportsMarket(item("三定位", "X123"))).isTrue();
         assertThat(service.supportsMarket(item("四定位", "5874"))).isTrue();
         assertThat(service.supportsMarket(item("四条", "8888"))).isTrue();
+        assertThat(service.supportsMarket(item("五位二定", "0XXX3"))).isTrue();
+        assertThat(service.supportsMarket(item("五位二定", "XXXX3"))).isFalse();
     }
 
     @Test

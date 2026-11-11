@@ -228,7 +228,18 @@ public class LotteryBettingService {
         if ("龙虎".equals(bet.play())) return bet.selection().equals(draw.dragonTiger());
         String digits = draw.digits().stream().limit(SETTLEMENT_BALL_COUNT)
                 .map(String::valueOf).reduce("", String::concat);
-        if (bet.play().endsWith("定位") || "五位二定".equals(bet.play())) {
+        if ("五位二定".equals(bet.play())) {
+            String fiveDigits = draw.digits().stream().map(String::valueOf).reduce("", String::concat);
+            if (fiveDigits.length() != 5 || !bet.selection().matches("(?i)(?:[0-9]XXX[0-9]|X[0-9]XX[0-9]|XX[0-9]X[0-9]|XXX[0-9][0-9])")) {
+                return false;
+            }
+            for (int i = 0; i < fiveDigits.length(); i++) {
+                char expected = bet.selection().charAt(i);
+                if (Character.toUpperCase(expected) != 'X' && expected != fiveDigits.charAt(i)) return false;
+            }
+            return true;
+        }
+        if (bet.play().endsWith("定位")) {
             if (bet.selection().contains("X")) {
                 if (digits.length() != bet.selection().length()) return false;
                 for (int i = 0; i < digits.length(); i++) {
@@ -259,11 +270,12 @@ public class LotteryBettingService {
         if (!Pattern.compile("[头千百十尾个倒定合含除取现配]").matcher(expression).find()) return List.of();
         BigDecimal amount = amount(amountMatcher.group(1));
 
-        if (expression.contains("五位二定")) {
+        if (expression.contains("五位二定") || expression.matches("(?s).*(?:千|百|十|个)[0-9]+五[0-9]+.*")
+                || expression.matches("(?s).*五[0-9]+(?:千|百|十|个)[0-9]+.*")) {
             OddDO odd = configuredOdd(FIVE_POSITION_TWO_ODD_CODE, amount, odds);
             int modeAt = expression.indexOf("五位二定");
-            String before = expression.substring(0, modeAt);
-            String after = expression.substring(modeAt + "五位二定".length());
+            String before = modeAt < 0 ? expression : expression.substring(0, modeAt);
+            String after = modeAt < 0 ? "" : expression.substring(modeAt + "五位二定".length());
             String source = before + after;
             Matcher complex = Pattern.compile("复式([0-9]+)").matcher(source);
             Matcher reverse = Pattern.compile("([0-9]+)(?:全)?倒").matcher(source);
