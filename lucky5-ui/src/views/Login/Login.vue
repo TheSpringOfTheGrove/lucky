@@ -1,7 +1,7 @@
 <template>
   <div :class="[prefixCls, 'legacy-login-page']">
     <main class="legacy-login-box">
-      <div class="legacy-login-logo">美团管理系统</div>
+      <div class="legacy-login-logo">搜电管理系统</div>
       <section class="legacy-login-box__body">
         <p class="legacy-login-box__hint">登录即可使用本网站</p>
         <Transition appear enter-active-class="animate__animated animate__fadeInDown">
