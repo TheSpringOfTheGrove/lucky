@@ -73,7 +73,7 @@ public class LotteryAutoProxySeedService {
             bot.setMemberType("BOT");
             bot.setAutoProxy(true);
             bot.setAutoBetEnabled(true);
-            bot.setAutoTopUpAmount(new BigDecimal("1000.00"));
+            bot.setAutoTopUpAmount(new BigDecimal("5000.00"));
             bot.setEatEnabled(false);
             bot.setSearchable(true);
             bot.setOpenId(IdUtil.fastSimpleUUID());

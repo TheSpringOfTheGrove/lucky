@@ -312,7 +312,7 @@ public class LotteryServiceImpl implements LotteryService {
                 "totalBet", money(item.getTotalBet()), "profitLoss", money(item.getProfitLoss()),
                 "memberType", memberType(item), "autoProxy", isAutoProxy(item),
                 "autoBetEnabled", isAutoProxy(item) && bool(item.getAutoBetEnabled()),
-                "autoTopUpAmount", money(value(item.getAutoTopUpAmount(), new BigDecimal("1000"))),
+                "autoTopUpAmount", money(value(item.getAutoTopUpAmount(), new BigDecimal("5000"))),
                 "eatEnabled", bool(item.getEatEnabled()),
                 "searchable", bool(item.getSearchable()), "fingerprint", value(item.getFingerprint(), ""),
                 "privateChat", bool(item.getPrivateChat()), "webOnly", bool(item.getWebOnly()),
@@ -938,7 +938,7 @@ public class LotteryServiceImpl implements LotteryService {
                 reqVO.getAutoProxy() != null ? true
                         : create || !wasAutoProxy || item.getAutoBetEnabled() == null ? true : item.getAutoBetEnabled()));
         item.setAutoTopUpAmount(money(value(reqVO.getAutoTopUpAmount(),
-                value(item.getAutoTopUpAmount(), new BigDecimal("1000")))));
+                value(item.getAutoTopUpAmount(), new BigDecimal("5000")))));
         item.setEatEnabled(value(reqVO.getEatEnabled(), value(item.getEatEnabled(), false)));
         item.setSearchable(value(reqVO.getSearchable(), true));
         item.setFingerprint(value(reqVO.getFingerprint(), value(item.getFingerprint(), "")));

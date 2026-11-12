@@ -274,17 +274,30 @@ class LotteryAutoProxyServiceTest {
     }
 
     @Test
-    void insufficientBalanceAutoApprovesConfiguredTopUpBeforeBetting() {
+    void insufficientBalanceAutoApprovesAtLeastFiveThousandBeforeBetting() {
         mockDueTask(BigDecimal.ZERO, new BigDecimal("25"));
-        when(lotteryService.autoTopUpProxy(10L, "M-1", "20260809001", new BigDecimal("1000.00")))
+        when(lotteryService.autoTopUpProxy(10L, "M-1", "20260809001", new BigDecimal("5000.00")))
                 .thenReturn(Map.of("duplicate", false));
         when(lotteryService.placeAutoBet(anyLong(), any(), anyString())).thenReturn(Map.of("orderId", "O-1"));
 
         service.execute("T-1", 10L);
 
-        verify(lotteryService).autoTopUpProxy(10L, "M-1", "20260809001", new BigDecimal("1000.00"));
+        verify(lotteryService).autoTopUpProxy(10L, "M-1", "20260809001", new BigDecimal("5000.00"));
         verify(lotteryService).placeAutoBet(anyLong(), any(), anyString());
         verify(executionMapper, times(2)).update(any(), any());
+    }
+
+    @Test
+    void insufficientBalanceUsesActualShortfallWhenItExceedsFiveThousand() {
+        mockDueTask(new BigDecimal("100"), new BigDecimal("6100"));
+        when(lotteryService.autoTopUpProxy(10L, "M-1", "20260809001", new BigDecimal("6000.00")))
+                .thenReturn(Map.of("duplicate", false));
+        when(lotteryService.placeAutoBet(anyLong(), any(), anyString())).thenReturn(Map.of("orderId", "O-1"));
+
+        service.execute("T-1", 10L);
+
+        verify(lotteryService).autoTopUpProxy(10L, "M-1", "20260809001", new BigDecimal("6000.00"));
+        verify(lotteryService).placeAutoBet(anyLong(), any(), anyString());
     }
 
     @Test

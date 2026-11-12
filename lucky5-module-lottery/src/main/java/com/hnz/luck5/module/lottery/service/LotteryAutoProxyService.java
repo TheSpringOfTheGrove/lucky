@@ -42,6 +42,7 @@ public class LotteryAutoProxyService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LotteryAutoProxyService.class);
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final BigDecimal MIN_AUTO_TOP_UP = new BigDecimal("5000.00");
     private static final String SCHEDULED = "SCHEDULED";
     private static final String RUNNING = "RUNNING";
     private static final String SUCCESS = "SUCCESS";
@@ -267,8 +268,8 @@ public class LotteryAutoProxyService {
             BigDecimal appliedTopUp = ZERO;
             try {
                 if (balance.compareTo(required) < 0) {
-                    BigDecimal configured = money(value(member.getAutoTopUpAmount(), new BigDecimal("1000")));
-                    BigDecimal topUp = configured.max(required.subtract(balance));
+                    BigDecimal configured = money(value(member.getAutoTopUpAmount(), MIN_AUTO_TOP_UP));
+                    BigDecimal topUp = MIN_AUTO_TOP_UP.max(configured).max(required.subtract(balance));
                     Map<String, Object> topUpResult = lotteryService.autoTopUpProxy(userId, member.getId(),
                             task.getPeriod(), topUp);
                     if (!Boolean.TRUE.equals(topUpResult.get("duplicate"))) {

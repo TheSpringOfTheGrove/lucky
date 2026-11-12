@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS `lucky5_member` (
   `tag` varchar(50) NOT NULL DEFAULT '普通', `external_nickname` varchar(100) NOT NULL DEFAULT '',
   `total_bet` decimal(18,2) NOT NULL DEFAULT 0, `profit_loss` decimal(18,2) NOT NULL DEFAULT 0,
   `member_type` varchar(20) NOT NULL DEFAULT 'REAL', `auto_proxy` bit(1) NOT NULL DEFAULT b'0',
-  `auto_bet_enabled` bit(1) NOT NULL DEFAULT b'0', `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 1000,
+  `auto_bet_enabled` bit(1) NOT NULL DEFAULT b'0', `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 5000,
   `eat_enabled` bit(1) NOT NULL DEFAULT b'0',
   `searchable` bit(1) NOT NULL DEFAULT b'1', `open_id` varchar(100) NULL, `short_link_code` varchar(20) NULL, `fingerprint` varchar(200) NOT NULL DEFAULT '',
   `private_chat` bit(1) NOT NULL DEFAULT b'0', `web_only` bit(1) NOT NULL DEFAULT b'0',
@@ -648,7 +648,7 @@ SET @lucky5_ddl = IF(
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='auto_top_up_amount')=0,
-  'ALTER TABLE `lucky5_member` ADD COLUMN `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 1000 AFTER `auto_bet_enabled`', 'SELECT 1');
+  'ALTER TABLE `lucky5_member` ADD COLUMN `auto_top_up_amount` decimal(18,2) NOT NULL DEFAULT 5000 AFTER `auto_bet_enabled`', 'SELECT 1');
 PREPARE lucky5_stmt FROM @lucky5_ddl; EXECUTE lucky5_stmt; DEALLOCATE PREPARE lucky5_stmt;
 SET @lucky5_ddl = IF(
   (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='lucky5_member' AND column_name='last_seen_at')=0,
