@@ -68,8 +68,9 @@ public class LotteryRobotReplyTemplate {
 
     public String flowRebate(String memberName, BigDecimal pendingNormal, BigDecimal pendingDragon,
                              BigDecimal paidNormal, BigDecimal paidDragon, BigDecimal balance) {
-        return "@" + memberName + "\n可返流水：" + fixed(pendingNormal.add(pendingDragon), 2)
+        return "@" + memberName + "\n可返：" + fixed(pendingNormal.add(pendingDragon), 2)
                 + "\n普通：" + fixed(pendingNormal, 2)
+                + "\n已回：" + fixed(paidNormal.add(paidDragon), 2)
                 + "\n\n目前：" + fixed(balance, 2);
     }
 

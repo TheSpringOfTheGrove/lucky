@@ -39,7 +39,10 @@ class LotteryRobotReplyTemplateTest {
                 .isEqualTo("@阿杰\n累计流水：420.00\n普通流水：400.00");
         assertThat(template.flowRebate("阿杰", new BigDecimal("100"), new BigDecimal("20"),
                 new BigDecimal("1"), new BigDecimal("0.4"), new BigDecimal("11866.4")))
-                .isEqualTo("@阿杰\n可返流水：120.00\n普通：100.00\n\n目前：11866.40");
+                .isEqualTo("@阿杰\n可返：120.00\n普通：100.00\n已回：1.40\n\n目前：11866.40");
+        assertThat(template.flowRebate("广东二哥", new BigDecimal("20000"), BigDecimal.ZERO,
+                new BigDecimal("200"), BigDecimal.ZERO, new BigDecimal("10116.8")))
+                .isEqualTo("@广东二哥\n可返：20000.00\n普通：20000.00\n已回：200.00\n\n目前：10116.80");
     }
 
     @Test
