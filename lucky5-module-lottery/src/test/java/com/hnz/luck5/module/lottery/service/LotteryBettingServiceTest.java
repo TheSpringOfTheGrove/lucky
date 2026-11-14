@@ -261,6 +261,45 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void positionedWalkUsesRemainingPoolWithoutReplacement() {
+        List<LotteryBettingService.ParsedBet> tail = service.parse("0413尾移9587三定各1", odds);
+        assertThat(tail).hasSize(144)
+                .allSatisfy(bet -> {
+                    assertThat(bet.play()).isEqualTo("三定位");
+                    assertThat(bet.amount()).isEqualByComparingTo("1");
+                });
+        assertThat(tail).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("95X0", "X874")
+                .doesNotContain("99X0", "11X0");
+        assertThat(service.parse("0413尾取9587三定各1", odds))
+                .containsExactlyElementsOf(tail);
+
+        List<LotteryBettingService.ParsedBet> tens = service.parse("01234十走5678三定各1", odds);
+        assertThat(tens).hasSize(180)
+                .allSatisfy(bet -> assertThat(bet.play()).isEqualTo("三定位"));
+        assertThat(tens).extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("560X", "7X48")
+                .doesNotContain("550X", "000X");
+
+        assertThat(service.parse("十01234移5678三定各1", odds)).hasSize(180);
+        assertThat(service.parse("12十走112三定各1", odds)).hasSize(18);
+        assertThat(service.parse("12十走3456二定各1", odds)).hasSize(24);
+        assertThat(service.parse("12十走3456四定各1", odds)).hasSize(48);
+    }
+
+    @Test
+    void malformedPositionedWalkIsRejectedInsteadOfExpandingUnrestrictedDigits() {
+        assertThatThrownBy(() -> service.parse("01234十走三定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("01234十移56走78三定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("01234十走5三定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("123走456三定走789各1", odds))
+                .hasMessageContaining("无法识别");
+    }
+
+    @Test
     void splitsCombinedCommandsAndPreservesDuplicateCommands() {
         assertThat(service.parse("5679各1.1 9765各1", odds)).hasSize(2);
         assertThat(service.parse("0759三定各1,0759三定各1", odds)).hasSize(192);
