@@ -270,6 +270,50 @@ public class LotteryBettingService {
         if (!Pattern.compile("[头千百十尾个倒定合含除取现配]").matcher(expression).find()) return List.of();
         BigDecimal amount = amount(amountMatcher.group(1));
 
+        // A pool following 走/移/取 must never be silently ignored and replaced with 0-9.
+        // With one positioned pool, the remaining fixed digits come from that pool without replacement.
+        Matcher positionedWalk = Pattern.compile("^(?:([0-9]+)([头千百十尾个])|([头千百十尾个])([0-9]+))[走移取]([0-9]+)([二三四])定")
+                .matcher(expression);
+        if (positionedWalk.find()) {
+            if (expression.substring(positionedWalk.end()).matches(".*[走移].*")) throw exception(BET_CONTENT_INVALID);
+            String fixedDigits = positionedWalk.group(1) != null ? positionedWalk.group(1) : positionedWalk.group(4);
+            char fixedLabel = (positionedWalk.group(2) != null ? positionedWalk.group(2) : positionedWalk.group(3)).charAt(0);
+            int fixedPosition = POSITION_INDEX.get(fixedLabel);
+            String openDigits = positionedWalk.group(5);
+            int count = CHINESE_COUNT.get(positionedWalk.group(6).charAt(0));
+            if (openDigits.length() < count - 1) throw exception(BET_CONTENT_INVALID);
+            OddDO odd = configuredOdd("regex" + count + "d", amount, odds);
+            List<String> arrangements = new ArrayList<>();
+            multisetArrangements(openDigits, count - 1, new StringBuilder(),
+                    new boolean[openDigits.length()], arrangements);
+            List<Integer> available = new ArrayList<>(List.of(0, 1, 2, 3));
+            available.remove(Integer.valueOf(fixedPosition));
+            Set<String> values = new LinkedHashSet<>();
+            for (char fixedDigit : fixedDigits.toCharArray()) {
+                for (List<Integer> positions : combinations(available, count - 1)) {
+                    for (String arrangement : arrangements) {
+                        char[] pattern = "XXXX".toCharArray();
+                        pattern[fixedPosition] = fixedDigit;
+                        for (int index = 0; index < positions.size(); index++) {
+                            pattern[positions.get(index)] = arrangement.charAt(index);
+                        }
+                        values.add(new String(pattern));
+                    }
+                }
+            }
+            List<String> selections = applyFilters(new ArrayList<>(values), expression);
+            if (selections.isEmpty()) throw exception(BET_CONTENT_INVALID);
+            return indexed(selections, chineseCount(count) + "定位", amount, odd.getRate(), content.length());
+        }
+        if (expression.indexOf('走') >= 0 || expression.indexOf('移') >= 0) {
+            // Preserve the legacy unpositioned 前池走后池 form below, but reject malformed
+            // positioned-pool commands instead of accepting a much larger Cartesian product.
+            Matcher legacyWalk = Pattern.compile("^[0-9]+走[0-9]+[二三四]定").matcher(expression);
+            if (!legacyWalk.find() || expression.substring(legacyWalk.end()).matches(".*[走移].*")) {
+                throw exception(BET_CONTENT_INVALID);
+            }
+        }
+
         if (expression.contains("五位二定") || expression.matches("(?s).*(?:千|百|十|个)[0-9]+五[0-9]+.*")
                 || expression.matches("(?s).*五[0-9]+(?:千|百|十|个)[0-9]+.*")) {
             OddDO odd = configuredOdd(FIVE_POSITION_TWO_ODD_CODE, amount, odds);
