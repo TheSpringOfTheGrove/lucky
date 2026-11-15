@@ -1029,13 +1029,13 @@ onBeforeUnmount(stopMemberRefresh)
   }
 
   .member-summary > span:not(.member-summary__separator) {
-    color: #0b2b5b;
+    color: #3c8dbc;
   }
 
   .member-summary > span.member-summary__real-balance,
   .member-summary > span.member-summary__real-bet,
   .member-summary > span.member-summary__real-profit {
-    color: #800000;
+    color: #dd4b39;
   }
 
   .member-summary__total-balance {
