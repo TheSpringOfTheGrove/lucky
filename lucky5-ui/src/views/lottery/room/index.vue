@@ -429,6 +429,15 @@ const chatMessages = computed<ChatItem[]>(() => {
       if (!message.drawImage || displayedDrawPeriods.has(message.period)) continue
       displayedDrawPeriods.add(message.period)
       messages.push({
+        id: `draw-announcement-${message.id}`,
+        kind: 'robot',
+        type: 'text',
+        content: roomReplyTemplates.drawAnnouncement(persistedDraw.period, persistedDraw.numbers),
+        createdAt: message.createdAt,
+        displayTimeAt: message.createdAt,
+        sequenceRank: 49
+      })
+      messages.push({
         id: `draw-message-${message.id}`,
         kind: 'robot',
         type: 'draw',

@@ -338,17 +338,17 @@ onBeforeUnmount(stopMemberRefresh)
           <el-button class="member-toolbar__delete" @click="clearAllFingerprints">抹除标识</el-button>
         </div>
         <div class="member-summary">
-          <span class="lucky-member-total">总余分：{{ formatStatistic(totalBalance) }}</span>
-          <span class="lucky-member-total">拖总余分：{{ formatStatistic(proxyBalance) }}</span>
-          <span class="lucky-danger">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
+          <span class="lucky-member-total member-summary__total-balance">总余分：{{ formatStatistic(totalBalance) }}</span>
+          <span class="lucky-member-total member-summary__proxy-balance">拖总余分：{{ formatStatistic(proxyBalance) }}</span>
+          <span class="lucky-danger member-summary__real-balance">真实会员总余分：{{ formatStatistic(realBalance) }}</span>
           <span class="member-summary__separator"> || </span>
-          <span class="lucky-member-total">总投额：{{ formatStatistic(totalBet) }}</span>
-          <span class="lucky-member-total">拖总投额：{{ formatStatistic(proxyBet) }}</span>
-          <span class="lucky-danger">真实会员总投额：{{ formatStatistic(realBet) }}</span>
+          <span class="lucky-member-total member-summary__total-bet">总投额：{{ formatStatistic(totalBet) }}</span>
+          <span class="lucky-member-total member-summary__proxy-bet">拖总投额：{{ formatStatistic(proxyBet) }}</span>
+          <span class="lucky-danger member-summary__real-bet">真实会员总投额：{{ formatStatistic(realBet) }}</span>
           <span class="member-summary__separator"> || </span>
-          <span class="lucky-member-total">总盈亏：{{ formatStatistic(totalProfit) }}</span>
-          <span class="lucky-danger">真实会员盈亏：{{ formatStatistic(realProfit) }}</span>
-          <span class="lucky-danger">拖盈亏：{{ formatStatistic(proxyProfit) }}</span>
+          <span class="lucky-member-total member-summary__total-profit">总盈亏：{{ formatStatistic(totalProfit) }}</span>
+          <span class="lucky-danger member-summary__real-profit">真实会员盈亏：{{ formatStatistic(realProfit) }}</span>
+          <span class="lucky-danger member-summary__proxy-profit">拖盈亏：{{ formatStatistic(proxyProfit) }}</span>
         </div>
       </div>
 
@@ -1020,6 +1020,52 @@ onBeforeUnmount(stopMemberRefresh)
     min-height: 34px;
     padding: 6px 12px;
     font-size: 14px;
+  }
+}
+
+@media (width <= 767px) {
+  .member-summary {
+    row-gap: 4px;
+  }
+
+  .member-summary > span:not(.member-summary__separator) {
+    color: #0b2b5b;
+  }
+
+  .member-summary > span.member-summary__real-balance,
+  .member-summary > span.member-summary__real-bet,
+  .member-summary > span.member-summary__real-profit {
+    color: #800000;
+  }
+
+  .member-summary__total-balance {
+    order: 1;
+  }
+  .member-summary__total-bet {
+    order: 2;
+  }
+  .member-summary__total-profit {
+    order: 3;
+    margin-bottom: 9px;
+  }
+  .member-summary__proxy-balance {
+    order: 4;
+  }
+  .member-summary__proxy-bet {
+    order: 5;
+  }
+  .member-summary__proxy-profit {
+    order: 6;
+    margin-bottom: 9px;
+  }
+  .member-summary__real-balance {
+    order: 7;
+  }
+  .member-summary__real-bet {
+    order: 8;
+  }
+  .member-summary__real-profit {
+    order: 9;
   }
 }
 

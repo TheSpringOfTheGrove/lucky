@@ -80,5 +80,9 @@ export const roomReplyTemplates = {
   draw(period: string, numbers: string[], storedDragonTiger = '') {
     const dragonTiger = resolveDragonTiger(numbers, storedDragonTiger)
     return `^^--| ${period.slice(-3)}期开奖结果-${numbers.join('|')}${dragonTiger ? `|${dragonTiger}` : ''}`
+  },
+
+  drawAnnouncement(period: string, numbers: string[]) {
+    return `${period.slice(-3)}次幸运房号为${numbers.join('/')}`
   }
 }
