@@ -712,10 +712,10 @@ public class LotteryBettingService {
             result.removeIf(value -> allowed.contains(value) != take);
         }
 
-        Matcher range = Pattern.compile("(取|除)值(\\d+)值(\\d+)|(取|除)?值范围(\\d+)-(\\d+)")
+        Matcher range = Pattern.compile("(取|除)?值(\\d+)值(\\d+)|(取|除)?值范围(\\d+)-(\\d+)")
                 .matcher(expression);
         while (range.find()) {
-            boolean legacyRange = range.group(1) != null;
+            boolean legacyRange = range.group(2) != null;
             String action = legacyRange ? range.group(1) : range.group(4);
             int first = Integer.parseInt(range.group(legacyRange ? 2 : 5));
             int second = Integer.parseInt(range.group(legacyRange ? 3 : 6));
