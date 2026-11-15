@@ -42,6 +42,26 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesSeparatedNumericSlashBetsAsIndividualCommands() {
+        for (String content : List.of("123/1\n456/1\n564/1", "123/1;456/1;564/1;")) {
+            List<LotteryBettingService.ParsedCommand> commands = service.parseCommands(content, odds);
+            assertThat(commands).extracting(LotteryBettingService.ParsedCommand::content)
+                    .containsExactly("123/1", "456/1", "564/1");
+            assertThat(commands).allSatisfy(command -> {
+                assertThat(command.items()).hasSize(1);
+                assertThat(command.items().get(0).play()).isEqualTo("三字现");
+                assertThat(command.items().get(0).amount()).isEqualByComparingTo("1");
+            });
+            assertThat(service.parse(content, odds))
+                    .extracting(LotteryBettingService.ParsedBet::selection)
+                    .containsExactly("123", "456", "564");
+        }
+        assertThat(service.parse("123/1;123/1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("123", "123");
+    }
+
+    @Test
     void fourPositionSizePatternIsOneFixedCommandWithCartesianDigits() {
         List<LotteryBettingService.ParsedBet> bets = service.parse("大大小小各1", odds);
 

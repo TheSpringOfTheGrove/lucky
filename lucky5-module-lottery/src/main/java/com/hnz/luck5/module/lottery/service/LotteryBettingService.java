@@ -1076,6 +1076,13 @@ public class LotteryBettingService {
     private List<String> splitCommands(String rawContent) {
         String value = rawContent == null ? "" : rawContent.trim();
         if (value.isEmpty()) return List.of(value);
+        // A sequence of numeric slash bets has no "各金额" marker. Split it before
+        // normalization removes separators and joins the next number into the amount.
+        List<String> slashCommands = List.of(value.split("[，,、；;\\s]+"));
+        if (slashCommands.size() > 1 && slashCommands.stream()
+                .allMatch(command -> command.matches("\\d{1,4}/\\d+(?:\\.\\d+)?"))) {
+            return slashCommands;
+        }
         boolean fixedPatternInput = value.contains("*") || value.matches(
                 "(?s)[0-9]{4}各\\d+(?:\\.\\d+)?(?:[.、/,，@；;\\s]+[0-9]{4}各\\d+(?:\\.\\d+)?)+[；;]?");
         String separatorPattern = fixedPatternInput ? "[，,、；;./@\\s]+" : "[，,、；;\\s]+";
