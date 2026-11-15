@@ -536,6 +536,18 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void bareValueEndpointsDefaultToTakeAfterOtherExcludeFilters() {
+        String prefix = "四定含0218两数合0213三数合1234除千百十个合8除三兄弟除单单大大";
+        assertThat(service.parse(prefix + "值9值25各0.1", odds))
+                .hasSize(4_792)
+                .containsExactlyElementsOf(service.parse(prefix + "取值9值25各0.1", odds));
+        assertThat(service.parse("四定值9值25各1", odds))
+                .containsExactlyElementsOf(service.parse("四定取值9值25各1", odds));
+        assertThat(service.parse("四定除值9值25各1", odds))
+                .containsExactlyElementsOf(service.parse("四定除值范围9-25各1", odds));
+    }
+
+    @Test
     void bareSiblingFilterMeansTwoSiblingsInCombinedCommand() {
         String prefix = "除2配2四定除千百十个合1两数合0246三数合56789";
         String suffix = "除三兄弟值范围7-29排除39除两对数各1";
