@@ -29,6 +29,14 @@ import { useRoomChatViewport } from './useRoomChatViewport'
 
 type ChatKind = 'member' | 'other' | 'robot'
 type ChatType = 'text' | 'order' | 'amount' | 'draw'
+type IssueSequenceRole =
+  | 'CLOSED'
+  | 'OPEN'
+  | 'PERIOD_SUMMARY'
+  | 'SETTLEMENT'
+  | 'PAYOUT_SUMMARY'
+  | 'DRAW'
+  | 'DAILY_CLOSING_GREETING'
 
 const SCRATCH_COUNTDOWN_COMPENSATION_SECONDS = 5
 const SCRATCH_PERIOD_SECONDS = 300
@@ -51,7 +59,82 @@ interface ChatItem {
   amountRecord?: RoomAmountRecord
   draw?: RoomDraw
   showTime?: boolean
-  sequenceRank?: number
+  issuePeriod?: string
+  issueSequenceRole?: IssueSequenceRole
+}
+
+const compareIssuePeriods = (left: string, right: string) =>
+  left.localeCompare(right, undefined, { numeric: true })
+
+const compareChatChronology = (left: ChatItem, right: ChatItem) => {
+  const leftTime = dayjs(left.createdAt)
+  const rightTime = dayjs(right.createdAt)
+  const timeDifference =
+    (leftTime.isValid() ? leftTime.valueOf() : 0) - (rightTime.isValid() ? rightTime.valueOf() : 0)
+  return timeDifference || left.id.localeCompare(right.id)
+}
+
+const orderIssueSequenceMessages = (source: ChatItem[]) => {
+  const ordered = [...source].sort(compareChatChronology)
+  // A settlement belongs to the closed period, but its display block follows the next period's
+  // OPEN message. Derive that relationship from adjacent observed periods instead of timestamps.
+  const periodSequence = [
+    ...new Set(
+      ordered.map((item) => item.issuePeriod).filter((period): period is string => Boolean(period))
+    )
+  ].sort(compareIssuePeriods)
+  const openByPeriod = new Map(
+    ordered
+      .filter((item) => item.issueSequenceRole === 'OPEN' && item.issuePeriod)
+      .map((item) => [item.issuePeriod as string, item])
+  )
+  const settlementByPeriod = new Map<string, ChatItem[]>()
+  for (const item of ordered) {
+    if (
+      !item.issuePeriod ||
+      !['SETTLEMENT', 'PAYOUT_SUMMARY'].includes(item.issueSequenceRole || '')
+    ) {
+      continue
+    }
+    const periodMessages = settlementByPeriod.get(item.issuePeriod) || []
+    periodMessages.push(item)
+    settlementByPeriod.set(item.issuePeriod, periodMessages)
+  }
+
+  const baseIndex = new Map(ordered.map((item, index) => [item.id, index]))
+  const movedIds = new Set<string>()
+  const afterOpen = new Map<string, ChatItem[]>()
+  for (const [period, periodMessages] of settlementByPeriod) {
+    const periodIndex = periodSequence.indexOf(period)
+    const nextPeriod = periodIndex >= 0 ? periodSequence[periodIndex + 1] : undefined
+    const nextOpen = nextPeriod ? openByPeriod.get(nextPeriod) : undefined
+    if (!nextOpen) continue
+
+    const insertions = afterOpen.get(nextOpen.id) || []
+    insertions.push(...periodMessages)
+    afterOpen.set(nextOpen.id, insertions)
+    periodMessages.forEach((item) => movedIds.add(item.id))
+  }
+
+  const issueRoleRank: Partial<Record<IssueSequenceRole, number>> = {
+    SETTLEMENT: 0,
+    PAYOUT_SUMMARY: 1
+  }
+  for (const insertions of afterOpen.values()) {
+    insertions.sort((left, right) => {
+      const periodDifference = compareIssuePeriods(left.issuePeriod || '', right.issuePeriod || '')
+      if (periodDifference) return periodDifference
+      const roleDifference =
+        (issueRoleRank[left.issueSequenceRole || 'SETTLEMENT'] || 0) -
+        (issueRoleRank[right.issueSequenceRole || 'SETTLEMENT'] || 0)
+      return roleDifference || (baseIndex.get(left.id) || 0) - (baseIndex.get(right.id) || 0)
+    })
+  }
+
+  return ordered.flatMap((item) => {
+    if (movedIds.has(item.id)) return []
+    return [item, ...(afterOpen.get(item.id) || [])]
+  })
 }
 
 const route = useRoute()
@@ -380,8 +463,8 @@ const chatMessages = computed<ChatItem[]>(() => {
       content: roomReplyTemplates.issueTransition(transition.status),
       createdAt: transition.createdAt,
       displayTimeAt: transition.createdAt,
-      sequenceRank:
-        transition.status === 'CLOSED' ? 10 : transition.status === 'OPEN' ? 60 : undefined
+      issuePeriod: transition.period,
+      issueSequenceRole: transition.status
     })
   }
 
@@ -452,7 +535,8 @@ const chatMessages = computed<ChatItem[]>(() => {
         displayTimeAt: message.createdAt,
         draw: persistedDraw,
         drawImage: message.drawImage,
-        sequenceRank: 50
+        issuePeriod: message.period,
+        issueSequenceRole: 'DRAW'
       })
       continue
     }
@@ -521,16 +605,22 @@ const chatMessages = computed<ChatItem[]>(() => {
           receiptAction === 'cancelable' && message.orderId ? message.orderId : undefined,
         cancelPeriod: message.period,
         receiptAction,
-        sequenceRank:
-          message.commandType === 'DAILY_CLOSING_GREETING'
-            ? 60
-            : message.commandType === 'PERIOD_SUMMARY'
-            ? 20
-            : message.commandType === 'SETTLEMENT'
-              ? 30
-              : message.commandType === 'PAYOUT_SUMMARY'
-                ? 40
-                : undefined
+        issuePeriod: [
+          'DAILY_CLOSING_GREETING',
+          'PERIOD_SUMMARY',
+          'SETTLEMENT',
+          'PAYOUT_SUMMARY'
+        ].includes(message.commandType)
+          ? message.period
+          : undefined,
+        issueSequenceRole: [
+          'DAILY_CLOSING_GREETING',
+          'PERIOD_SUMMARY',
+          'SETTLEMENT',
+          'PAYOUT_SUMMARY'
+        ].includes(message.commandType)
+          ? (message.commandType as IssueSequenceRole)
+          : undefined
       })
     }
   }
@@ -584,23 +674,9 @@ const chatMessages = computed<ChatItem[]>(() => {
       (message) => !message.serverMessageId || !serverMessageIds.has(message.serverMessageId)
     )
   )
-  messages.sort((a, b) => {
-    const left = dayjs(a.createdAt)
-    const right = dayjs(b.createdAt)
-    const timeDifference =
-      (left.isValid() ? left.valueOf() : 0) - (right.isValid() ? right.valueOf() : 0)
-    if (
-      a.sequenceRank !== undefined &&
-      b.sequenceRank !== undefined &&
-      Math.abs(timeDifference) <= 1000 &&
-      a.sequenceRank !== b.sequenceRank
-    ) {
-      return a.sequenceRank - b.sequenceRank
-    }
-    return timeDifference || a.id.localeCompare(b.id)
-  })
-  return messages.map((item, index) => {
-    const previous = messages[index - 1]
+  const orderedMessages = orderIssueSequenceMessages(messages)
+  return orderedMessages.map((item, index) => {
+    const previous = orderedMessages[index - 1]
     return {
       ...item,
       showTime:

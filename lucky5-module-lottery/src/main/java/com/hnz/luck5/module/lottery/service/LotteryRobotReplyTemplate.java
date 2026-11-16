@@ -8,6 +8,7 @@ import java.math.RoundingMode;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Centralized text templates for member-facing robot replies.
@@ -284,10 +285,20 @@ public class LotteryRobotReplyTemplate {
     }
 
     public String settlement(String memberName, List<String> winningLines, BigDecimal memberPayout,
-                             BigDecimal currentBalance) {
+                             BigDecimal balanceBefore, BigDecimal balanceAfter) {
         return "【" + memberName + "】入住：\n" + String.join("\n", winningLines)
                 + "\n合房费：" + number(memberPayout)
-                + "\n【当前面积】：" + number(currentBalance);
+                + "\n【面积】：" + number(balanceBefore)
+                + "\n【中介费】：" + number(balanceAfter);
+    }
+
+    String settlementWinningLine(String selection, BigDecimal amount, BigDecimal payout) {
+        String displaySelection = selection == null ? "" : selection.trim();
+        displaySelection = displaySelection.toUpperCase(Locale.ROOT);
+        if (displaySelection.matches("[0-9X]{1,3}")) {
+            displaySelection += "X".repeat(4 - displaySelection.length());
+        }
+        return displaySelection + "，套数" + number(amount) + "，房费" + number(payout);
     }
 
     public String payoutSummary(BigDecimal periodPayout) {
@@ -301,8 +312,8 @@ public class LotteryRobotReplyTemplate {
         if (visible.isEmpty()) {
             return payoutSummary(periodPayout);
         }
-        return String.join("\n--------\n", visible)
-                + "\n--------\n" + payoutSummary(periodPayout);
+        return String.join("\n\n--------\n", visible)
+                + "\n\n--------\n" + payoutSummary(periodPayout);
     }
 
     String number(BigDecimal value) {

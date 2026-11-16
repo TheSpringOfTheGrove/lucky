@@ -2374,8 +2374,8 @@ public class LotteryServiceImpl implements LotteryService {
                         payout = payout.add(itemPayout);
                         if (won) {
                             winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
-                                    .add(compact.selection() + "，套数" + robotReplyTemplate.number(compact.amount())
-                                            + "，房费" + robotReplyTemplate.number(itemPayout));
+                                    .add(robotReplyTemplate.settlementWinningLine(compact.selection(), compact.amount(),
+                                            itemPayout));
                             winningPayouts.merge(order.getMemberName(), itemPayout, BigDecimal::add);
                             winningMemberIds.put(order.getMemberName(), order.getMemberId());
                         }
@@ -2395,8 +2395,8 @@ public class LotteryServiceImpl implements LotteryService {
                 settledItems.add(item);
                 if (won) {
                     winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
-                            .add(item.getSelection() + "，套数" + robotReplyTemplate.number(item.getAmount())
-                                    + "，房费" + robotReplyTemplate.number(item.getPayout()));
+                            .add(robotReplyTemplate.settlementWinningLine(item.getSelection(), item.getAmount(),
+                                    item.getPayout()));
                     winningPayouts.merge(order.getMemberName(), item.getPayout(), BigDecimal::add);
                     winningMemberIds.put(order.getMemberName(), order.getMemberId());
                 }
@@ -2417,6 +2417,7 @@ public class LotteryServiceImpl implements LotteryService {
             }
         }
         batchInsertService.updateSettledBetItems(TenantContextHolder.getRequiredTenantId(), settledItems);
+        Map<String, BigDecimal> balancesBeforePayout = new HashMap<>();
         for (SettlementOrderPlan plan : settlementPlansByMember.values().stream().flatMap(List::stream).toList()) {
             OrderDO order = plan.order();
             int settled = orderMapper.update(order, new LambdaUpdateWrapper<OrderDO>().eq(OrderDO::getId, order.getId())
@@ -2438,6 +2439,7 @@ public class LotteryServiceImpl implements LotteryService {
                     .reduce(ZERO, BigDecimal::add));
             int memberVersion = value(member.getVersion(), 0);
             BigDecimal balanceBefore = money(member.getBalance());
+            balancesBeforePayout.put(member.getId(), balanceBefore);
             member.setBalance(money(balanceBefore.add(memberPayout)));
             member.setProfitLoss(money(value(member.getProfitLoss(), ZERO).add(memberPayout.subtract(memberBet))));
             member.setVersion(memberVersion + 1);
@@ -2513,7 +2515,7 @@ public class LotteryServiceImpl implements LotteryService {
             BigDecimal payout = money(winningPayouts.get(entry.getKey()));
             BigDecimal afterBalance = money(member.getBalance());
             String settlementReply = robotReplyTemplate.settlement(entry.getKey(), entry.getValue(), payout,
-                    afterBalance);
+                    balancesBeforePayout.get(member.getId()), afterBalance);
             groupSettlementReplies.add(settlementReply);
             MessageDO message = new MessageDO();
             message.setChannel(CHANNEL_WEB_PRIVATE);

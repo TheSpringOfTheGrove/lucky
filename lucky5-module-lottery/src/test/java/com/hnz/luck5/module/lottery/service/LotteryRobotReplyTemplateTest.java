@@ -165,22 +165,35 @@ class LotteryRobotReplyTemplateTest {
 
     @Test
     void shouldFormatSettlementLikeReferenceRobot() {
+        assertThat(template.settlementWinningLine("6", BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("6XXX，套数1，房费9");
+        assertThat(template.settlementWinningLine("64", new BigDecimal("10"), new BigDecimal("960")))
+                .isEqualTo("64XX，套数10，房费960");
+        assertThat(template.settlementWinningLine("642", BigDecimal.ONE, new BigDecimal("96")))
+                .isEqualTo("642X，套数1，房费96");
+        assertThat(template.settlementWinningLine("6XX4", new BigDecimal("10"), new BigDecimal("960")))
+                .isEqualTo("6XX4，套数10，房费960");
+        assertThat(template.settlementWinningLine("64", BigDecimal.ONE, new BigDecimal("19.2")))
+                .isEqualTo("64XX，套数1，房费19.2");
+        assertThat(template.settlementWinningLine("6XXX4", BigDecimal.ONE, new BigDecimal("96")))
+                .isEqualTo("6XXX4，套数1，房费96");
+        assertThat(template.settlementWinningLine("龙", BigDecimal.ONE, new BigDecimal("1.95")))
+                .isEqualTo("龙，套数1，房费1.95");
         assertThat(template.settlement("波陆秀", List.of("57XX，套数10，房费960", "X75X，套数10，房费960"),
-                new BigDecimal("1920.00"), new BigDecimal("31052.52")))
+                new BigDecimal("1920.00"), new BigDecimal("29132.52"), new BigDecimal("31052.52")))
                 .isEqualTo("【波陆秀】入住：\n57XX，套数10，房费960\nX75X，套数10，房费960"
-                        + "\n合房费：1920\n【当前面积】：31052.52")
-                .doesNotContain("中介费");
+                        + "\n合房费：1920\n【面积】：29132.52\n【中介费】：31052.52");
         assertThat(template.payoutSummary(new BigDecimal("6720.00")))
                 .isEqualTo("【本次总派送】：6720");
         assertThat(template.payoutSummary(BigDecimal.ZERO))
                 .isEqualTo("【本次总派送】：0");
         assertThat(template.payoutSummary(List.of(
-                "【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【当前面积】：31052.52",
-                "【露露】入住：\n654X，套数5，房费480\n合房费：480\n【当前面积】：4374.1"),
+                "【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【面积】：30092.52\n【中介费】：31052.52",
+                "【露露】入住：\n654X，套数5，房费480\n合房费：480\n【面积】：3894.1\n【中介费】：4374.1"),
                 new BigDecimal("1440.00")))
-                .isEqualTo("【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【当前面积】：31052.52"
-                        + "\n--------\n【露露】入住：\n654X，套数5，房费480\n合房费：480\n【当前面积】：4374.1"
-                        + "\n--------\n【本次总派送】：1440");
+                .isEqualTo("【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【面积】：30092.52\n【中介费】：31052.52"
+                        + "\n\n--------\n【露露】入住：\n654X，套数5，房费480\n合房费：480\n【面积】：3894.1\n【中介费】：4374.1"
+                        + "\n\n--------\n【本次总派送】：1440");
     }
 
     @Test
