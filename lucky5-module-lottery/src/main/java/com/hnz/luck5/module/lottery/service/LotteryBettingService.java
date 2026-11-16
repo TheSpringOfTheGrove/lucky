@@ -4,7 +4,6 @@ import com.hnz.luck5.module.lottery.dal.dataobject.OddDO;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -100,6 +99,8 @@ public class LotteryBettingService {
     }
 
     private List<ParsedBet> parseSingle(String rawContent, List<OddDO> odds) {
+        List<ParsedBet> quickTranslation = parseQuickTranslation(rawContent, odds);
+        if (quickTranslation != null) return quickTranslation;
         List<ParsedBet> fixedGroups = parseFixedPatternGroups(rawContent, odds);
         if (fixedGroups != null) return fixedGroups;
         String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(
@@ -182,6 +183,391 @@ public class LotteryBettingService {
             throw exception(BET_LIMIT_INVALID);
         }
         return result;
+    }
+
+    /**
+     * Parses the documented quick-translation grammar before the historical room aliases. When both
+     * grammars can read the same text, this grammar deliberately wins.
+     */
+    private List<ParsedBet> parseQuickTranslation(String rawContent, List<OddDO> odds) {
+        String raw = rawContent == null ? "" : rawContent.trim();
+        Matcher reverseSlashAmount = Pattern.compile(
+                "^(.*(?:倒[一二三四]定|[二三四]定倒))/(\\d+(?:\\.\\d+)?)$").matcher(raw);
+        if (reverseSlashAmount.matches()) {
+            raw = reverseSlashAmount.group(1) + "各" + reverseSlashAmount.group(2);
+        }
+        Matcher amountMatcher = Pattern.compile("(?s)^(.*?)(?:各|=)(\\d+(?:\\.\\d+)?)$").matcher(raw);
+        if (!amountMatcher.matches()) {
+            if (raw.contains("=")) throw exception(BET_CONTENT_INVALID);
+            return null;
+        }
+        BigDecimal perBetAmount = amount(amountMatcher.group(2));
+        String rawExpression = amountMatcher.group(1).trim();
+        if (rawExpression.isEmpty()) throw exception(BET_CONTENT_INVALID);
+
+        String[] lines = rawExpression.split("\\R+", -1);
+        if (lines.length > 1) {
+            List<ParsedBet> result = new ArrayList<>();
+            boolean allDocumentLines = true;
+            for (String line : lines) {
+                if (line.isBlank()) continue;
+                List<ParsedBet> parsedLine = parseQuickTranslationLine(line, perBetAmount, odds);
+                if (parsedLine == null) {
+                    allDocumentLines = false;
+                    break;
+                }
+                result.addAll(parsedLine);
+            }
+            if (allDocumentLines && !result.isEmpty()) return result;
+            if (!rawExpression.contains("*")) throw exception(BET_CONTENT_INVALID);
+            return null;
+        }
+
+        List<ParsedBet> parsedLine = parseQuickTranslationLine(rawExpression, perBetAmount, odds);
+        if (parsedLine != null) return parsedLine;
+        if (rawExpression.matches(".*[，,、；;].*") && !rawExpression.contains("*")) {
+            throw exception(BET_CONTENT_INVALID);
+        }
+        return null;
+    }
+
+    private List<ParsedBet> parseQuickTranslationLine(String rawExpression, BigDecimal perBetAmount,
+                                                       List<OddDO> odds) {
+        String[] pieces = rawExpression.split("[，,、；;\\s]+", -1);
+        if (pieces.length > 1) {
+            List<DocBase> direct = new ArrayList<>();
+            boolean allDirect = true;
+            for (String piece : pieces) {
+                if (piece.isBlank()) continue;
+                String normalizedPiece = normalizeQuickTranslation(piece);
+                DocBase base = parseDocumentDirectBase(normalizedPiece);
+                if (base == null || base.consumed() != normalizedPiece.length()) {
+                    allDirect = false;
+                    break;
+                }
+                direct.add(base);
+            }
+            if (allDirect && !direct.isEmpty()) {
+                List<ParsedBet> result = new ArrayList<>();
+                for (DocBase base : direct) result.addAll(documentBets(base, perBetAmount, odds));
+                return result;
+            }
+            boolean allIndependentDocumentExpressions = Arrays.stream(pieces)
+                    .filter(piece -> !piece.isBlank())
+                    .allMatch(this::isCompleteDocumentExpression);
+            if (allIndependentDocumentExpressions) throw exception(BET_CONTENT_INVALID);
+            if (rawExpression.matches(".*[，,、；;].*")) return null;
+        }
+
+        String expression = normalizeQuickTranslation(rawExpression);
+        DocBase base = parseDocumentBase(expression);
+        if (base == null) return null;
+        String filters = expression.substring(base.consumed());
+        if (!validateDocumentFilters(filters)) return null;
+        List<String> selections = applyFilters(base.selections(), expression);
+        if (selections.isEmpty()) throw exception(BET_CONTENT_INVALID);
+        return documentBets(new DocBase(selections, base.play(), base.code(), expression.length()),
+                perBetAmount, odds);
+    }
+
+    private List<ParsedBet> documentBets(DocBase base, BigDecimal amount, List<OddDO> odds) {
+        if (base.selections().isEmpty()) throw exception(BET_CONTENT_INVALID);
+        OddDO odd = configuredOdd(base.code(), amount, odds);
+        List<String> selections = new ArrayList<>(new java.util.TreeSet<>(base.selections()));
+        if (selections.size() > MAX_SINGLE_COMMAND_ITEMS) throw exception(BET_LIMIT_INVALID);
+        return selections.stream().map(selection -> new ParsedBet(base.play(), selection, amount, odd.getRate()))
+                .toList();
+    }
+
+    private boolean isCompleteDocumentExpression(String rawExpression) {
+        String expression = normalizeQuickTranslation(rawExpression);
+        DocBase base = parseDocumentBase(expression);
+        return base != null && validateDocumentFilters(expression.substring(base.consumed()));
+    }
+
+    private DocBase parseDocumentBase(String expression) {
+        Matcher fifthWalk = Pattern.compile("^五([0-9大小单双]+)走([0-9大小单双]+)").matcher(expression);
+        if (fifthWalk.find()) {
+            Set<Character> fifth = documentPool(fifthWalk.group(1));
+            Set<Character> moving = documentPool(fifthWalk.group(2));
+            List<String> selections = new ArrayList<>();
+            for (int position = 0; position < 4; position++) {
+                for (Character digit : moving) {
+                    for (Character fifthDigit : fifth) {
+                        char[] pattern = "XXXXX".toCharArray();
+                        pattern[position] = digit;
+                        pattern[4] = fifthDigit;
+                        selections.add(new String(pattern));
+                    }
+                }
+            }
+            return new DocBase(selections, "五位二定", FIVE_POSITION_TWO_ODD_CODE, fifthWalk.end());
+        }
+
+        Matcher poolPlay = Pattern.compile("^([0-9]+)(?:倒)?([二三四])(定|现)").matcher(expression);
+        if (poolPlay.find()) {
+            String pool = poolPlay.group(1);
+            int count = CHINESE_COUNT.get(poolPlay.group(2).charAt(0));
+            if ("定".equals(poolPlay.group(3))) {
+                List<String> selections = reverseFixedSpace(pool, count, 4, false);
+                return new DocBase(selections, chineseCount(count) + "定位", "regex" + count + "d",
+                        poolPlay.end());
+            }
+            List<String> selections = currentSelectionsFromPool(pool, count);
+            if (selections.isEmpty()) throw exception(BET_CONTENT_INVALID);
+            return new DocBase(selections, chineseCount(count) + "字现", "regex" + count + "x",
+                    poolPlay.end());
+        }
+
+        DocBase positioned = parseDocumentPositionBase(expression);
+        if (positioned != null) return positioned;
+
+        DocBase direct = parseDocumentDirectBase(expression);
+        if (direct != null) return direct;
+
+        return null;
+    }
+
+    private DocBase parseDocumentDirectBase(String expression) {
+        Matcher matcher = Pattern.compile("^([0-9X|]+)(现)?").matcher(expression);
+        if (!matcher.find()) return null;
+        String token = matcher.group(1);
+        boolean current = matcher.group(2) != null;
+        String remainder = expression.substring(matcher.end());
+        if (!remainder.isEmpty() && !remainder.matches("^(?:取|除|两数合|二数合|三数合|值|排除|上奖|含).*$")) {
+            return null;
+        }
+        if (current) {
+            if (!token.matches("\\d{2,4}")) throw exception(BET_CONTENT_INVALID);
+            int count = token.length();
+            return new DocBase(List.of(token), chineseCount(count) + "字现", "regex" + count + "x",
+                    matcher.end());
+        }
+        if (token.matches("\\d{2,3}")) {
+            int count = token.length();
+            return new DocBase(List.of(token), chineseCount(count) + "字现", "regex" + count + "x",
+                    matcher.end());
+        }
+        if (token.matches("\\d{4}")) {
+            return new DocBase(List.of(token), "四定位", "regex4d", matcher.end());
+        }
+        if (token.matches("\\d")) return null;
+        if (token.matches("\\d+")) throw exception(BET_CONTENT_INVALID);
+
+        List<Set<Character>> slots = directPoolSlots(token);
+        int patternLength = slots.size();
+        if (patternLength != 4 && patternLength != 5) throw exception(BET_CONTENT_INVALID);
+        List<Integer> positions = new ArrayList<>();
+        Map<Integer, Set<Character>> groups = new HashMap<>();
+        for (int index = 0; index < slots.size(); index++) {
+            if (slots.get(index) == null) continue;
+            positions.add(index);
+            groups.put(index, slots.get(index));
+        }
+        List<String> selections = new ArrayList<>();
+        expandCartesian(positions, groups, 0, "X".repeat(patternLength).toCharArray(), selections);
+        if (patternLength == 5) {
+            if (positions.size() != 2 || !positions.contains(4)
+                    || positions.stream().filter(position -> position < 4).count() != 1) {
+                throw exception(BET_CONTENT_INVALID);
+            }
+            return new DocBase(selections, "五位二定", FIVE_POSITION_TWO_ODD_CODE, matcher.end());
+        }
+        int count = positions.size();
+        if (count < 2 || count > 4) throw exception(BET_CONTENT_INVALID);
+        return new DocBase(selections, chineseCount(count) + "定位", "regex" + count + "d",
+                matcher.end());
+    }
+
+    private List<Set<Character>> directPoolSlots(String token) {
+        List<Set<Character>> result = new ArrayList<>();
+        if (!token.contains("|") && (token.length() == 4 || token.length() == 5)) {
+            for (char value : token.toCharArray()) {
+                result.add(value == 'X' ? null : chars(String.valueOf(value)));
+            }
+            return result;
+        }
+        StringBuilder digits = new StringBuilder();
+        for (int index = 0; index < token.length(); index++) {
+            char value = token.charAt(index);
+            if (Character.isDigit(value)) {
+                digits.append(value);
+                continue;
+            }
+            if (!digits.isEmpty()) {
+                result.add(chars(digits.toString()));
+                digits.setLength(0);
+            }
+            if (value == 'X') result.add(null);
+            else if (value != '|') throw exception(BET_CONTENT_INVALID);
+        }
+        if (!digits.isEmpty()) result.add(chars(digits.toString()));
+        return result;
+    }
+
+    private DocBase parseDocumentPositionBase(String expression) {
+        Map<Integer, Set<Character>> groups = new LinkedHashMap<>();
+        int cursor = 0;
+        while (cursor < expression.length()) {
+            String remaining = expression.substring(cursor);
+            Matcher forward = Pattern.compile("^((?:千|百|十|个|五)+)([0-9]+|[大小单双])")
+                    .matcher(remaining);
+            Matcher reverse = Pattern.compile("^([0-9]+|[大小单双])((?:千|百|十|个|五)+)")
+                    .matcher(remaining);
+            String labels;
+            String pool;
+            int consumed;
+            if (forward.find()) {
+                labels = forward.group(1);
+                pool = forward.group(2);
+                consumed = forward.end();
+            } else if (reverse.find()) {
+                pool = reverse.group(1);
+                labels = reverse.group(2);
+                consumed = reverse.end();
+            } else {
+                break;
+            }
+            Set<Character> digits = documentPool(pool);
+            for (char label : labels.toCharArray()) {
+                int position = POSITION_INDEX.get(label);
+                if (groups.putIfAbsent(position, digits) != null) throw exception(BET_CONTENT_INVALID);
+            }
+            cursor += consumed;
+        }
+        if (groups.isEmpty()) return null;
+
+        String playToken = null;
+        Matcher playMatcher = Pattern.compile("^(五位二定|[二三四](?:定|现))")
+                .matcher(expression.substring(cursor));
+        if (playMatcher.find()) {
+            playToken = playMatcher.group(1);
+            cursor += playMatcher.end();
+        }
+
+        if (groups.containsKey(4)) {
+            if (playToken != null && !"五位二定".equals(playToken)) throw exception(BET_CONTENT_INVALID);
+            Set<Character> fifth = groups.get(4);
+            List<String> selections = new ArrayList<>();
+            List<Integer> firstPositions = groups.keySet().stream().filter(position -> position < 4).toList();
+            if (firstPositions.isEmpty()) firstPositions = List.of(0);
+            for (Integer position : firstPositions) {
+                Set<Character> first = groups.getOrDefault(position, chars(DIGITS));
+                for (Character left : first) {
+                    for (Character right : fifth) {
+                        char[] pattern = "XXXXX".toCharArray();
+                        pattern[position] = left;
+                        pattern[4] = right;
+                        selections.add(new String(pattern));
+                    }
+                }
+            }
+            return new DocBase(selections, "五位二定", FIVE_POSITION_TWO_ODD_CODE, cursor);
+        }
+        if ("五位二定".equals(playToken) || playToken != null && playToken.endsWith("现")) {
+            return null;
+        }
+        int count = playToken == null ? Math.max(2, groups.size())
+                : CHINESE_COUNT.get(playToken.charAt(0));
+        if (groups.size() > count) throw exception(BET_CONTENT_INVALID);
+        List<String> selections = expandDocumentPositionGroups(groups, count);
+        return new DocBase(selections, chineseCount(count) + "定位", "regex" + count + "d", cursor);
+    }
+
+    private List<String> expandDocumentPositionGroups(Map<Integer, Set<Character>> groups, int count) {
+        List<Integer> missingPositions = new ArrayList<>(List.of(0, 1, 2, 3));
+        missingPositions.removeAll(groups.keySet());
+        int missing = count - groups.size();
+        if (missing < 0 || missing > missingPositions.size()) throw exception(BET_CONTENT_INVALID);
+        Map<Integer, Set<Character>> all = new HashMap<>(groups);
+        for (Integer position : missingPositions.subList(0, missing)) all.put(position, chars(DIGITS));
+        List<String> result = new ArrayList<>();
+        List<Integer> positions = all.keySet().stream().sorted().toList();
+        expandCartesian(positions, all, 0, "XXXX".toCharArray(), result);
+        return result;
+    }
+
+    private List<String> currentSelectionsFromPool(String pool, int count) {
+        List<String> arrangements = new ArrayList<>();
+        multisetArrangements(pool, count, new StringBuilder(), new boolean[pool.length()], arrangements);
+        Set<String> result = new java.util.TreeSet<>();
+        for (String arrangement : arrangements) {
+            char[] digits = arrangement.toCharArray();
+            Arrays.sort(digits);
+            result.add(new String(digits));
+        }
+        return new ArrayList<>(result);
+    }
+
+    private Set<Character> documentPool(String token) {
+        if (token.matches("\\d+")) return chars(token);
+        return switch (token) {
+            case "大" -> chars("56789");
+            case "小" -> chars("01234");
+            case "单" -> chars("13579");
+            case "双" -> chars("02468");
+            default -> throw exception(BET_CONTENT_INVALID);
+        };
+    }
+
+    private String normalizeQuickTranslation(String value) {
+        String normalized = value.trim().replaceAll("[，,、；;\\s]+", "")
+                .replace('x', 'X').replace('+', 'X')
+                .replace("中肚", "百十").replace('头', '千').replace('尾', '个').replace('末', '个')
+                .replace("直码", "四定")
+                .replace("二字定", "二定").replace("三字定", "三定").replace("四字定", "四定")
+                .replace("二定位", "二定").replace("三定位", "三定").replace("四定位", "四定")
+                .replace("二字现", "二现").replace("三字现", "三现").replace("四字现", "四现")
+                .replace('跑', '走').replace('移', '走')
+                .replace("不要", "除")
+                .replace("全倒", "倒").replace("全转", "倒").replace('转', '倒');
+        Matcher reverseMode = Pattern.compile("^([0-9]+)([二三四])定倒(.*)$").matcher(normalized);
+        return reverseMode.matches()
+                ? reverseMode.group(1) + "倒" + reverseMode.group(2) + "定" + reverseMode.group(3)
+                : normalized;
+    }
+
+    private boolean validateDocumentFilters(String filters) {
+        if (filters.isEmpty()) return true;
+        List<Pattern> tokens = List.of(
+                Pattern.compile("^上奖[0-9]+"),
+                Pattern.compile("^(取|除)(?:千|百|十|个|五)(?:大|小|单|双)"),
+                Pattern.compile("^(取|除)(?:千|百|十|个|五)+[0-9]+"),
+                Pattern.compile("^(?:取|除)?(?:千|百|十|个|五)+合[0-9]+"),
+                Pattern.compile("^(?:两|二)数合[0-9]+"),
+                Pattern.compile("^三数合[0-9]+"),
+                Pattern.compile("^(?:取|除)?含[0-9]+"),
+                Pattern.compile("^排除[0-9]+"),
+                Pattern.compile("^(?:取|除)?(?:值[0-9]+值[0-9]+|值范围[0-9]+-[0-9]+)"),
+                Pattern.compile("^(取|除)(?:两|二)对数"),
+                Pattern.compile("^(取|除)对数[0-9]*"),
+                Pattern.compile("^(取|除)[大小单双X]{2,5}"),
+                Pattern.compile("^(取|除)四[大小]"),
+                Pattern.compile("^(取|除)乘号位置(?:千|百|十|个|五)+"),
+                Pattern.compile("^(取|除)(?:两双重|双双重|双重|三重|四重|(?:二|两|三|四)?兄弟)"),
+                Pattern.compile("^(?:两双重|双双重|双重|三重|四重|(?:二|两|三|四)?兄弟)"));
+        String remaining = filters;
+        while (!remaining.isEmpty()) {
+            int consumed = 0;
+            for (Pattern token : tokens) {
+                Matcher matcher = token.matcher(remaining);
+                if (!matcher.find()) continue;
+                consumed = matcher.end();
+                break;
+            }
+            if (consumed == 0) return false;
+            remaining = remaining.substring(consumed);
+        }
+
+        Set<Integer> constrained = new HashSet<>();
+        Matcher positionFilter = Pattern.compile("(取|除)((?:千|百|十|个|五)+)(?:[0-9]+|[大小单双])")
+                .matcher(filters);
+        while (positionFilter.find()) {
+            for (Integer position : positionIndexes(positionFilter.group(2))) {
+                if (!constrained.add(position)) throw exception(BET_CONTENT_INVALID);
+            }
+        }
+        return true;
     }
 
     private List<ParsedBet> parseFixedPatternGroups(String rawContent, List<OddDO> odds) {
@@ -669,6 +1055,26 @@ public class LotteryBettingService {
             });
         }
 
+        Matcher positionAttribute = Pattern.compile("(取|除)([头千百十尾个五])([大小单双])")
+                .matcher(expression);
+        while (positionAttribute.find()) {
+            boolean take = "取".equals(positionAttribute.group(1));
+            int position = POSITION_INDEX.get(positionAttribute.group(2).charAt(0));
+            char attribute = positionAttribute.group(3).charAt(0);
+            result.removeIf(value -> {
+                if (position >= value.length() || value.charAt(position) == 'X') return take;
+                int digit = value.charAt(position) - '0';
+                boolean matches = switch (attribute) {
+                    case '大' -> digit >= 5;
+                    case '小' -> digit < 5;
+                    case '单' -> digit % 2 == 1;
+                    case '双' -> digit % 2 == 0;
+                    default -> false;
+                };
+                return matches != take;
+            });
+        }
+
         Matcher positionConstraint = Pattern.compile("(取|除)((?:头|千|百|十|尾|个|五)+)([0-9]+)").matcher(expression);
         while (positionConstraint.find()) {
             boolean take = "取".equals(positionConstraint.group(1));
@@ -1065,7 +1471,9 @@ public class LotteryBettingService {
 
     private BigDecimal amount(String value) {
         try {
-            BigDecimal amount = new BigDecimal(value).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros();
+            BigDecimal raw = new BigDecimal(value);
+            if (raw.scale() > 2) throw new NumberFormatException();
+            BigDecimal amount = raw.stripTrailingZeros();
             if (amount.signum() <= 0) throw new NumberFormatException();
             return amount;
         } catch (NumberFormatException ex) {
@@ -1076,6 +1484,7 @@ public class LotteryBettingService {
     private List<String> splitCommands(String rawContent) {
         String value = rawContent == null ? "" : rawContent.trim();
         if (value.isEmpty()) return List.of(value);
+        validateQuickTranslationLineGrouping(value);
         // A sequence of numeric slash bets has no "各金额" marker. Split it before
         // normalization removes separators and joins the next number into the amount.
         List<String> slashCommands = List.of(value.split("[，,、；;\\s]+"));
@@ -1087,7 +1496,7 @@ public class LotteryBettingService {
                 "(?s)[0-9]{4}各\\d+(?:\\.\\d+)?(?:[.、/,，@；;\\s]+[0-9]{4}各\\d+(?:\\.\\d+)?)+[；;]?");
         String separatorPattern = fixedPatternInput ? "[，,、；;./@\\s]+" : "[，,、；;\\s]+";
         Matcher amountMatcher = Pattern.compile(
-                "各\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?")
+                "(?:各|=)\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?")
                 .matcher(value);
         List<String> commands = new ArrayList<>();
         int start = 0;
@@ -1101,6 +1510,45 @@ public class LotteryBettingService {
         String remaining = value.substring(start).replaceAll(separatorPattern, "");
         if (!remaining.isEmpty() || commands.size() <= 1) return List.of(value);
         return commands;
+    }
+
+    private void validateQuickTranslationLineGrouping(String value) {
+        Pattern amountPattern = Pattern.compile(
+                "(?:各|=)\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?");
+        boolean hasStandaloneBatchAmount = Arrays.stream(value.split("\\R+", -1))
+                .map(String::trim)
+                .anyMatch(line -> line.matches("(?:各|=)\\d+(?:\\.\\d+)?"));
+        if (hasStandaloneBatchAmount) {
+            Matcher allAmounts = amountPattern.matcher(value);
+            int amountCount = 0;
+            while (allAmounts.find()) amountCount++;
+            if (amountCount > 1) throw exception(BET_CONTENT_INVALID);
+        }
+        for (String line : value.split("\\R+", -1)) {
+            Matcher matcher = amountPattern.matcher(line);
+            List<String> commands = new ArrayList<>();
+            int start = 0;
+            while (matcher.find()) {
+                String command = line.substring(start, matcher.end())
+                        .replaceFirst("^[，,、；;./@\\s]+", "").trim();
+                if (!command.isEmpty()) commands.add(command);
+                start = matcher.end();
+            }
+            if (commands.size() <= 1) continue;
+            String remaining = line.substring(start).replaceAll("[，,、；;./@\\s]+", "");
+            if (!remaining.isEmpty() || commands.stream().anyMatch(command -> !isSimpleNumberCommand(command))) {
+                throw exception(BET_CONTENT_INVALID);
+            }
+        }
+    }
+
+    private boolean isSimpleNumberCommand(String command) {
+        String expression = command.replaceFirst(
+                "(?:(?:各|=|/|:)\\d+(?:\\.\\d+)?)$", "").trim();
+        if (expression.matches("[0-9*]{4}")) return true;
+        String normalized = normalizeQuickTranslation(expression);
+        DocBase base = parseDocumentDirectBase(normalized);
+        return base != null && base.consumed() == normalized.length();
     }
 
     private String normalize(String value) {
@@ -1272,6 +1720,9 @@ public class LotteryBettingService {
     }
 
     private record IndexedBet(int index, ParsedBet bet) {
+    }
+
+    private record DocBase(List<String> selections, String play, String code, int consumed) {
     }
 
     private record RotatedFixed(List<Set<Character>> pools, int count, boolean exclude) {

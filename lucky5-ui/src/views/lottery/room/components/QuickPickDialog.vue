@@ -112,7 +112,7 @@ const preview = async (expression: string, requestContent = `${expression}各1`)
 const composeExpression = () => buildQuickPickExpression(definition.value, form)
 
 const parseTextCommand = (content: string): TextCommandDraft => {
-  const eachMatch = /^(.*)各(\d+(?:\.\d+)?)$/.exec(content)
+  const eachMatch = /^([\s\S]*?)各(\d+(?:\.\d+)?)$/.exec(content)
   if (eachMatch) {
     const expression = eachMatch[1].trim()
     return {
@@ -122,7 +122,7 @@ const parseTextCommand = (content: string): TextCommandDraft => {
       submit: (value) => `${expression}各${value}`
     }
   }
-  const inlineMatch = /^(.*)([=/:])(\d+(?:\.\d+)?)$/.exec(content)
+  const inlineMatch = /^([\s\S]*?)([=/:])(\d+(?:\.\d+)?)$/.exec(content)
   if (inlineMatch) {
     const prefix = inlineMatch[1].trim()
     const separator = inlineMatch[2]
