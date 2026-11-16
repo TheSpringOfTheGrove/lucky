@@ -28,6 +28,115 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void followsQuickTranslationDirectNumberAndPoolRules() {
+        assertThat(service.parse("12XX=1", odds))
+                .extracting(LotteryBettingService.ParsedBet::play,
+                        LotteryBettingService.ParsedBet::selection)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("二定位", "12XX"));
+        assertThat(service.parse("123X各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("123X");
+        assertThat(service.parse("1XXX2各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::play,
+                        LotteryBettingService.ParsedBet::selection)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("五位二定", "1XXX2"));
+        assertThat(service.parse("123|123XX各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("11XX", "12XX", "13XX", "21XX", "22XX", "23XX",
+                        "31XX", "32XX", "33XX");
+        assertThat(service.parse("123XX123各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1XX1", "1XX2", "1XX3", "2XX1", "2XX2", "2XX3",
+                        "3XX1", "3XX2", "3XX3");
+        assertThat(service.parse("12各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::play,
+                        LotteryBettingService.ParsedBet::selection)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("二字现", "12"));
+        assertThat(service.parse("123各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::play,
+                        LotteryBettingService.ParsedBet::selection)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("三字现", "123"));
+        assertThat(service.parse("1234=1", odds))
+                .extracting(LotteryBettingService.ParsedBet::play,
+                        LotteryBettingService.ParsedBet::selection)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("四定位", "1234"));
+        assertThat(service.parse("1234现各1", odds).get(0).play()).isEqualTo("四字现");
+        assertThat(service.parse("12xx=1", odds)).containsExactlyElementsOf(service.parse("12++=1", odds));
+        assertThat(service.parse("头12尾34各1", odds)).containsExactlyElementsOf(
+                service.parse("千12个34各1", odds));
+        assertThat(service.parse("1234\n2345\n3456\n=1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1234", "2345", "3456");
+        assertThat(service.parse("千12二字定\n百34二字定\n=1", odds)).hasSize(40);
+    }
+
+    @Test
+    void followsQuickTranslationPositionAndPlayRules() {
+        assertThat(service.parse("千123百123十123个123各1", odds)).hasSize(81);
+        assertThat(service.parse("123千123百123十各1", odds)).hasSize(27);
+        assertThat(service.parse("千百123各1", odds)).hasSize(9);
+        assertThat(service.parse("中肚123各1", odds)).hasSize(9);
+        assertThat(service.parse("千大百小各1", odds)).hasSize(25);
+        assertThat(service.parse("123二字定各1", odds)).hasSize(36);
+        assertThat(service.parse("123二字现各1", odds))
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("12", "13", "23");
+        assertThat(service.parse("千123四字定各1", odds)).hasSize(3_000);
+        assertThat(service.parse("千12二字定各1", odds)).hasSize(20);
+        assertThat(service.parse("千12三字定=1", odds)).hasSize(200);
+        assertThat(service.parse("个12二字定各1", odds)).hasSize(20);
+        assertThat(service.parse("千12各1", odds)).hasSize(20)
+                .allSatisfy(item -> assertThat(item.play()).isEqualTo("二定位"));
+    }
+
+    @Test
+    void followsQuickTranslationDocumentedFilterCounts() {
+        assertThat(service.parse("千12四字定取百双除个单各1", odds)).hasSize(500);
+        assertThat(service.parse("千12直码取百双不要个单各1", odds)).hasSize(500);
+        assertThat(service.parse("千123百345除双重各1", odds)).hasSize(8);
+        assertThat(service.parse(
+                "千12百345四字定两数合45值范围15-35除个1234除双重除二兄弟各1", odds))
+                .hasSize(31);
+        assertThat(service.parse("千123五3456两数合45678除双重各1", odds)).hasSize(10);
+    }
+
+    @Test
+    void followsQuickTranslationFifthPositionRules() {
+        assertThat(service.parse("123XXX123各1", odds)).hasSize(9)
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactly("1XXX1", "1XXX2", "1XXX3", "2XXX1", "2XXX2", "2XXX3",
+                        "3XXX1", "3XXX2", "3XXX3");
+        assertThat(service.parse("千123五123各1", odds)).hasSize(9);
+        assertThat(service.parse("千123五123除双重各1", odds)).hasSize(6);
+        assertThat(service.parse("五123各1", odds)).hasSize(30)
+                .allSatisfy(item -> {
+                    assertThat(item.play()).isEqualTo("五位二定");
+                    assertThat(item.selection()).matches("[0-9]XXX[123]");
+                });
+        assertThat(service.parse("五123跑45各1", odds)).hasSize(24);
+    }
+
+    @Test
+    void rejectsQuickTranslationAmbiguityAndInvalidAmounts() {
+        assertThatThrownBy(() -> service.parse("1234=1-2", odds)).hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("12345各1", odds)).hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("12XXXX各1", odds)).hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("千123百123十123二字定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("12345二字定取千12除千34各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("千123二字定,百123二字定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("千123二字定 百123二字定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("1234=1\n2345\n=2", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("12三字定各1", odds))
+                .hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("1234=0.001", odds)).hasMessageContaining("无法识别");
+    }
+
+    @Test
     void parsesBasicConfiguredAndPositionBets() {
         assertThat(service.parse("大100 单50", odds)).hasSize(2);
         assertThat(service.parse("大单各100", odds)).hasSize(2);
@@ -152,10 +261,7 @@ class LotteryBettingServiceTest {
     }
 
     @Test
-    void parsesNumericFixedShorthandFromOnesPosition() {
-        assertThat(service.parse("1各1", odds)).containsExactlyElementsOf(service.parse("个1各1", odds));
-        assertThat(service.parse("12各1", odds)).containsExactlyElementsOf(service.parse("十1个2各1", odds));
-        assertThat(service.parse("123各1", odds)).containsExactlyElementsOf(service.parse("百1十2个3各1", odds));
+    void parsesDocumentBareNumbersBeforeLegacySingleDigitShorthand() {
         assertThat(service.parse("5874各2", odds))
                 .containsExactlyElementsOf(service.parse("千5百8十7个4各2", odds));
         assertThat(service.parse("8888各1", odds))
@@ -167,10 +273,10 @@ class LotteryBettingServiceTest {
                 .containsExactly("一定位", "XXX1", new BigDecimal("1"), new BigDecimal("9"));
         assertThat(service.parse("12各1", odds).get(0))
                 .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection)
-                .containsExactly("二定位", "XX12");
+                .containsExactly("二字现", "12");
         assertThat(service.parse("123各1", odds).get(0))
                 .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection)
-                .containsExactly("三定位", "X123");
+                .containsExactly("三字现", "123");
         assertThat(service.parse("5874各2", odds).get(0))
                 .extracting(LotteryBettingService.ParsedBet::play, LotteryBettingService.ParsedBet::selection,
                         LotteryBettingService.ParsedBet::amount, LotteryBettingService.ParsedBet::odds)
@@ -250,8 +356,8 @@ class LotteryBettingServiceTest {
         });
         assertThat(service.parse("24567861三定倒/0.5", odds))
                 .containsExactlyElementsOf(service.parse("24567861倒三定各0.5", odds));
-        assertThat(service.parse("24567861倒三定/1,24567861倒三定/1", odds)).hasSize(1_824);
-        assertThat(service.splitCommandsForDisplay("24567861倒三定/1,24567861倒三定/1"))
+        assertThat(service.parse("24567861倒三定/1\n24567861倒三定/1", odds)).hasSize(1_824);
+        assertThat(service.splitCommandsForDisplay("24567861倒三定/1\n24567861倒三定/1"))
                 .containsExactly("24567861倒三定/1", "24567861倒三定/1");
 
         assertThat(service.parse("123/10", odds).get(0).play()).isEqualTo("三字现");
@@ -270,14 +376,14 @@ class LotteryBettingServiceTest {
     void walkFixedUsesThePoolAfterWalkLikeTheReferenceSite() {
         List<LotteryBettingService.ParsedBet> walked = service.parse("12345走56789三定各1", odds);
         assertThat(walked).hasSize(240)
-                .containsExactlyElementsOf(service.parse("56789三定各1", odds));
+                .containsExactlyInAnyOrderElementsOf(service.parse("56789三定各1", odds));
         assertThat(walked).extracting(LotteryBettingService.ParsedBet::selection)
                 .contains("567X", "X987")
                 .allSatisfy(selection -> assertThat(selection).matches("[56789X]{4}"));
         assertThat(service.parse("98走123三定各1", odds)).hasSize(24)
-                .containsExactlyElementsOf(service.parse("123三定各1", odds));
+                .containsExactlyInAnyOrderElementsOf(service.parse("123三定各1", odds));
         assertThat(service.parse("98走112三定各1", odds)).hasSize(12)
-                .containsExactlyElementsOf(service.parse("112三定各1", odds));
+                .containsExactlyInAnyOrderElementsOf(service.parse("112三定各1", odds));
     }
 
     @Test
@@ -322,11 +428,13 @@ class LotteryBettingServiceTest {
     @Test
     void splitsCombinedCommandsAndPreservesDuplicateCommands() {
         assertThat(service.parse("5679各1.1 9765各1", odds)).hasSize(2);
-        assertThat(service.parse("0759三定各1,0759三定各1", odds)).hasSize(192);
-        assertThat(service.parse("千01234百01234十01234尾01234各1 千01234百01234十01234尾01234各1", odds))
+        assertThat(service.parse("0759三定各1\n0759三定各1", odds)).hasSize(192);
+        assertThat(service.parse("千01234百01234十01234尾01234各1\n千01234百01234十01234尾01234各1", odds))
                 .hasSize(1_250);
-        assertThat(service.splitCommandsForDisplay("0759三定各1,0759三定各1"))
+        assertThat(service.splitCommandsForDisplay("0759三定各1\n0759三定各1"))
                 .containsExactly("0759三定各1", "0759三定各1");
+        assertThatThrownBy(() -> service.parse("0759三定各1,0759三定各1", odds))
+                .hasMessageContaining("无法识别");
     }
 
     @Test
@@ -392,7 +500,7 @@ class LotteryBettingServiceTest {
     void fivePositionTwoUpperPrizeDoesNotCountTheConstrainedFifthDigit() {
         List<LotteryBettingService.ParsedBet> bets = service.parse("五369五位二定上奖3569各15", odds);
 
-        assertThat(bets).hasSize(48);
+        assertThat(bets).hasSize(12);
         assertThat(bets).allSatisfy(bet -> {
             assertThat(bet.play()).isEqualTo("五位二定");
             assertThat(bet.selection()).hasSize(5);
@@ -436,7 +544,7 @@ class LotteryBettingServiceTest {
         String content = List.of("035", "203", "028", "258", "235", "269", "429",
                         "640", "670", "709", "358", "047", "368", "568")
                 .stream().map(right -> "13680配" + right + suffix)
-                .collect(java.util.stream.Collectors.joining(","));
+                .collect(java.util.stream.Collectors.joining("\n"));
 
         assertThat(service.splitCommandsForDisplay(content)).hasSize(14);
         assertThat(service.parse(content, odds)).hasSize(69_141);
@@ -450,7 +558,7 @@ class LotteryBettingServiceTest {
     @Test
     void matchesRemainingHistoricalCorpusCounts() {
         assertThat(service.parse(
-                "089613三定各0.3 7890三定各0.3 8902三定各0.3 0136三定各0.3 1234三定各0.3 0123三定各0.3", odds)).hasSize(960);
+                "089613三定各0.3\n7890三定各0.3\n8902三定各0.3\n0136三定各0.3\n1234三定各0.3\n0123三定各0.3", odds)).hasSize(960);
         assertThat(service.parse("1133445599778800倒四定各1.3", odds)).hasSize(3_864);
         assertThat(service.parse(
                 "123456780头123467890百234567890十。两数合234567除三重除三兄弟各7", odds)).hasSize(650);
@@ -458,7 +566,7 @@ class LotteryBettingServiceTest {
                 "123456780头123467890百234567890十012346789个。两数合012345除三重各0.5", odds)).hasSize(6_264);
         assertThat(service.parse("12364790头12307698尾除双重各65", odds)).hasSize(57);
         assertThat(service.parse(
-                "6516各8.8 6156各8.8 6651倒各0.6 5561倒各0.6 1156倒各0.6", odds)).hasSize(38);
+                "6516各8.8 6156各8.8\n6651倒各0.6\n5561倒各0.6\n1156倒各0.6", odds)).hasSize(38);
         assertThat(service.parse(
                 "千234567980百234507896尾3957除三兄弟三重取两数合1357三数合13579248各0.9", odds)).hasSize(166);
         assertThat(service.parse("千364578百154378个024568各23", odds)).hasSize(216);
@@ -471,7 +579,7 @@ class LotteryBettingServiceTest {
         assertThat(service.parse("四现取双双重各2", odds)).hasSize(55);
         assertThat(service.parse("四定取千百合5十个合6各1", odds)).hasSize(100);
         assertThat(service.parse("千1二定上奖12各1", odds)).extracting(LotteryBettingService.ParsedBet::selection)
-                .containsExactly("11XX", "12XX", "1X1X", "1X2X", "1XX1", "1XX2");
+                .containsExactly("11XX", "12XX");
         assertThat(service.parse("三现全倒112各1", odds)).hasSize(1);
         assertThat(service.parse("五位二定千12五34各1", odds)).hasSize(4);
         assertThat(service.parse("千12五34五位二定各1", odds)).hasSize(4);
@@ -505,7 +613,8 @@ class LotteryBettingServiceTest {
 
     @Test
     void supportsLegacyQuickPickPositionPoolsAndFifthBallPairs() {
-        assertThat(service.parse("千1百2十3个4二定各1", odds)).hasSize(6);
+        assertThatThrownBy(() -> service.parse("千1百2十3个4二定各1", odds))
+                .hasMessageContaining("无法识别");
         assertThat(service.parse("百12五34五位二定各1", odds))
                 .extracting(LotteryBettingService.ParsedBet::selection)
                 .containsExactly("X1XX3", "X1XX4", "X2XX3", "X2XX4");
@@ -591,8 +700,8 @@ class LotteryBettingServiceTest {
     @Test
     void matchesReferenceCombinedCommandWithOppositePairsAndSiblings() {
         String prefix = "除2配2四定除千百十个合1两数合0246三数合56789";
-        String command = prefix + "值范围7-29排除39除两对数各0.3"
-                + prefix + "除三兄弟值范围7-28排除39除两对数各0.5"
+        String command = prefix + "值范围7-29排除39除两对数各0.3\n"
+                + prefix + "除三兄弟值范围7-28排除39除两对数各0.5\n"
                 + prefix + "取兄弟除三兄弟值范围7-29排除39除两对数各1";
         List<LotteryBettingService.ParsedCommand> parsed = service.parseCommands(command, odds);
         assertThat(parsed).extracting(item -> item.items().size()).containsExactly(2_988, 2_532, 1_536);
@@ -738,7 +847,7 @@ class LotteryBettingServiceTest {
 
     @Test
     void matchesFourPositionBetsAgainstFirstFourDigitsOfLucky5Draw() {
-        LotteryBettingService.ParsedBet regular = service.parse("千1各1", odds).get(0);
+        LotteryBettingService.ParsedBet regular = service.parse("1***各1", odds).get(0);
         assertThat(regular.selection()).isEqualTo("1XXX");
         assertThat(service.isWinning(regular, service.deriveDraw("10000"))).isTrue();
         assertThat(service.isWinning(regular, service.deriveDraw("01000"))).isFalse();
