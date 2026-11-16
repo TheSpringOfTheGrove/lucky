@@ -66,11 +66,19 @@ body.lucky-admin-theme .legacy-mobile-table {
 body.lucky-admin-theme .legacy-mobile-table--member-scroll {
   overflow-x: auto;
   table {
-    min-width: 406px;
+    width: max-content;
+    min-width: 100%;
   }
   th,
   td {
     text-align: left;
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+  .el-link,
+  .el-tag {
+    white-space: nowrap;
+    overflow-wrap: normal;
   }
 }
 
