@@ -83,6 +83,10 @@ public interface LotteryService {
 
     void saveDiscounts(LotteryReqVO.Discounts reqVO);
 
+    Map<String, Object> getDefaultRebateRates();
+
+    void saveDefaultRebateRates(LotteryReqVO.RebateDefaults reqVO);
+
     Map<String, Object> applyRebates();
 
     List<Map<String, Object>> getChimaRecords();

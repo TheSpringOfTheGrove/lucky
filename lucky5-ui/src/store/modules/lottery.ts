@@ -23,6 +23,7 @@ import {
   getDrawHistoryApi,
   getOrdersApi,
   getMemberSnapshotsApi,
+  getDefaultRebateRatesApi,
   getRebateMembersApi,
   getMemberDetailsApi,
   getMemberLinksApi,
@@ -33,6 +34,7 @@ import {
   saveChimaConfigApi,
   saveConfigApi,
   saveDiscountsApi,
+  saveDefaultRebateRatesApi,
   saveFakeOrderApi,
   saveQuickCommandApi,
   saveFollowOrderApi,
@@ -488,6 +490,19 @@ const useLucky5StoreBase = defineStore('lucky5', {
         })
       )
       return this.perform(() => saveDiscountsApi(payload), '返水及拉手设置已保存')
+    },
+    async getDefaultRebateRates() {
+      try {
+        return await getDefaultRebateRatesApi()
+      } catch {
+        return false
+      }
+    },
+    saveDefaultRebateRates(payload: { normalRate: number; lhhRate: number }) {
+      return this.perform(
+        () => saveDefaultRebateRatesApi(payload),
+        '默认返水比例已保存并同步全部会员'
+      )
     },
     applyRebates() {
       return this.perform(() => applyRebatesApi(), '返水已结算到会员余额')

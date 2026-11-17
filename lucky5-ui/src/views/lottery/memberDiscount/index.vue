@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import LegacyTable from '@/components/LegacyTable'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import { useLucky5Store } from '@/store/modules/lottery'
 import { legacyFooterHeaders } from '@/views/lottery/utils/legacyTable'
 
@@ -10,6 +10,7 @@ const puller = ref('')
 const keyword = ref('')
 const editVisible = ref(false)
 const batchVisible = ref(false)
+const batchLoading = ref(false)
 const listVersion = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
@@ -157,24 +158,25 @@ const togglePuller = async (row: Record<string, any>) => {
   }
 }
 
-const openBatch = () => {
-  batchForm.normalRate = 0
-  batchForm.lhhRate = 0
-  batchVisible.value = true
+const openBatch = async () => {
+  if (batchLoading.value) return
+  batchLoading.value = true
+  try {
+    const defaults = await store.getDefaultRebateRates()
+    if (defaults === false) return
+    batchForm.normalRate = numberValue(defaults.normalRate)
+    batchForm.lhhRate = numberValue(defaults.lhhRate)
+    batchVisible.value = true
+  } finally {
+    batchLoading.value = false
+  }
 }
 
 const saveBatch = async () => {
-  if (!filteredRows.value.length) {
-    ElMessage.warning('当前没有可设置的会员')
-    return
-  }
-  const payload = filteredRows.value.map((row) => ({
-    ...row,
+  const result = await store.saveDefaultRebateRates({
     normalRate: batchForm.normalRate,
-    lhhRate: batchForm.lhhRate,
-    puller: isPuller(row)
-  }))
-  const result = await store.saveDiscounts(payload)
+    lhhRate: batchForm.lhhRate
+  })
   if (result !== false) {
     await store.refreshRebateMembers()
     rebuildList()
@@ -190,7 +192,7 @@ const saveBatch = async () => {
       <div class="rebate-toolbar">
         <div class="rebate-toolbar__actions">
           <el-button class="rebate-apply-button" @click="apply">一键返水</el-button>
-          <el-button class="rebate-batch-button" @click="openBatch">一键设置</el-button>
+          <el-button class="rebate-batch-button" :loading="batchLoading" @click="openBatch">一键设置</el-button>
         </div>
         <div class="rebate-summary">
           <span>返水合计：<strong>{{ rateSummary(totalRebate) }}</strong></span>
@@ -318,7 +320,12 @@ const saveBatch = async () => {
     </el-dialog>
 
     <el-dialog v-model="batchVisible" title="一键设置返水比例" width="480px" class="lucky-dialog">
-      <el-alert title="将应用到当前筛选结果中的全部真实玩家" type="info" :closable="false" class="mb-16px" />
+      <el-alert
+        title="保存后同步全部现有真实玩家，后续新增真实玩家也会自动使用该比例"
+        type="info"
+        :closable="false"
+        class="mb-16px"
+      />
       <el-form :model="batchForm" label-width="125px">
         <el-form-item label="普通返水比例">
           <el-select v-model="batchForm.normalRate">

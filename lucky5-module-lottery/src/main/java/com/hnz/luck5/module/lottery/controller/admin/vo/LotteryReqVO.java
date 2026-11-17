@@ -2,6 +2,7 @@ package com.hnz.luck5.module.lottery.controller.admin.vo;
 
 import com.hnz.luck5.framework.common.pojo.PageParam;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -332,5 +333,17 @@ public final class LotteryReqVO {
         @Valid
         @NotEmpty
         private List<DiscountItem> members;
+    }
+
+    @Data
+    public static class RebateDefaults {
+        @NotNull
+        @DecimalMin("0")
+        @DecimalMax("10")
+        private BigDecimal normalRate;
+        @NotNull
+        @DecimalMin("0")
+        @DecimalMax("10")
+        private BigDecimal lhhRate;
     }
 }
