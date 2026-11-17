@@ -483,11 +483,21 @@ const chatMessages = computed<ChatItem[]>(() => {
         avatar: message.memberAvatar ?? session.value.member.avatar
       })
       messages.push({
-        id: `robot-message-${message.id}`,
+        id: `robot-draw-text-${message.id}`,
+        kind: 'robot',
+        type: 'text',
+        content: matchingDraw
+          ? roomReplyTemplates.draw(matchingDraw.period, matchingDraw.numbers)
+          : message.reply,
+        createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
+        displayTimeAt: message.createdAt
+      })
+      messages.push({
+        id: `robot-draw-image-${message.id}`,
         kind: 'robot',
         type: 'draw',
-        content: message.reply,
-        createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
+        content: '',
+        createdAt: dayjs(message.createdAt).add(2, 'millisecond').toISOString(),
         displayTimeAt: message.createdAt,
         drawImage: message.drawImage,
         draw: matchingDraw || {
@@ -517,21 +527,25 @@ const chatMessages = computed<ChatItem[]>(() => {
     }
     const persistedDraw = persistedDrawFromMessage(message)
     if (persistedDraw) {
-      // Only the saved image is a draw bubble. A newer lightweight number snapshot cannot invent one.
+      // Only a saved image may add the announcement/image pair. A lightweight number snapshot cannot invent one.
       if (!message.drawImage || displayedDrawPeriods.has(message.period)) continue
       displayedDrawPeriods.add(message.period)
       messages.push({
-        id: `draw-message-${message.id}`,
+        id: `draw-text-${message.id}`,
+        kind: 'robot',
+        type: 'text',
+        content: roomReplyTemplates.draw(persistedDraw.period, persistedDraw.numbers),
+        createdAt: message.createdAt,
+        displayTimeAt: message.createdAt,
+        issuePeriod: message.period,
+        issueSequenceRole: 'DRAW'
+      })
+      messages.push({
+        id: `draw-image-${message.id}`,
         kind: 'robot',
         type: 'draw',
-        content:
-          message.reply ||
-          roomReplyTemplates.draw(
-            persistedDraw.period,
-            persistedDraw.numbers,
-            persistedDraw.dragonTiger
-          ),
-        createdAt: message.createdAt,
+        content: '',
+        createdAt: dayjs(message.createdAt).add(1, 'millisecond').toISOString(),
         displayTimeAt: message.createdAt,
         draw: persistedDraw,
         drawImage: message.drawImage,
@@ -1186,6 +1200,7 @@ const submitChat = async () => {
     avatar: session.value.member.avatar
   }
   const optimisticRobotMessageId = `pending-robot-message-${externalId}`
+  const optimisticRobotDrawMessageId = `pending-robot-draw-${externalId}`
   bottomPanel.value = ''
   saving.value = true
   composer.value = ''
@@ -1206,14 +1221,24 @@ const submitChat = async () => {
     }
     if (result.commandType === 'DRAW_REQUEST' && result.drawImage) {
       const matchingDraw = session.value.draws.find((draw) => draw.period === result.period)
+      const resultNumbers = matchingDraw?.numbers || [...(result.result || '')]
       localMessages.value = [
         ...localMessages.value,
         {
           id: `pending-robot-message-${externalId}`,
           kind: 'robot',
-          type: 'draw',
-          content: result.reply,
+          type: 'text',
+          content: roomReplyTemplates.draw(result.period || '', resultNumbers),
           createdAt: dayjs(submittedAt).add(1, 'millisecond').toISOString(),
+          displayTimeAt: submittedAt,
+          serverMessageId: result.messageId
+        },
+        {
+          id: optimisticRobotDrawMessageId,
+          kind: 'robot',
+          type: 'draw',
+          content: '',
+          createdAt: dayjs(submittedAt).add(2, 'millisecond').toISOString(),
           displayTimeAt: submittedAt,
           serverMessageId: result.messageId,
           drawImage: result.drawImage,
@@ -1242,7 +1267,10 @@ const submitChat = async () => {
     }
   } catch (reason: any) {
     localMessages.value = localMessages.value.filter(
-      (message) => message.id !== optimisticMessageId && message.id !== optimisticRobotMessageId
+      (message) =>
+        message.id !== optimisticMessageId &&
+        message.id !== optimisticRobotMessageId &&
+        message.id !== optimisticRobotDrawMessageId
     )
     if (!composer.value.trim()) composer.value = content
     ElMessage.error(reason?.message || '发送失败')

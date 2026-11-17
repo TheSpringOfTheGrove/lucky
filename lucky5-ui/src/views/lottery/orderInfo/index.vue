@@ -395,7 +395,11 @@ const cancelOrder = async (row: any) => {
         :summary-method="legacyFooterHeaders"
       >
         <el-table-column prop="play" label="玩法" :min-width="isMobile ? 72 : 100" />
-        <el-table-column prop="selection" label="选项" :min-width="isMobile ? 74 : 90" />
+        <el-table-column prop="selection" label="选项" :min-width="isMobile ? 74 : 90">
+          <template #default="scope">
+            {{ scope.row.displaySelection || scope.row.selection }}
+          </template>
+        </el-table-column>
         <el-table-column prop="amount" label="金额" :min-width="isMobile ? 56 : 90" />
         <el-table-column v-if="!isMobile" prop="odds" label="赔率" min-width="90" />
         <el-table-column label="结果" :min-width="isMobile ? 76 : 90">

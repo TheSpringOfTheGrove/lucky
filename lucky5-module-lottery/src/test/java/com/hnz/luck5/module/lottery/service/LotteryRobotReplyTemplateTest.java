@@ -165,6 +165,27 @@ class LotteryRobotReplyTemplateTest {
 
     @Test
     void shouldFormatSettlementLikeReferenceRobot() {
+        List<Integer> drawDigits = List.of(1, 3, 7, 5, 9);
+        assertThat(template.settlementWinningLine("13", drawDigits, BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("13XX，套数1，房费9");
+        assertThat(template.settlementWinningLine("17", drawDigits, BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("1X7X，套数1，房费9");
+        assertThat(template.settlementWinningLine("37", drawDigits, BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("X37X，套数1，房费9");
+        assertThat(template.settlementWinningLine("75", drawDigits, BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("XX75，套数1，房费9");
+        assertThat(template.settlementWinningLine("31", drawDigits, BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("13XX，套数1，房费9");
+        assertThat(template.settlementWinningLine("11", List.of(1, 3, 1, 5, 9),
+                BigDecimal.ONE, new BigDecimal("9")))
+                .isEqualTo("1X1X，套数1，房费9");
+        List<Integer> screenshotDraw = List.of(1, 3, 3, 7, 5);
+        assertThat(template.displayResultSelection("37", screenshotDraw, true)).isEqualTo("X3X7");
+        assertThat(template.displayResultSelection("13", screenshotDraw, true)).isEqualTo("13XX");
+        assertThat(template.displayResultSelection("17", screenshotDraw, true)).isEqualTo("1XX7");
+        assertThat(template.displayResultSelection("03", drawDigits, false)).isEqualTo("03XX");
+        assertThat(template.displayResultSelection("17", drawDigits, true)).isEqualTo("1X7X");
+        assertThat(template.displayResultSelection("6XX4", drawDigits, false)).isEqualTo("6XX4");
         assertThat(template.settlementWinningLine("6", BigDecimal.ONE, new BigDecimal("9")))
                 .isEqualTo("6XXX，套数1，房费9");
         assertThat(template.settlementWinningLine("64", new BigDecimal("10"), new BigDecimal("960")))
@@ -194,6 +215,12 @@ class LotteryRobotReplyTemplateTest {
                 .isEqualTo("【波陆秀】入住：\n57XX，套数10，房费960\n合房费：960\n【面积】：30092.52\n【中介费】：31052.52"
                         + "\n\n--------\n【露露】入住：\n654X，套数5，房费480\n合房费：480\n【面积】：3894.1\n【中介费】：4374.1"
                         + "\n\n--------\n【本次总派送】：1440");
+    }
+
+    @Test
+    void shouldFormatDrawNumberBeforeImageWithoutDragonTiger() {
+        assertThat(template.drawResult("20261117195", "85794"))
+                .isEqualTo("^^--| 195房间号-8|5|7|9|4");
     }
 
     @Test

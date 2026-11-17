@@ -515,6 +515,18 @@ public class LotteryServiceImpl implements LotteryService {
                 "odds", money(item.getOdds()), "won", item.getWon(), "payout", money(item.getPayout()));
     }
 
+    private Map<String, Object> betItemMap(BetItemDO item, List<Integer> drawDigits) {
+        Map<String, Object> result = betItemMap(item);
+        result.put("displaySelection", robotReplyTemplate.displayResultSelection(item.getSelection(), drawDigits,
+                Boolean.TRUE.equals(item.getWon())));
+        return result;
+    }
+
+    private List<Integer> drawDigitsForDisplay(String drawResult) {
+        if (StrUtil.isBlank(drawResult)) return List.of();
+        return drawResult.chars().filter(Character::isDigit).map(value -> value - '0').boxed().toList();
+    }
+
     private Map<String, LocalDateTime> drawTimesFor(Long userId, List<DrawDO> draws) {
         if (userId == null || draws == null || draws.isEmpty()) {
             return Map.of();
@@ -1127,17 +1139,21 @@ public class LotteryServiceImpl implements LotteryService {
             int from = Math.min((reqVO.getPageNo() - 1) * reqVO.getPageSize(), total);
             int to = Math.min(from + reqVO.getPageSize(), total);
             String drawResult = drawResultsForOrders(userId, List.of(order)).get(order.getPeriod());
+            List<Integer> drawDigits = drawDigitsForDisplay(drawResult);
             IssueDO issue = issuesForOrders(userId, List.of(order)).get(order.getPeriod());
             return map("order", orderSummaryMap(order, drawResult, total, issue),
-                    "list", logicalItems.subList(from, to).stream().map(this::betItemMap).toList(), "total", total);
+                    "list", logicalItems.subList(from, to).stream().map(item -> betItemMap(item, drawDigits)).toList(),
+                    "total", total);
         }
         PageResult<BetItemDO> page = betItemMapper.selectPage(reqVO, new LambdaQueryWrapper<BetItemDO>()
                 .eq(BetItemDO::getUserId, userId).eq(BetItemDO::getOrderId, id)
                 .orderByDesc(BetItemDO::getWon).orderByAsc(BetItemDO::getId));
         String drawResult = drawResultsForOrders(userId, List.of(order)).get(order.getPeriod());
+        List<Integer> drawDigits = drawDigitsForDisplay(drawResult);
         IssueDO issue = issuesForOrders(userId, List.of(order)).get(order.getPeriod());
         return map("order", orderSummaryMap(order, drawResult, Math.toIntExact(page.getTotal()), issue),
-                "list", page.getList().stream().map(this::betItemMap).toList(), "total", page.getTotal());
+                "list", page.getList().stream().map(item -> betItemMap(item, drawDigits)).toList(),
+                "total", page.getTotal());
     }
 
     @Override
@@ -2374,8 +2390,8 @@ public class LotteryServiceImpl implements LotteryService {
                         payout = payout.add(itemPayout);
                         if (won) {
                             winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
-                                    .add(robotReplyTemplate.settlementWinningLine(compact.selection(), compact.amount(),
-                                            itemPayout));
+                                    .add(robotReplyTemplate.settlementWinningLine(compact.selection(), draw.digits(),
+                                            compact.amount(), itemPayout));
                             winningPayouts.merge(order.getMemberName(), itemPayout, BigDecimal::add);
                             winningMemberIds.put(order.getMemberName(), order.getMemberId());
                         }
@@ -2395,8 +2411,8 @@ public class LotteryServiceImpl implements LotteryService {
                 settledItems.add(item);
                 if (won) {
                     winningLines.computeIfAbsent(order.getMemberName(), ignored -> new ArrayList<>())
-                            .add(robotReplyTemplate.settlementWinningLine(item.getSelection(), item.getAmount(),
-                                    item.getPayout()));
+                            .add(robotReplyTemplate.settlementWinningLine(item.getSelection(), draw.digits(),
+                                    item.getAmount(), item.getPayout()));
                     winningPayouts.merge(order.getMemberName(), item.getPayout(), BigDecimal::add);
                     winningMemberIds.put(order.getMemberName(), order.getMemberId());
                 }

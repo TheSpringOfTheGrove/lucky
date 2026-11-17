@@ -3,10 +3,6 @@ package com.hnz.luck5.module.lottery.service;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** A fixed-size, replayable draw image for a room message. */
 @Component
@@ -45,29 +41,16 @@ public class LotteryDrawHistoryImageRenderer {
         return completeSnapshot(svg.append("</svg>").toString());
     }
 
-    /** Add the result column to our old snapshots without replacing their saved numbers or times. */
+    /** Remove the legacy dragon/tiger/tie suffix while preserving every saved number and time. */
     public static String completeSnapshot(String image) {
-        if (image == null || image.contains("data-draw-format=\"2\"")
-                || !image.startsWith("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\"")) {
+        if (image == null || image.contains("data-draw-format=\"3\"")
+                || !(image.startsWith("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\"")
+                || image.startsWith("<svg data-draw-format=\"2\" xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\""))) {
             return image;
         }
-        Matcher digits = Pattern.compile("<text x=\"(158|195|232|269|306)\" y=\"(\\d+)\"[^>]*>([0-9])</text>")
-                .matcher(image);
-        Map<Integer, char[]> rows = new TreeMap<>();
-        while (digits.find()) {
-            char[] numbers = rows.computeIfAbsent(Integer.parseInt(digits.group(2)), ignored -> new char[5]);
-            numbers[(Integer.parseInt(digits.group(1)) - 158) / 37] = digits.group(3).charAt(0);
-        }
-        StringBuilder results = new StringBuilder();
-        rows.forEach((baseline, numbers) -> {
-            if (numbers[0] == 0 || numbers[3] == 0) return;
-            // Only the first and fourth balls determine the result; ball five is display-only.
-            String result = numbers[0] > numbers[3] ? "龙" : numbers[0] < numbers[3] ? "虎" : "和";
-            String color = "龙".equals(result) ? "#ff1493" : "虎".equals(result) ? "#0000ff" : "#00dd44";
-            label(results, 343, baseline, result, color, 23);
-        });
-        return image.replace("<svg ", "<svg data-draw-format=\"2\" ")
-                .replace("</svg>", results + "</svg>");
+        return image.replaceAll("<text x=\"343\" y=\"\\d+\"[^>]*>[龙虎和]</text>", "")
+                .replace("<svg data-draw-format=\"2\" ", "<svg data-draw-format=\"3\" ")
+                .replace("<svg ", "<svg data-draw-format=\"3\" ");
     }
 
     private static void label(StringBuilder svg, int x, int y, String text, String color, int size) {

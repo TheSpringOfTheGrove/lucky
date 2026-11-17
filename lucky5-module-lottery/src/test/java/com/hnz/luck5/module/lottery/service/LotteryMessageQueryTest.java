@@ -89,7 +89,7 @@ class LotteryMessageQueryTest {
         MessageDO autoProxyBet = message(3L, "A01", "20260810181", "大100", "@A01\n【户型审核成功】√√");
         autoProxyBet.setMessageType("AUTO_PROXY");
         autoProxyBet.setCommandType("BET");
-        MessageDO drawResult = message(2L, "", "20260810180", "", "180期开奖结果-0|6|2|2|2");
+        MessageDO drawResult = message(2L, "", "20260810180", "", "^^--| 180房间号-0|6|2|2|2");
         drawResult.setCommandType("DRAW_RESULT");
         drawResult.setContent("06222");
         drawResult.setDrawImage("<svg>180 14:00 06222</svg>");
@@ -102,7 +102,7 @@ class LotteryMessageQueryTest {
         assertThat(result.getList()).extracting(row -> row.get("sender"))
                 .containsExactly("机器人", "A01", "机器人");
         assertThat(result.getList()).extracting(row -> row.get("content"))
-                .containsExactly("@A01\n【户型审核成功】√√", "大100", "^^--| 180期开奖结果-0|6|2|2|2|虎");
+                .containsExactly("@A01\n【户型审核成功】√√", "大100", "^^--| 180房间号-0|6|2|2|2");
         Map<String, Object> drawRow = result.getList().get(2);
         assertThat(drawRow).containsEntry("kind", "robot").containsEntry("commandType", "DRAW_RESULT");
         String image = drawRow.get("drawImage").toString();
@@ -122,7 +122,7 @@ class LotteryMessageQueryTest {
         request.setPageNo(1);
         request.setContent("06222");
         assertThat(service.getMessages(request).getList()).isEmpty(); // no fake raw-number player message
-        request.setContent("期开奖结果");
+        request.setContent("房间号");
         assertThat(service.getMessages(request).getTotal()).isEqualTo(1);
     }
 
@@ -192,7 +192,7 @@ class LotteryMessageQueryTest {
         Map<String, Object> room = ReflectionTestUtils.invokeMethod(service, "roomMessageMap",
                 draw, viewer, Map.of(), Map.of());
         assertThat(service.getMessages(new LotteryReqVO.MessagePage()).getList().get(0).get("content"))
-                .isEqualTo(room.get("reply")).isEqualTo("^^--| 215期开奖结果-9|9|7|9|6|和");
+                .isEqualTo(room.get("reply")).isEqualTo("^^--| 215房间号-9|9|7|9|6");
     }
 
     @Test

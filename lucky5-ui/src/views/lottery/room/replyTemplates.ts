@@ -63,8 +63,7 @@ export const roomReplyTemplates = {
     return status === 'OPEN' ? '^^★★★开始-答题★★★' : '^^★★★停止-上课★★★'
   },
 
-  draw(period: string, numbers: string[], storedDragonTiger = '') {
-    const dragonTiger = resolveDragonTiger(numbers, storedDragonTiger)
-    return `^^--| ${period.slice(-3)}期开奖结果-${numbers.join('|')}${dragonTiger ? `|${dragonTiger}` : ''}`
+  draw(period: string, numbers: string[]) {
+    return `^^--| ${period.slice(-3)}房间号-${numbers.join('|')}`
   }
 }

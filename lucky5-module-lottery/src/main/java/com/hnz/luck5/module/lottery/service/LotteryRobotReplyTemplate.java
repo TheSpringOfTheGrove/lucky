@@ -38,9 +38,8 @@ public class LotteryRobotReplyTemplate {
 
     public String drawResult(String period, String numbers) {
         LotteryBettingService.DrawResult draw = bettingService.deriveDraw(numbers);
-        return "^^--| " + periodSuffix(period) + "期开奖结果-"
-                + String.join("|", draw.digits().stream().map(String::valueOf).toList())
-                + "|" + draw.dragonTiger();
+        return "^^--| " + periodSuffix(period) + "房间号-"
+                + String.join("|", draw.digits().stream().map(String::valueOf).toList());
     }
 
     public String dailyClosingGreeting() {
@@ -293,12 +292,49 @@ public class LotteryRobotReplyTemplate {
     }
 
     String settlementWinningLine(String selection, BigDecimal amount, BigDecimal payout) {
+        return settlementWinningLine(selection, null, amount, payout);
+    }
+
+    String settlementWinningLine(String selection, List<Integer> drawDigits,
+                                 BigDecimal amount, BigDecimal payout) {
+        String displaySelection = displayResultSelection(selection, drawDigits, true);
+        return displaySelection + "，套数" + number(amount) + "，房费" + number(payout);
+    }
+
+    String displayResultSelection(String selection, List<Integer> drawDigits, boolean won) {
         String displaySelection = selection == null ? "" : selection.trim();
         displaySelection = displaySelection.toUpperCase(Locale.ROOT);
-        if (displaySelection.matches("[0-9X]{1,3}")) {
+        if (displaySelection.matches("[0-9]{1,3}")) {
+            String positionedSelection = won ? positionWinningSelection(displaySelection, drawDigits) : null;
+            displaySelection = positionedSelection == null
+                    ? displaySelection + "X".repeat(4 - displaySelection.length())
+                    : positionedSelection;
+        } else if (displaySelection.matches("[0-9X]{1,3}")) {
             displaySelection += "X".repeat(4 - displaySelection.length());
         }
-        return displaySelection + "，套数" + number(amount) + "，房费" + number(payout);
+        return displaySelection;
+    }
+
+    private String positionWinningSelection(String selection, List<Integer> drawDigits) {
+        if (drawDigits == null || drawDigits.size() < 4) return null;
+        int[] remaining = new int[10];
+        for (int index = 0; index < selection.length(); index++) {
+            remaining[selection.charAt(index) - '0']++;
+        }
+        StringBuilder positioned = new StringBuilder(4);
+        for (int index = 0; index < 4; index++) {
+            Integer drawDigit = drawDigits.get(index);
+            if (drawDigit != null && drawDigit >= 0 && drawDigit <= 9 && remaining[drawDigit] > 0) {
+                positioned.append(drawDigit);
+                remaining[drawDigit]--;
+            } else {
+                positioned.append('X');
+            }
+        }
+        for (int count : remaining) {
+            if (count > 0) return null;
+        }
+        return positioned.toString();
     }
 
     public String payoutSummary(BigDecimal periodPayout) {
