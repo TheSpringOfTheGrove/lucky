@@ -923,6 +923,11 @@ public class LotteryServiceImpl implements LotteryService {
         boolean autoProxy = MEMBER_BOT.equals(requestedType);
         item.setMemberType(requestedType);
         item.setAutoProxy(autoProxy);
+        if (create && !autoProxy) {
+            LotteryConfigDO config = requireConfig();
+            item.setNormalRate(value(config.getDefaultNormalRebateRate(), ZERO));
+            item.setLhhRate(value(config.getDefaultLhhRebateRate(), ZERO));
+        }
         item.setAutoBetEnabled(autoProxy && value(reqVO.getAutoBetEnabled(),
                 reqVO.getAutoProxy() != null ? true
                         : create || !wasAutoProxy || item.getAutoBetEnabled() == null ? true : item.getAutoBetEnabled()));
@@ -1395,6 +1400,35 @@ public class LotteryServiceImpl implements LotteryService {
         });
         normalizePullerRelations();
         log("-", "保存会员返水及拉手设置");
+    }
+
+    @Override
+    public Map<String, Object> getDefaultRebateRates() {
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        LotteryConfigDO config = findUserConfig(userId);
+        return map("normalRate", value(config == null ? null : config.getDefaultNormalRebateRate(), ZERO),
+                "lhhRate", value(config == null ? null : config.getDefaultLhhRebateRate(), ZERO));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void saveDefaultRebateRates(LotteryReqVO.RebateDefaults reqVO) {
+        Long userId = Objects.requireNonNullElse(SecurityFrameworkUtils.getLoginUserId(), DEFAULT_OWNER_USER_ID);
+        BigDecimal normalRate = reqVO.getNormalRate();
+        BigDecimal lhhRate = reqVO.getLhhRate();
+        LotteryConfigDO config = requireConfig(userId);
+        config.setDefaultNormalRebateRate(normalRate);
+        config.setDefaultLhhRebateRate(lhhRate);
+        lotteryConfigMapper.updateById(config);
+        memberMapper.update(null, new LambdaUpdateWrapper<MemberDO>()
+                .eq(MemberDO::getUserId, userId)
+                .and(wrapper -> wrapper.isNull(MemberDO::getMemberType)
+                        .or().ne(MemberDO::getMemberType, MEMBER_BOT))
+                .and(wrapper -> wrapper.isNull(MemberDO::getAutoProxy)
+                        .or().eq(MemberDO::getAutoProxy, false))
+                .set(MemberDO::getNormalRate, normalRate)
+                .set(MemberDO::getLhhRate, lhhRate));
+        log("-", "一键设置默认反水比例：普通 " + normalRate + "% / 龙虎和 " + lhhRate + "%");
     }
 
     private void normalizeSelfPartner(MemberDO member) {

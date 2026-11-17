@@ -27,5 +27,7 @@ public class LotteryConfigDO extends LotteryUserBaseDO {
     private Boolean bossMode;
     private Integer playType;
     private Boolean useProxy;
+    private BigDecimal defaultNormalRebateRate;
+    private BigDecimal defaultLhhRebateRate;
 
 }
