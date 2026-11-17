@@ -166,6 +166,12 @@ export const deleteMemberApi = (id: string) => request.delete({ url: `${base}/me
 export const saveDiscountsApi = (members: Record<string, any>[]) =>
   request.put({ url: `${base}/member-discounts`, data: { members } })
 
+export const getDefaultRebateRatesApi = () =>
+  request.get<{ normalRate: number; lhhRate: number }>({ url: `${base}/rebates/default-rates` })
+
+export const saveDefaultRebateRatesApi = (data: { normalRate: number; lhhRate: number }) =>
+  request.put({ url: `${base}/rebates/default-rates`, data })
+
 export const getRebateMembersApi = () =>
   request.get<Record<string, any>[]>({ url: `${base}/rebates/members`, timeout: 120_000 })
 
