@@ -76,8 +76,9 @@ const compareChatChronology = (left: ChatItem, right: ChatItem) => {
 
 const orderIssueSequenceMessages = (source: ChatItem[]) => {
   const ordered = [...source].sort(compareChatChronology)
-  // A settlement belongs to the closed period, but its display block follows the next period's
-  // OPEN message. Derive that relationship from adjacent observed periods instead of timestamps.
+  // Keep each completed draw together around the next period boundary:
+  // draw text -> draw image -> next OPEN -> settlement -> payout summary.
+  // The relationship comes from adjacent periods, not millisecond timestamp adjustments.
   const periodSequence = [
     ...new Set(
       ordered.map((item) => item.issuePeriod).filter((period): period is string => Boolean(period))
@@ -89,7 +90,14 @@ const orderIssueSequenceMessages = (source: ChatItem[]) => {
       .map((item) => [item.issuePeriod as string, item])
   )
   const settlementByPeriod = new Map<string, ChatItem[]>()
+  const drawByPeriod = new Map<string, ChatItem[]>()
   for (const item of ordered) {
+    if (item.issuePeriod && item.issueSequenceRole === 'DRAW') {
+      const periodMessages = drawByPeriod.get(item.issuePeriod) || []
+      periodMessages.push(item)
+      drawByPeriod.set(item.issuePeriod, periodMessages)
+      continue
+    }
     if (
       !item.issuePeriod ||
       !['SETTLEMENT', 'PAYOUT_SUMMARY'].includes(item.issueSequenceRole || '')
@@ -103,17 +111,29 @@ const orderIssueSequenceMessages = (source: ChatItem[]) => {
 
   const baseIndex = new Map(ordered.map((item, index) => [item.id, index]))
   const movedIds = new Set<string>()
+  const beforeOpen = new Map<string, ChatItem[]>()
   const afterOpen = new Map<string, ChatItem[]>()
-  for (const [period, periodMessages] of settlementByPeriod) {
+  for (const period of new Set([...drawByPeriod.keys(), ...settlementByPeriod.keys()])) {
     const periodIndex = periodSequence.indexOf(period)
     const nextPeriod = periodIndex >= 0 ? periodSequence[periodIndex + 1] : undefined
     const nextOpen = nextPeriod ? openByPeriod.get(nextPeriod) : undefined
     if (!nextOpen) continue
 
-    const insertions = afterOpen.get(nextOpen.id) || []
-    insertions.push(...periodMessages)
-    afterOpen.set(nextOpen.id, insertions)
-    periodMessages.forEach((item) => movedIds.add(item.id))
+    const drawMessages = drawByPeriod.get(period) || []
+    if (drawMessages.length) {
+      const insertions = beforeOpen.get(nextOpen.id) || []
+      insertions.push(...drawMessages)
+      beforeOpen.set(nextOpen.id, insertions)
+      drawMessages.forEach((item) => movedIds.add(item.id))
+    }
+
+    const settlementMessages = settlementByPeriod.get(period) || []
+    if (settlementMessages.length) {
+      const insertions = afterOpen.get(nextOpen.id) || []
+      insertions.push(...settlementMessages)
+      afterOpen.set(nextOpen.id, insertions)
+      settlementMessages.forEach((item) => movedIds.add(item.id))
+    }
   }
 
   const issueRoleRank: Partial<Record<IssueSequenceRole, number>> = {
@@ -130,10 +150,16 @@ const orderIssueSequenceMessages = (source: ChatItem[]) => {
       return roleDifference || (baseIndex.get(left.id) || 0) - (baseIndex.get(right.id) || 0)
     })
   }
+  for (const insertions of beforeOpen.values()) {
+    insertions.sort((left, right) => {
+      const periodDifference = compareIssuePeriods(left.issuePeriod || '', right.issuePeriod || '')
+      return periodDifference || (baseIndex.get(left.id) || 0) - (baseIndex.get(right.id) || 0)
+    })
+  }
 
   return ordered.flatMap((item) => {
     if (movedIds.has(item.id)) return []
-    return [item, ...(afterOpen.get(item.id) || [])]
+    return [...(beforeOpen.get(item.id) || []), item, ...(afterOpen.get(item.id) || [])]
   })
 }
 

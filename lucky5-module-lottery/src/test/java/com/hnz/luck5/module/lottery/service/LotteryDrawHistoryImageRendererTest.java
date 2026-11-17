@@ -37,10 +37,26 @@ class LotteryDrawHistoryImageRendererTest {
                 + "<text x=\"306\" y=\"72\">6</text>"
                 + "<text x=\"343\" y=\"72\" fill=\"#00dd44\">和</text></svg>";
         String upgraded = LotteryDrawHistoryImageRenderer.completeSnapshot(image);
-        assertThat(upgraded).contains("data-draw-format=\"3\"", "215", "17:55")
+        assertThat(upgraded).startsWith("<svg data-draw-format=\"3\" xmlns=")
+                .contains("215", "17:55")
+                .doesNotContain("data-draw-format=\"3\" data-draw-format=\"3\"")
                 .doesNotContain(">龙</text>", ">虎</text>", ">和</text>");
         assertThat(LotteryDrawHistoryImageRenderer.completeSnapshot(upgraded)).isEqualTo(upgraded);
         assertThat(upgraded.substring(upgraded.indexOf("<text"), upgraded.indexOf("</svg>")))
                 .isEqualTo(image.substring(image.indexOf("<text"), image.indexOf("<text x=\"343\"")));
+    }
+
+    @Test
+    void malformedDuplicateFormatAttributeIsRepaired() {
+        String malformed = "<svg data-draw-format=\"3\" data-draw-format=\"3\" "
+                + "xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\">"
+                + "<text x=\"14\" y=\"72\">136</text></svg>";
+
+        String repaired = LotteryDrawHistoryImageRenderer.completeSnapshot(malformed);
+
+        assertThat(repaired).startsWith("<svg data-draw-format=\"3\" xmlns=")
+                .doesNotContain("data-draw-format=\"3\" data-draw-format=\"3\"")
+                .contains(">136</text>");
+        assertThat(LotteryDrawHistoryImageRenderer.completeSnapshot(repaired)).isEqualTo(repaired);
     }
 }

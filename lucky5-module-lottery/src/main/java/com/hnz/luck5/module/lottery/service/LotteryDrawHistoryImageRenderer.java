@@ -43,14 +43,13 @@ public class LotteryDrawHistoryImageRenderer {
 
     /** Remove the legacy dragon/tiger/tie suffix while preserving every saved number and time. */
     public static String completeSnapshot(String image) {
-        if (image == null || image.contains("data-draw-format=\"3\"")
-                || !(image.startsWith("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\"")
-                || image.startsWith("<svg data-draw-format=\"2\" xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\""))) {
+        if (image == null || !image.matches("(?s)^<svg(?: data-draw-format=\"[^\"]+\")* "
+                + "xmlns=\"http://www.w3.org/2000/svg\" width=\"381\" height=\"661\".*")) {
             return image;
         }
         return image.replaceAll("<text x=\"343\" y=\"\\d+\"[^>]*>[龙虎和]</text>", "")
-                .replace("<svg data-draw-format=\"2\" ", "<svg data-draw-format=\"3\" ")
-                .replace("<svg ", "<svg data-draw-format=\"3\" ");
+                .replaceFirst("^<svg(?: data-draw-format=\"[^\"]+\")* ",
+                        "<svg data-draw-format=\"3\" ");
     }
 
     private static void label(StringBuilder svg, int x, int y, String text, String color, int size) {
