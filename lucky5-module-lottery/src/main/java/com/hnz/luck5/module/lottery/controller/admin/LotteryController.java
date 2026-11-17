@@ -240,6 +240,20 @@ public class LotteryController {
         return success(true);
     }
 
+    @GetMapping("/rebates/default-rates")
+    @PreAuthorize("@ss.hasPermission('lottery:rebate:manage')")
+    public CommonResult<Map<String, Object>> getDefaultRebateRates() {
+        return success(lotteryService.getDefaultRebateRates());
+    }
+
+    @PutMapping("/rebates/default-rates")
+    @PreAuthorize("@ss.hasPermission('lottery:rebate:manage')")
+    public CommonResult<Boolean> saveDefaultRebateRates(
+            @Valid @RequestBody LotteryReqVO.RebateDefaults reqVO) {
+        lotteryService.saveDefaultRebateRates(reqVO);
+        return success(true);
+    }
+
     @GetMapping("/rebates/members")
     @PreAuthorize("@ss.hasPermission('lottery:rebate:manage')")
     public CommonResult<List<Map<String, Object>>> getRebateMembers() {
