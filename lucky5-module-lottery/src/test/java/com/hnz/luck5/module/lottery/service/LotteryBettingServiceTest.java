@@ -453,16 +453,13 @@ class LotteryBettingServiceTest {
 
     @Test
     void matchesHistoricalFourPositionFilterCounts() {
-        assertThat(service.parse(
-                "除个4四定取千百十个合023697458百十个合623957104两数合0268除对数49除单单大双除四兄弟除四重除两双重各1", odds).size()).isEqualTo(5_823);
-        assertThat(service.parse(
-                "除个7四定取千百合473018652百个合237460518三数合01258除对数38各0.5", odds).size()).isEqualTo(6_105);
-        assertThat(service.parse(
-                "配01234配56789四定除千百十个合4三数合54321除单双双双取两兄弟各1.6", odds).size()).isEqualTo(4_876);
-        assertThat(service.parse(
-                "四定千123457906百123567890十123457890取千百十个合123456789取千百个合012345689除三重除四重除四兄弟除对数371各0.8", odds).size()).isEqualTo(5_409);
-        assertThat(service.parse(
-                "千百十尾23457890除大大大大除小小小小除单单单单除双双双双除千百十个合16各0.1", odds).size()).isEqualTo(2_590);
+        assertThat(List.of(
+                service.parse("除个4四定取千百十个合023697458百十个合623957104两数合0268除对数49除单单大双除四兄弟除四重除两双重各1", odds).size(),
+                service.parse("除个7四定取千百合473018652百个合237460518三数合01258除对数38各0.5", odds).size(),
+                service.parse("配01234配56789四定除千百十个合4三数合54321除单双双双取两兄弟各1.6", odds).size(),
+                service.parse("四定千123457906百123567890十123457890取千百十个合123456789取千百个合012345689除三重除四重除四兄弟除对数371各0.8", odds).size(),
+                service.parse("千百十尾23457890除大大大大除小小小小除单单单单除双双双双除千百十个合16各0.1", odds).size()))
+                .containsExactly(6_146, 6_612, 4_876, 5_550, 2_590);
     }
 
     @Test
@@ -471,7 +468,7 @@ class LotteryBettingServiceTest {
                 + "千十个合078965421个合079654123两数合246含0378取对数各0.1";
         List<LotteryBettingService.ParsedBet> bets = service.parse(command, odds);
 
-        assertThat(bets).hasSize(2_465)
+        assertThat(bets).hasSize(1_446)
                 .allSatisfy(bet -> {
                     assertThat(bet.play()).isEqualTo("四定位");
                     assertThat(bet.amount()).isEqualByComparingTo("0.1");
@@ -489,10 +486,8 @@ class LotteryBettingServiceTest {
     }
 
     private boolean hasOppositePair(String value) {
-        for (int first = 0; first < value.length(); first++) {
-            for (int second = first + 1; second < value.length(); second++) {
-                if (Math.abs(value.charAt(first) - value.charAt(second)) == 5) return true;
-            }
+        for (int first = 0; first + 1 < value.length(); first++) {
+            if (Math.abs(value.charAt(first) - value.charAt(first + 1)) == 5) return true;
         }
         return false;
     }
@@ -504,7 +499,7 @@ class LotteryBettingServiceTest {
                 + "含234789除四小除对数18除值21值21除单单单双除大大小单除三兄弟各1.1";
         List<LotteryBettingService.ParsedBet> bets = service.parse(command, odds);
 
-        assertThat(bets).hasSize(2_856);
+        assertThat(bets).hasSize(3_088);
         assertThat(service.parse("四定取四小各1", odds)).hasSize(625);
         assertThat(service.parse("四定除四小各1", odds)).hasSize(9_375);
         assertThat(service.parse("四定取四大各1", odds)).hasSize(625);
@@ -561,12 +556,12 @@ class LotteryBettingServiceTest {
                 .collect(java.util.stream.Collectors.joining("\n"));
 
         assertThat(service.splitCommandsForDisplay(content)).hasSize(14);
-        assertThat(service.parse(content, odds)).hasSize(69_141);
+        assertThat(service.parse(content, odds)).hasSize(74_871);
         assertThat(service.parseCommands(content, odds))
                 .hasSize(14)
                 .allSatisfy(command -> assertThat(command.content()).startsWith("13680配"));
         assertThat(service.parseCommands(content, odds).stream().mapToInt(command -> command.items().size()).sum())
-                .isEqualTo(69_141);
+                .isEqualTo(74_871);
     }
 
     @Test
@@ -656,14 +651,17 @@ class LotteryBettingServiceTest {
         String firstFilters = "两数合15三数合1234含1368除对数05除四兄弟各1";
         List<LotteryBettingService.ParsedBet> first = service.parse(
                 "四定配258369配258369" + firstFilters, odds);
-        assertThat(first).hasSize(3_830)
-                .containsExactlyElementsOf(service.parse("配258369配258369四定" + firstFilters, odds));
+        List<LotteryBettingService.ParsedBet> firstReordered = service.parse(
+                "配258369配258369四定" + firstFilters, odds);
 
         String secondFilters = "两数合468三数合7890含1368除对数49除小小小大除四兄弟各1";
         List<LotteryBettingService.ParsedBet> second = service.parse(
                 "四定配1234567配1234567" + secondFilters, odds);
-        assertThat(second).hasSize(5_529)
-                .containsExactlyElementsOf(service.parse("配1234567配1234567四定" + secondFilters, odds));
+        List<LotteryBettingService.ParsedBet> secondReordered = service.parse(
+                "配1234567配1234567四定" + secondFilters, odds);
+        assertThat(List.of(first.size(), second.size())).containsExactly(4_241, 5_856);
+        assertThat(first).containsExactlyElementsOf(firstReordered);
+        assertThat(second).containsExactlyElementsOf(secondReordered);
     }
 
     @Test
@@ -698,26 +696,45 @@ class LotteryBettingServiceTest {
                 .extracting(LotteryBettingService.ParsedBet::selection)
                 .containsExactlyElementsOf(service.parse(prefix + "取两兄弟" + suffix, odds)
                         .stream().map(LotteryBettingService.ParsedBet::selection).toList());
-        assertThat(service.parse(prefix + "取兄弟" + suffix, odds)).hasSize(1_536);
+        assertThat(service.parse(prefix + "取兄弟" + suffix, odds)).hasSize(1_552);
     }
 
     @Test
     void twoOppositePairsRequireTwoDisjointPositionPairs() {
-        assertThat(service.parse("四定取两对数各1", odds)).hasSize(270)
+        assertThat(service.parse("四定取两对数各1", odds)).hasSize(100)
                 .extracting(LotteryBettingService.ParsedBet::selection)
                 .contains("0505", "0516").doesNotContain("0511", "0005");
-        assertThat(service.parse("四定除两对数各1", odds)).hasSize(9_730);
+        assertThat(service.parse("四定除两对数各1", odds)).hasSize(9_900);
         assertThat(service.parse("四定取二对数各1", odds))
                 .containsExactlyElementsOf(service.parse("四定取两对数各1", odds));
     }
 
     @Test
+    void specifiedOppositeGroupsRequireExactAdjacentSequencesAndTakeGroupsAreAlternatives() {
+        assertThat(service.parse("二定取对数05取对数16各1", odds)).hasSize(6)
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactlyInAnyOrder("05XX", "X05X", "XX05", "16XX", "X16X", "XX16")
+                .doesNotContain("0X5X", "50XX", "61XX");
+        assertThat(service.parse("三定取对数05取对数16各1", odds)).hasSize(120)
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .contains("050X", "X051", "160X", "X161")
+                .doesNotContain("0X51", "50X1", "61X0");
+        assertThat(service.parse("五位二定取对数05取对数16各1", odds)).hasSize(2)
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .containsExactlyInAnyOrder("XXX05", "XXX16");
+        assertThat(service.parse("二定除对数05除对数16各1", odds)).hasSize(594)
+                .extracting(LotteryBettingService.ParsedBet::selection)
+                .doesNotContain("05XX", "X05X", "XX05", "16XX", "X16X", "XX16")
+                .contains("0X5X", "50XX", "61XX");
+    }
+
+    @Test
     void supportsPostfixOppositePairAliasesAndRejectsUnparsedPairText() {
-        assertThat(service.parse("四定16对各1", odds)).hasSize(974)
+        assertThat(service.parse("四定16对各1", odds)).hasSize(299)
                 .containsExactlyElementsOf(service.parse("四定取对数16各1", odds));
         assertThat(service.parse("四定取16对各1", odds))
                 .containsExactlyElementsOf(service.parse("四定取对数16各1", odds));
-        assertThat(service.parse("四定除38对各1", odds)).hasSize(9_026)
+        assertThat(service.parse("四定除38对各1", odds)).hasSize(9_701)
                 .containsExactlyElementsOf(service.parse("四定除对数38各1", odds));
 
         assertThatThrownBy(() -> service.parse("四定1对各1", odds)).hasMessageContaining("无法识别");
@@ -732,11 +749,11 @@ class LotteryBettingServiceTest {
                 + prefix + "除三兄弟值范围7-28排除39除两对数各0.5\n"
                 + prefix + "取兄弟除三兄弟值范围7-29排除39除两对数各1";
         List<LotteryBettingService.ParsedCommand> parsed = service.parseCommands(command, odds);
-        assertThat(parsed).extracting(item -> item.items().size()).containsExactly(2_988, 2_532, 1_536);
-        assertThat(parsed.stream().mapToInt(item -> item.items().size()).sum()).isEqualTo(7_056);
+        assertThat(parsed).extracting(item -> item.items().size()).containsExactly(3_024, 2_568, 1_552);
+        assertThat(parsed.stream().mapToInt(item -> item.items().size()).sum()).isEqualTo(7_144);
         assertThat(parsed.stream().flatMap(item -> item.items().stream())
                 .map(LotteryBettingService.ParsedBet::amount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("3698.4");
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("3743.2");
     }
 
     @Test
@@ -754,11 +771,11 @@ class LotteryBettingServiceTest {
             assertThat(parsed).extracting(LotteryBettingService.ParsedCommand::content)
                     .containsExactlyElementsOf(expected);
             assertThat(parsed).extracting(item -> item.items().size())
-                    .containsExactly(3_897, 2_761, 3_984);
-            assertThat(parsed.stream().mapToInt(item -> item.items().size()).sum()).isEqualTo(10_642);
+                    .containsExactly(4_240, 3_010, 4_321);
+            assertThat(parsed.stream().mapToInt(item -> item.items().size()).sum()).isEqualTo(11_571);
             assertThat(parsed.stream().flatMap(item -> item.items().stream())
                     .map(LotteryBettingService.ParsedBet::amount)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("2128.4");
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("2314.2");
         }
 
         List<String> leadingDecimalAmounts = List.of(
@@ -770,7 +787,7 @@ class LotteryBettingServiceTest {
         assertThat(shorthandParsed).extracting(LotteryBettingService.ParsedCommand::content)
                 .containsExactlyElementsOf(leadingDecimalAmounts);
         assertThat(shorthandParsed).extracting(item -> item.items().size())
-                .containsExactly(3_897, 2_761, 3_984);
+                .containsExactly(4_240, 3_010, 4_321);
         assertThat(shorthandParsed.stream().flatMap(item -> item.items().stream()))
                 .allSatisfy(item -> assertThat(item.amount()).isEqualByComparingTo("0.2"));
 

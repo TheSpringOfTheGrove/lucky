@@ -1172,15 +1172,22 @@ public class LotteryBettingService {
             result.removeIf(value -> hasTwoDisjointOppositePairs(value) != take);
         }
 
+        List<String> takeOppositeGroups = new ArrayList<>();
+        List<String> excludeOppositeGroups = new ArrayList<>();
         Matcher opposite = Pattern.compile("(取|除)对数([0-9]*)").matcher(expression);
         while (opposite.find()) {
-            boolean take = "取".equals(opposite.group(1));
-            if (opposite.group(2).isEmpty()) {
-                result.removeIf(value -> hasOppositePair(value) != take);
-            } else {
-                Set<Character> required = chars(opposite.group(2));
-                result.removeIf(value -> containsAllDigits(value, required) != take);
-            }
+            List<String> groups = "取".equals(opposite.group(1))
+                    ? takeOppositeGroups : excludeOppositeGroups;
+            groups.add(opposite.group(2));
+        }
+        if (!takeOppositeGroups.isEmpty()) {
+            // Repeated take groups are alternatives: 取对数05取对数16 means 05 OR 16.
+            result.removeIf(value -> takeOppositeGroups.stream()
+                    .noneMatch(sequence -> matchesOppositeSequence(value, sequence)));
+        }
+        if (!excludeOppositeGroups.isEmpty()) {
+            result.removeIf(value -> excludeOppositeGroups.stream()
+                    .anyMatch(sequence -> matchesOppositeSequence(value, sequence)));
         }
 
         Matcher attributes = Pattern.compile("(取|除)([大小单双X]{2,5})(?![大小单双重])").matcher(expression);
@@ -1292,33 +1299,22 @@ public class LotteryBettingService {
         return allowed.contains((char) ('0' + sum % 10));
     }
 
-    private boolean containsAllDigits(String value, Set<Character> required) {
-        Set<Character> actual = value.chars().filter(item -> item != 'X')
-                .mapToObj(item -> (char) item).collect(java.util.stream.Collectors.toSet());
-        return actual.containsAll(required);
+    private boolean matchesOppositeSequence(String value, String sequence) {
+        return sequence.isEmpty() ? hasOppositePair(value) : value.contains(sequence);
     }
 
     private boolean hasOppositePair(String value) {
-        for (int first = 0; first < value.length(); first++) {
-            for (int second = first + 1; second < value.length(); second++) {
-                if (isOppositePair(value, first, second)) return true;
-            }
+        for (int first = 0; first + 1 < value.length(); first++) {
+            if (isOppositePair(value, first, first + 1)) return true;
         }
         return false;
     }
 
     private boolean hasTwoDisjointOppositePairs(String value) {
-        for (int first = 0; first < value.length(); first++) {
-            for (int second = first + 1; second < value.length(); second++) {
-                if (!isOppositePair(value, first, second)) continue;
-                for (int third = 0; third < value.length(); third++) {
-                    if (third == first || third == second) continue;
-                    for (int fourth = third + 1; fourth < value.length(); fourth++) {
-                        if (fourth != first && fourth != second && isOppositePair(value, third, fourth)) {
-                            return true;
-                        }
-                    }
-                }
+        for (int first = 0; first + 1 < value.length(); first++) {
+            if (!isOppositePair(value, first, first + 1)) continue;
+            for (int second = first + 2; second + 1 < value.length(); second++) {
+                if (isOppositePair(value, second, second + 1)) return true;
             }
         }
         return false;
