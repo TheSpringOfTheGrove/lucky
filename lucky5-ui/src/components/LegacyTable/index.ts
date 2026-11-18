@@ -20,6 +20,23 @@ export default defineComponent({
       const definitions = collectLegacyColumns(slots.default?.() || [])
       const columns = definitions.filter((column) => column.props?.type !== 'expand')
       const expand = definitions.find((column) => column.props?.type === 'expand')
+      const memberScroll = props.mobileLayout === 'member-scroll'
+      const rawColumnWidth = (definition?: Record<string, any> | null) =>
+        definition?.minWidth ?? definition?.['min-width'] ?? definition?.width
+      const columnMinWidth = (definition?: Record<string, any> | null) => {
+        if (!memberScroll) return undefined
+        const width = rawColumnWidth(definition)
+        return typeof width === 'number' || /^\d+$/.test(String(width)) ? `${width}px` : width
+      }
+      const memberTableMinWidth = memberScroll
+        ? columns.reduce((total, column) => {
+            const width = String(rawColumnWidth(column.props) ?? '').match(
+              /^(\d+(?:\.\d+)?)(?:px)?$/
+            )
+            return total + (width ? Number(width[1]) : 0)
+          }, 0)
+        : 0
+      const visibleColumnCount = columns.length
       const rowKey = attrs['row-key'] || attrs.rowKey
       const keyOf = (row: Record<string, any>, index: number) =>
         typeof rowKey === 'function'
@@ -28,11 +45,16 @@ export default defineComponent({
             ? (legacyField(row, rowKey) ?? index)
             : index
       const expandedKeys = (attrs['expand-row-keys'] || attrs.expandRowKeys || []) as any[]
-      const header = () =>
-        h(
-          'tr',
-          columns.map((column) => h('th', { scope: 'col' }, column.props?.label || ''))
+      const header = () => {
+        const cells = columns.map((column) =>
+          h(
+            'th',
+            { scope: 'col', style: { minWidth: columnMinWidth(column.props) } },
+            column.props?.label || ''
+          )
         )
+        return h('tr', cells)
+      }
       const body = props.data.flatMap((row, index) => {
         const key = keyOf(row, index)
         const rowClass = attrs['row-class-name'] || attrs.rowClassName
@@ -60,10 +82,10 @@ export default defineComponent({
             'td',
             {
               class: definition.className || definition['class-name'],
-              style: { textAlign: definition.align || 'left' }
+              style: { textAlign: definition.align || 'left', minWidth: columnMinWidth(definition) }
             },
             [
-              expand && columnIndex === 0
+              expand && !memberScroll && columnIndex === 0
                 ? h(
                     'button',
                     {
@@ -94,12 +116,22 @@ export default defineComponent({
             cells
           )
         ]
-        if (expand && expanded)
+        if (expand && !memberScroll && expanded)
           rows.push(
             h('tr', { key: `${key}-actions` }, [
               h(
                 'td',
                 { colspan: columns.length, class: 'legacy-mobile-table__actions' },
+                ((expand.children || {}) as Slots).default?.({ row, $index: index })
+              )
+            ])
+          )
+        if (expand && memberScroll)
+          rows.push(
+            h('tr', { key: `${key}-actions` }, [
+              h(
+                'td',
+                { colspan: columns.length, class: 'legacy-mobile-table__member-actions' },
                 ((expand.children || {}) as Slots).default?.({ row, $index: index })
               )
             ])
@@ -112,7 +144,7 @@ export default defineComponent({
             h(
               'td',
               {
-                colspan: columns.length,
+                colspan: visibleColumnCount,
                 class: 'legacy-mobile-table__empty'
               },
               String(attrs['empty-text'] || attrs.emptyText || 'No data available in table')
@@ -126,15 +158,32 @@ export default defineComponent({
           style: attrs.style as any
         },
         [
-          h('table', [
-            h('thead', [header()]),
-            h('tbody', body),
-            attrs['show-summary'] === '' ||
-            attrs['show-summary'] === true ||
-            attrs.showSummary === true
-              ? h('tfoot', [header()])
-              : null
-          ])
+          h(
+            'table',
+            {
+              style: memberScroll
+                ? { width: '100%', minWidth: `${memberTableMinWidth}px` }
+                : undefined
+            },
+            [
+              memberScroll
+                ? h(
+                    'colgroup',
+                    columns.map((column) =>
+                      h('col', { style: { width: columnMinWidth(column.props) } })
+                    )
+                  )
+                : null,
+              h('thead', [header()]),
+              h('tbody', body),
+              !memberScroll &&
+              (attrs['show-summary'] === '' ||
+                attrs['show-summary'] === true ||
+                attrs.showSummary === true)
+                ? h('tfoot', [header()])
+                : null
+            ]
+          )
         ]
       )
     }

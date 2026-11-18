@@ -773,17 +773,6 @@ onBeforeUnmount(stopMemberRefresh)
   gap: 8px;
 }
 
-.member-list-table :deep(.el-table__expand-column),
-.member-list-table :deep(.el-table__expand-column .cell) {
-  width: 1px !important;
-  min-width: 1px !important;
-  padding: 0 !important;
-}
-
-.member-list-table :deep(.el-table__expand-icon) {
-  display: none;
-}
-
 .member-list-table :deep(.el-table__expanded-cell) {
   padding: 9px 14px !important;
   background: #fff !important;
