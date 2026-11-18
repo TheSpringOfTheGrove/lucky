@@ -116,7 +116,7 @@ const hasFilters = (form: QuickPickForm) =>
   uniqueDigits(form.include) ||
   Object.values(form.repeats).some(Boolean) ||
   Object.values(form.brothers).some(Boolean) ||
-  (form.oppositeAction && form.opposites.some((item) => uniqueDigits(item))) ||
+  (form.oppositeAction && form.opposites.some((item) => rawDigits(item))) ||
   Object.values(form.attributes).some((item) => item.action && item.positions.length) ||
   form.multiplierPositions.length > 0 ||
   (form.rangeMin && form.rangeMax)
@@ -231,12 +231,14 @@ export const buildQuickPickExpression = (definition: QuickPickDefinition, form: 
   }
   if (form.oppositeAction) {
     for (const item of form.opposites) {
-      const digits = uniqueDigits(item)
+      const digits = rawDigits(item)
+      if (digits.length === 1) throw new Error('每组对数至少填写两位数字')
       if (digits) value += `${form.oppositeAction}对数${digits}`
     }
   }
   value += buildAttributeFilters(definition, form)
   if (form.multiplierPositions.length) {
+    if (definition.label === '四字定') throw new Error('四字定没有乘号位置')
     const selected = positions.filter((position) => form.multiplierPositions.includes(position))
     value += `取乘号位置${selected.join('')}`
   }
