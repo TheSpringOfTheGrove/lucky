@@ -698,6 +698,20 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void supportsPostfixOppositePairAliasesAndRejectsUnparsedPairText() {
+        assertThat(service.parse("四定16对各1", odds)).hasSize(974)
+                .containsExactlyElementsOf(service.parse("四定取对数16各1", odds));
+        assertThat(service.parse("四定取16对各1", odds))
+                .containsExactlyElementsOf(service.parse("四定取对数16各1", odds));
+        assertThat(service.parse("四定除38对各1", odds)).hasSize(9_026)
+                .containsExactlyElementsOf(service.parse("四定除对数38各1", odds));
+
+        assertThatThrownBy(() -> service.parse("四定1对各1", odds)).hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("四定对各1", odds)).hasMessageContaining("无法识别");
+        assertThatThrownBy(() -> service.parse("四定16对错误各1", odds)).hasMessageContaining("无法识别");
+    }
+
+    @Test
     void matchesReferenceCombinedCommandWithOppositePairsAndSiblings() {
         String prefix = "除2配2四定除千百十个合1两数合0246三数合56789";
         String command = prefix + "值范围7-29排除39除两对数各0.3\n"
