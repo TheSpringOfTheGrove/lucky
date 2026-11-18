@@ -31,6 +31,17 @@ public class LotteryBettingService {
     private static final int MAX_COMBINED_COMMAND_ITEMS = 100_000;
     private static final String FIVE_POSITION_TWO_ODD_CODE = "regex5d2";
     private static final String POSITION_LABELS = "头千百十尾个五";
+    private static final String AMOUNT_VALUE_PATTERN = "(?:\\d+(?:\\.\\d+)?|\\.\\d+)";
+    private static final String COMMAND_AMOUNT_START_PATTERN =
+            "(?:(?:各|=)|(?:倒[一二三四]定|[二三四]定倒)/)(?:\\d|\\.\\d)";
+    // Amounts are reluctant only when another complete amount-ended command follows. This keeps a
+    // separator-free sequence such as "...各0.2" + "112...各0.2" from consuming the next digit pool
+    // as part of the first amount, while a standalone amount still expands to its full numeric token.
+    private static final Pattern COMMAND_AMOUNT_PATTERN = Pattern.compile(
+            "(?:(?:各|=)|(?:倒[一二三四]定|[二三四]定倒)/)"
+                    + "(?:\\d+?(?:\\.\\d{1,2}?)?|\\.\\d{1,2}?)"
+                    + "(?=$|[，,、；;/@\\s]+|(?=[^，,、；;./@\\s].*?"
+                    + COMMAND_AMOUNT_START_PATTERN + "))");
     private static final Map<Character, Integer> POSITION_INDEX = Map.of(
             '头', 0, '千', 0, '百', 1, '十', 2, '尾', 3, '个', 3, '五', 4);
     private static final Map<Character, Integer> CHINESE_COUNT = Map.of('一', 1, '二', 2, '三', 3, '四', 4);
@@ -111,7 +122,8 @@ public class LotteryBettingService {
         }
         // Four consecutive size/parity attributes each constrain one fixed position.
         // Keep shorter combinations as independent basic bets.
-        Matcher fourAttributes = Pattern.compile("^([大小单双]{4})各(\\d+(?:\\.\\d+)?)$").matcher(content);
+        Matcher fourAttributes = Pattern.compile("^([大小单双]{4})各(" + AMOUNT_VALUE_PATTERN + ")$")
+                .matcher(content);
         if (fourAttributes.matches()) {
             StringBuilder positioned = new StringBuilder();
             String positions = "千百十个";
@@ -134,7 +146,8 @@ public class LotteryBettingService {
         // A trailing visual filter such as "除小小小大各0.3" is part of a positioning expression, not four
         // standalone 大小 bets. Require a real token boundary so the matcher cannot restart in the middle of a
         // 取/除 filter chain.
-        Matcher groupMatcher = Pattern.compile("(?<![取除大小单双龙虎和X])([大小单双龙虎和]{2,})各(\\d+(?:\\.\\d+)?)")
+        Matcher groupMatcher = Pattern.compile(
+                        "(?<![取除大小单双龙虎和X])([大小单双龙虎和]{2,})各(" + AMOUNT_VALUE_PATTERN + ")")
                 .matcher(content);
         while (groupMatcher.find()) {
             BigDecimal amount = amount(groupMatcher.group(2));
@@ -143,12 +156,14 @@ public class LotteryBettingService {
             }
         }
 
-        Matcher basicMatcher = Pattern.compile("(大|小|单|双|龙|虎|和)(\\d+(?:\\.\\d+)?)").matcher(content);
+        Matcher basicMatcher = Pattern.compile("(大|小|单|双|龙|虎|和)(" + AMOUNT_VALUE_PATTERN + ")")
+                .matcher(content);
         while (basicMatcher.find()) {
             values.add(new IndexedBet(basicMatcher.start(), basicBet(basicMatcher.group(1), amount(basicMatcher.group(2)), odds)));
         }
 
-        Matcher fixedMatcher = Pattern.compile("(\\d{1,4})定(?:位)?(?:=|/|:)(\\d+(?:\\.\\d+)?)").matcher(content);
+        Matcher fixedMatcher = Pattern.compile(
+                "(\\d{1,4})定(?:位)?(?:=|/|:)(" + AMOUNT_VALUE_PATTERN + ")").matcher(content);
         while (fixedMatcher.find()) {
             String selection = fixedMatcher.group(1);
             int count = selection.length();
@@ -156,7 +171,9 @@ public class LotteryBettingService {
                     amount(fixedMatcher.group(2)), "regex" + count + "d", odds)));
         }
 
-        Matcher numberMatcher = Pattern.compile("(?:号码|号|现)?(\\d{1,4})(?:现)?(?:=|/|:)(\\d+(?:\\.\\d+)?)").matcher(content);
+        Matcher numberMatcher = Pattern.compile(
+                "(?:号码|号|现)?(\\d{1,4})(?:现)?(?:=|/|:)(" + AMOUNT_VALUE_PATTERN + ")")
+                .matcher(content);
         while (numberMatcher.find()) {
             String selection = numberMatcher.group(1);
             boolean fourSame = selection.length() == 4 && selection.chars().distinct().count() == 1;
@@ -193,11 +210,12 @@ public class LotteryBettingService {
     private List<ParsedBet> parseQuickTranslation(String rawContent, List<OddDO> odds) {
         String raw = rawContent == null ? "" : rawContent.trim();
         Matcher reverseSlashAmount = Pattern.compile(
-                "^(.*(?:倒[一二三四]定|[二三四]定倒))/(\\d+(?:\\.\\d+)?)$").matcher(raw);
+                "^(.*(?:倒[一二三四]定|[二三四]定倒))/(" + AMOUNT_VALUE_PATTERN + ")$").matcher(raw);
         if (reverseSlashAmount.matches()) {
             raw = reverseSlashAmount.group(1) + "各" + reverseSlashAmount.group(2);
         }
-        Matcher amountMatcher = Pattern.compile("(?s)^(.*?)(?:各|=)(\\d+(?:\\.\\d+)?)$").matcher(raw);
+        Matcher amountMatcher = Pattern.compile(
+                "(?s)^(.*?)(?:各|=)(" + AMOUNT_VALUE_PATTERN + ")$").matcher(raw);
         if (!amountMatcher.matches()) {
             if (raw.contains("=")) throw exception(BET_CONTENT_INVALID);
             return null;
@@ -574,10 +592,10 @@ public class LotteryBettingService {
     private List<ParsedBet> parseFixedPatternGroups(String rawContent, List<OddDO> odds) {
         String content = rawContent == null ? "" : rawContent.trim();
         if (!content.contains("*") && !content.matches(
-                "(?s)(?:[0-9]{4}[.、/,，@；;\\s]+)+[0-9]{4}各\\d+(?:\\.\\d+)?[；;]?")) {
+                "(?s)(?:[0-9]{4}[.、/,，@；;\\s]+)+[0-9]{4}各" + AMOUNT_VALUE_PATTERN + "[；;]?")) {
             return null;
         }
-        Matcher amountMatcher = Pattern.compile("各(\\d+(?:\\.\\d+)?)[；;]?$", Pattern.DOTALL)
+        Matcher amountMatcher = Pattern.compile("各(" + AMOUNT_VALUE_PATTERN + ")[；;]?$", Pattern.DOTALL)
                 .matcher(content);
         if (!amountMatcher.find()) throw exception(BET_CONTENT_INVALID);
         String[] groups = content.substring(0, amountMatcher.start()).split("[.、/,，@；;\\s]+", -1);
@@ -640,7 +658,7 @@ public class LotteryBettingService {
     }
 
     private List<IndexedBet> parseReference(String content, List<OddDO> odds) {
-        Matcher amountMatcher = Pattern.compile("各(\\d+(?:\\.\\d+)?)$").matcher(content);
+        Matcher amountMatcher = Pattern.compile("各(" + AMOUNT_VALUE_PATTERN + ")$").matcher(content);
         if (!amountMatcher.find()) return List.of();
         String expression = content.substring(0, amountMatcher.start());
         if (!Pattern.compile("[头千百十尾个倒定合含除取现配]").matcher(expression).find()) return List.of();
@@ -1478,15 +1496,14 @@ public class LotteryBettingService {
         // normalization removes separators and joins the next number into the amount.
         List<String> slashCommands = List.of(value.split("[，,、；;\\s]+"));
         if (slashCommands.size() > 1 && slashCommands.stream()
-                .allMatch(command -> command.matches("\\d{1,4}/\\d+(?:\\.\\d+)?"))) {
+                .allMatch(command -> command.matches("\\d{1,4}/" + AMOUNT_VALUE_PATTERN))) {
             return slashCommands;
         }
         boolean fixedPatternInput = value.contains("*") || value.matches(
-                "(?s)[0-9]{4}各\\d+(?:\\.\\d+)?(?:[.、/,，@；;\\s]+[0-9]{4}各\\d+(?:\\.\\d+)?)+[；;]?");
+                "(?s)[0-9]{4}各" + AMOUNT_VALUE_PATTERN
+                        + "(?:[.、/,，@；;\\s]+[0-9]{4}各" + AMOUNT_VALUE_PATTERN + ")+[；;]?");
         String separatorPattern = fixedPatternInput ? "[，,、；;./@\\s]+" : "[，,、；;\\s]+";
-        Matcher amountMatcher = Pattern.compile(
-                "(?:各|=)\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?")
-                .matcher(value);
+        Matcher amountMatcher = COMMAND_AMOUNT_PATTERN.matcher(value);
         List<String> commands = new ArrayList<>();
         int start = 0;
         while (amountMatcher.find()) {
@@ -1502,19 +1519,17 @@ public class LotteryBettingService {
     }
 
     private void validateQuickTranslationLineGrouping(String value) {
-        Pattern amountPattern = Pattern.compile(
-                "(?:各|=)\\d+(?:\\.\\d+)?|(?:倒[一二三四]定|[二三四]定倒)/\\d+(?:\\.\\d+)?");
         boolean hasStandaloneBatchAmount = Arrays.stream(value.split("\\R+", -1))
                 .map(String::trim)
-                .anyMatch(line -> line.matches("(?:各|=)\\d+(?:\\.\\d+)?"));
+                .anyMatch(line -> line.matches("(?:各|=)" + AMOUNT_VALUE_PATTERN));
         if (hasStandaloneBatchAmount) {
-            Matcher allAmounts = amountPattern.matcher(value);
+            Matcher allAmounts = COMMAND_AMOUNT_PATTERN.matcher(value);
             int amountCount = 0;
             while (allAmounts.find()) amountCount++;
             if (amountCount > 1) throw exception(BET_CONTENT_INVALID);
         }
         for (String line : value.split("\\R+", -1)) {
-            Matcher matcher = amountPattern.matcher(line);
+            Matcher matcher = COMMAND_AMOUNT_PATTERN.matcher(line);
             List<String> commands = new ArrayList<>();
             int start = 0;
             while (matcher.find()) {
@@ -1525,19 +1540,10 @@ public class LotteryBettingService {
             }
             if (commands.size() <= 1) continue;
             String remaining = line.substring(start).replaceAll("[，,、；;./@\\s]+", "");
-            if (!remaining.isEmpty() || commands.stream().anyMatch(command -> !isSimpleNumberCommand(command))) {
+            if (!remaining.isEmpty()) {
                 throw exception(BET_CONTENT_INVALID);
             }
         }
-    }
-
-    private boolean isSimpleNumberCommand(String command) {
-        String expression = command.replaceFirst(
-                "(?:(?:各|=|/|:)\\d+(?:\\.\\d+)?)$", "").trim();
-        if (expression.matches("[0-9*]{4}")) return true;
-        String normalized = normalizeQuickTranslation(expression);
-        DocBase base = parseDocumentDirectBase(normalized);
-        return base != null && base.consumed() == normalized.length();
     }
 
     private String normalize(String value) {
@@ -1567,17 +1573,19 @@ public class LotteryBettingService {
 
     private String normalizeReferenceAmountAlias(String content) {
         Matcher matcher = Pattern.compile(
-                "^(.*(?:倒[一二三四]定|[二三四]定倒))/(\\d+(?:\\.\\d+)?)$").matcher(content);
+                "^(.*(?:倒[一二三四]定|[二三四]定倒))/(" + AMOUNT_VALUE_PATTERN + ")$").matcher(content);
         if (!matcher.matches()) return content;
         return matcher.group(1) + "各" + matcher.group(2);
     }
 
     private String normalizeReverseFixedAlias(String content) {
-        Matcher matcher = Pattern.compile("^([0-9]+)([二三四])定倒(.*各\\d+(?:\\.\\d+)?)$").matcher(content);
+        Matcher matcher = Pattern.compile(
+                "^([0-9]+)([二三四])定倒(.*各" + AMOUNT_VALUE_PATTERN + ")$").matcher(content);
         if (matcher.matches()) {
             return matcher.group(1) + "倒" + matcher.group(2) + "定" + matcher.group(3);
         }
-        Matcher implicitFour = Pattern.compile("^([0-9]+)(?:全)?倒(?![一二三四]定)(.*各\\d+(?:\\.\\d+)?)$").matcher(content);
+        Matcher implicitFour = Pattern.compile(
+                "^([0-9]+)(?:全)?倒(?![一二三四]定)(.*各" + AMOUNT_VALUE_PATTERN + ")$").matcher(content);
         if (implicitFour.matches()) {
             return implicitFour.group(1) + "倒四定" + implicitFour.group(2);
         }
@@ -1585,7 +1593,7 @@ public class LotteryBettingService {
     }
 
     private String expandNumericFixedShorthand(String content) {
-        Matcher matcher = Pattern.compile("^(\\d{1,4})各(\\d+(?:\\.\\d+)?)$").matcher(content);
+        Matcher matcher = Pattern.compile("^(\\d{1,4})各(" + AMOUNT_VALUE_PATTERN + ")$").matcher(content);
         if (!matcher.matches()) return content;
         String digits = matcher.group(1);
         String positions = switch (digits.length()) {
