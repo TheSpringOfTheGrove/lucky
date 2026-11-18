@@ -197,8 +197,34 @@ const buildAttributeFilters = (definition: QuickPickDefinition, form: QuickPickF
 }
 
 export const buildQuickPickExpression = (definition: QuickPickDefinition, form: QuickPickForm) => {
-  let value = buildBase(definition, form)
   const positions = quickPickPositions(definition)
+  if (form.multiplierPositions.length) {
+    if (definition.kind === 'current' || definition.label === '四字定') {
+      throw new Error('当前玩法没有乘号位置')
+    }
+    const requiredMultiplierCount = definition.positionCount - definition.count
+    if (form.multiplierPositions.length !== requiredMultiplierCount) {
+      throw new Error(`${definition.label}乘号位置必须选择${requiredMultiplierCount}个位置`)
+    }
+    if (definition.kind === 'fifth' && form.multiplierPositions.includes('五')) {
+      throw new Error('五位二定的第五位不能作为乘号位置')
+    }
+    const hasPositionBase =
+      Boolean(form.positionAction) &&
+      positions.some((position) => uniqueDigits(form.positions[position]))
+    const hasRotationBase =
+      Boolean(form.rotationAction) &&
+      form.pools.slice(0, definition.count).every((pool) => uniqueDigits(pool))
+    if (
+      !hasPositionBase &&
+      !hasRotationBase &&
+      !rawDigits(form.allTurn) &&
+      !uniqueDigits(form.complex)
+    ) {
+      throw new Error('乘号位置需先填写定位、配数全转、全转或复式号码')
+    }
+  }
+  let value = buildBase(definition, form)
 
   for (const item of form.sumRules) {
     const selected = positions.filter((position) => item.positions.includes(position))
@@ -238,7 +264,6 @@ export const buildQuickPickExpression = (definition: QuickPickDefinition, form: 
   }
   value += buildAttributeFilters(definition, form)
   if (form.multiplierPositions.length) {
-    if (definition.label === '四字定') throw new Error('四字定没有乘号位置')
     const selected = positions.filter((position) => form.multiplierPositions.includes(position))
     value += `取乘号位置${selected.join('')}`
   }
