@@ -48,6 +48,10 @@ interface TextCommandDraft {
 }
 
 const positions = computed(() => quickPickPositions(definition.value))
+const isFifth = computed(() => definition.value.kind === 'fifth')
+const availableMultiplierPositions = computed(() =>
+  isFifth.value ? positions.value.filter((position) => position !== '五') : positions.value
+)
 const repeats = computed(() => quickPickRepeatOptions(definition.value))
 const brothers = computed(() => quickPickBrotherOptions(definition.value))
 const attributePairs = [
@@ -55,7 +59,6 @@ const attributePairs = [
   ['大', '小']
 ] as const
 const isFixed = computed(() => definition.value.kind !== 'current')
-const isFifth = computed(() => definition.value.kind === 'fifth')
 const showThreeSum = computed(() => definition.value.count >= 3)
 const positionLabel = (position: QuickPickPosition) =>
   ({ 千: '仟', 百: '佰', 十: '拾', 个: '个', 五: '五' })[position]
@@ -322,7 +325,11 @@ watch(
         <label><b>排除</b><input v-model="form.exclude" inputmode="numeric" /></label>
         <label v-if="activePlay !== '四字定'" class="multiplier-label">
           <b>乘号位置</b>
-          <span v-for="position in positions" :key="position" class="position-choice">
+          <span
+            v-for="position in availableMultiplierPositions"
+            :key="position"
+            class="position-choice"
+          >
             <input
               type="checkbox"
               :checked="form.multiplierPositions.includes(position)"
