@@ -3,6 +3,9 @@ import { useMediaQuery } from '@vueuse/core'
 import { ElTable } from 'element-plus'
 import { collectLegacyColumns, legacyField } from './columns'
 
+const STACKED_MOBILE_HEADER_CLASS = 'legacy-mobile-table__stacked-header-column'
+const STACKED_MOBILE_HEADER_WIDTH = 52
+
 export default defineComponent({
   name: 'LegacyTable',
   inheritAttrs: false,
@@ -21,8 +24,18 @@ export default defineComponent({
       const columns = definitions.filter((column) => column.props?.type !== 'expand')
       const expand = definitions.find((column) => column.props?.type === 'expand')
       const memberScroll = props.mobileLayout === 'member-scroll'
-      const rawColumnWidth = (definition?: Record<string, any> | null) =>
-        definition?.minWidth ?? definition?.['min-width'] ?? definition?.width
+      const columnClassName = (definition?: Record<string, any> | null) =>
+        definition?.className ?? definition?.['class-name']
+      const hasColumnClass = (definition: Record<string, any> | null | undefined, name: string) =>
+        String(columnClassName(definition) || '')
+          .split(/\s+/)
+          .includes(name)
+      const rawColumnWidth = (definition?: Record<string, any> | null) => {
+        if (memberScroll && hasColumnClass(definition, STACKED_MOBILE_HEADER_CLASS)) {
+          return STACKED_MOBILE_HEADER_WIDTH
+        }
+        return definition?.minWidth ?? definition?.['min-width'] ?? definition?.width
+      }
       const columnMinWidth = (definition?: Record<string, any> | null) => {
         if (!memberScroll) return undefined
         const width = rawColumnWidth(definition)
@@ -46,13 +59,24 @@ export default defineComponent({
             : index
       const expandedKeys = (attrs['expand-row-keys'] || attrs.expandRowKeys || []) as any[]
       const header = () => {
-        const cells = columns.map((column) =>
-          h(
+        const cells = columns.map((column, columnIndex) => {
+          const className = columnClassName(column.props)
+          const minWidth = columnMinWidth(column.props)
+          const columnSlots = (column.children || {}) as Slots
+          const content =
+            columnSlots.header?.({ column: column.props, $index: columnIndex }) ||
+            column.props?.label ||
+            ''
+          return h(
             'th',
-            { scope: 'col', style: { minWidth: columnMinWidth(column.props) } },
-            column.props?.label || ''
+            {
+              scope: 'col',
+              ...(className ? { class: className } : {}),
+              ...(minWidth ? { style: { minWidth } } : {})
+            },
+            content
           )
-        )
+        })
         return h('tr', cells)
       }
       const body = props.data.flatMap((row, index) => {
@@ -81,7 +105,7 @@ export default defineComponent({
           return h(
             'td',
             {
-              class: definition.className || definition['class-name'],
+              class: columnClassName(definition),
               style: { textAlign: definition.align || 'left', minWidth: columnMinWidth(definition) }
             },
             [
@@ -170,7 +194,10 @@ export default defineComponent({
                 ? h(
                     'colgroup',
                     columns.map((column) =>
-                      h('col', { style: { width: columnMinWidth(column.props) } })
+                      h('col', {
+                        class: columnClassName(column.props),
+                        style: { width: columnMinWidth(column.props) }
+                      })
                     )
                   )
                 : null,

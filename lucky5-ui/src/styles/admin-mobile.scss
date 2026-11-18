@@ -107,6 +107,17 @@ body.lucky-admin-theme .legacy-mobile-table--member-scroll {
   .member-identity {
     flex-wrap: nowrap;
   }
+  th.legacy-mobile-table__stacked-header-column {
+    width: 52px;
+    min-width: 52px !important;
+    white-space: normal !important;
+  }
+  .legacy-mobile-table__stacked-header-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    white-space: nowrap;
+  }
   .legacy-mobile-table__member-actions {
     padding: 4px;
     vertical-align: middle;

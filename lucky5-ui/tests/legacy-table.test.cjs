@@ -92,6 +92,28 @@ test('index, formatter, action slots and initial member expansion are preserved'
   assert.match(html, /__cell">1<\/div>/)
 })
 
+test('member scroll stacks platform labels with trailing slashes and fixed action rows', async () => {
+  const html = await render([{ id: 9, name: '会员', externalNickname: '//' }], {
+    mobileLayout: 'member-scroll', 'row-key': 'id', 'expand-row-keys': [9]
+  }, [
+    vue.h(Column, { type: 'expand' }, { default: () => vue.h('button', '编辑') }),
+    vue.h(Column, {
+      prop: 'externalNickname', label: '微信/飞鱼/蓝鲸昵称', minWidth: 170,
+      className: 'legacy-mobile-table__stacked-header-column'
+    }, {
+      header: () => vue.h('span', { class: 'legacy-mobile-table__stacked-header-label' }, [
+        ...['微', '信/', '飞', '鱼/', '蓝', '鲸', '昵', '称'].map((text) => vue.h('span', text))
+      ])
+    }),
+    vue.h(Column, { prop: 'name', label: '昵称', minWidth: 110 })
+  ])
+  assert.match(html, /min-width:162px/)
+  assert.match(html, /<th[^>]*class="legacy-mobile-table__stacked-header-column"/)
+  assert.match(html, /微<\/span><span>信\/<\/span><span>飞<\/span><span>鱼\/<\/span>/)
+  assert.doesNotMatch(html, /legacy-mobile-table__expand/)
+  assert.match(html, /legacy-mobile-table__member-actions/)
+})
+
 test('767px remains a native table and 768px restores Element table', async () => {
   width = 767
   assert.match(await render([]), /legacy-mobile-table/)

@@ -431,7 +431,17 @@ onBeforeUnmount(stopMemberRefresh)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="微信/飞鱼/蓝鲸昵称" min-width="170">
+        <el-table-column
+          label="微信/飞鱼/蓝鲸昵称"
+          min-width="170"
+          class-name="legacy-mobile-table__stacked-header-column"
+        >
+          <template #header>
+            <span class="legacy-mobile-table__stacked-header-label">
+              <span>微</span><span>信/</span><span>飞</span><span>鱼/</span><span>蓝</span
+              ><span>鲸</span><span>昵</span><span>称</span>
+            </span>
+          </template>
           <template #default="{ row }">
             <div class="member-identity">
               <span>{{ row.externalNickname || '//' }}</span>
