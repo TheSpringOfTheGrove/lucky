@@ -63,14 +63,59 @@ body.lucky-admin-theme .legacy-mobile-table {
   }
 }
 
+// The member action rows stay expanded on desktop; the expand column is only
+// an Element Plus transport for those rows and must not expose a toggle.
+body.lucky-admin-theme .member-list-table {
+  .el-table__expand-column,
+  .el-table__expand-column .cell {
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  .el-table__expand-icon {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    visibility: hidden !important;
+  }
+}
+
 body.lucky-admin-theme .legacy-mobile-table--member-scroll {
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+
   table {
-    min-width: 406px;
+    max-width: none;
+    table-layout: auto;
   }
   th,
-  td {
+  td,
+  .legacy-mobile-table__cell {
     text-align: left;
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+  .legacy-mobile-table__cell,
+  .member-identity,
+  .member-name,
+  .member-boolean {
+    min-width: max-content;
+  }
+  .member-identity {
+    flex-wrap: nowrap;
+  }
+  .legacy-mobile-table__member-actions {
+    padding: 4px;
+    vertical-align: middle;
+  }
+  .el-link,
+  .el-tag {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
   }
 }
 
