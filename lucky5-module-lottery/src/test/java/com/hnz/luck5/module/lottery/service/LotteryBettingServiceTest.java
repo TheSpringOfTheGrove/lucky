@@ -151,6 +151,19 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void treatsLeadingDecimalAmountsAsZeroPointAmounts() {
+        assertThat(service.parse("大.2", odds)).singleElement()
+                .satisfies(item -> assertThat(item.amount()).isEqualByComparingTo("0.2"));
+        assertThat(service.parse("123/.2", odds)).singleElement()
+                .satisfies(item -> assertThat(item.amount()).isEqualByComparingTo("0.2"));
+        assertThat(service.parse("0759三定各.2", odds))
+                .hasSize(96)
+                .allSatisfy(item -> assertThat(item.amount()).isEqualByComparingTo("0.2"));
+        assertThat(service.parse("24567861倒三定/.2", odds))
+                .allSatisfy(item -> assertThat(item.amount()).isEqualByComparingTo("0.2"));
+    }
+
+    @Test
     void parsesSeparatedNumericSlashBetsAsIndividualCommands() {
         for (String content : List.of("123/1\n456/1\n564/1", "123/1;456/1;564/1;")) {
             List<LotteryBettingService.ParsedCommand> commands = service.parseCommands(content, odds);
@@ -433,8 +446,9 @@ class LotteryBettingServiceTest {
                 .hasSize(1_250);
         assertThat(service.splitCommandsForDisplay("0759三定各1\n0759三定各1"))
                 .containsExactly("0759三定各1", "0759三定各1");
-        assertThatThrownBy(() -> service.parse("0759三定各1,0759三定各1", odds))
-                .hasMessageContaining("无法识别");
+        assertThat(service.parse("0759三定各1,0759三定各1", odds)).hasSize(192);
+        assertThat(service.splitCommandsForDisplay("0759三定各1,0759三定各1"))
+                .containsExactly("0759三定各1", "0759三定各1");
     }
 
     @Test
@@ -723,6 +737,48 @@ class LotteryBettingServiceTest {
         assertThat(parsed.stream().flatMap(item -> item.items().stream())
                 .map(LotteryBettingService.ParsedBet::amount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("3698.4");
+    }
+
+    @Test
+    void splitsConsecutiveFilteredCommandsAtEveryAmountMarker() {
+        String prefix = "112233445667788990全倒四定含1258两数合4680三数合23456"
+                + "千百合123567890千百十个合123456789";
+        String first = prefix + "取两兄弟除对数05各0.2";
+        String second = prefix + "取两兄弟除三兄弟除对数05各0.2";
+        String third = prefix + "除三兄弟除对数05各0.2";
+        List<String> expected = List.of(first, second, third);
+
+        for (String separator : List.of(",", "\n", "")) {
+            List<LotteryBettingService.ParsedCommand> parsed = service.parseCommands(
+                    String.join(separator, expected), odds);
+            assertThat(parsed).extracting(LotteryBettingService.ParsedCommand::content)
+                    .containsExactlyElementsOf(expected);
+            assertThat(parsed).extracting(item -> item.items().size())
+                    .containsExactly(3_897, 2_761, 3_984);
+            assertThat(parsed.stream().mapToInt(item -> item.items().size()).sum()).isEqualTo(10_642);
+            assertThat(parsed.stream().flatMap(item -> item.items().stream())
+                    .map(LotteryBettingService.ParsedBet::amount)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("2128.4");
+        }
+
+        List<String> leadingDecimalAmounts = List.of(
+                first,
+                prefix + "取两兄弟除三兄弟除对数05各.2",
+                prefix + "除三兄弟除对数05各.2");
+        List<LotteryBettingService.ParsedCommand> shorthandParsed = service.parseCommands(
+                String.join(",", leadingDecimalAmounts), odds);
+        assertThat(shorthandParsed).extracting(LotteryBettingService.ParsedCommand::content)
+                .containsExactlyElementsOf(leadingDecimalAmounts);
+        assertThat(shorthandParsed).extracting(item -> item.items().size())
+                .containsExactly(3_897, 2_761, 3_984);
+        assertThat(shorthandParsed.stream().flatMap(item -> item.items().stream()))
+                .allSatisfy(item -> assertThat(item.amount()).isEqualByComparingTo("0.2"));
+
+        assertThat(service.parseCommands(first + "," + first, odds))
+                .extracting(LotteryBettingService.ParsedCommand::content)
+                .containsExactly(first, first);
+        assertThatThrownBy(() -> service.parseCommands(first + ",错误", odds))
+                .hasMessageContaining("无法识别");
     }
 
     @Test
