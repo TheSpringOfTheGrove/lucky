@@ -105,6 +105,7 @@ public class LotteryBettingService {
         if (fixedGroups != null) return fixedGroups;
         String content = expandNumericFixedShorthand(normalizeReverseFixedAlias(
                 normalizeReferenceAmountAlias(normalize(rawContent))));
+        validateOppositePairTokens(content);
         if (content.isBlank()) {
             throw exception(BET_CONTENT_INVALID);
         }
@@ -511,7 +512,7 @@ public class LotteryBettingService {
     }
 
     private String normalizeQuickTranslation(String value) {
-        String normalized = value.trim().replaceAll("[，,、；;\\s]+", "")
+        String normalized = normalizeOppositePairSuffixAlias(value.trim().replaceAll("[，,、；;\\s]+", "")
                 .replace('x', 'X').replace('+', 'X')
                 .replace("中肚", "百十").replace('头', '千').replace('尾', '个').replace('末', '个')
                 .replace("直码", "四定")
@@ -520,7 +521,7 @@ public class LotteryBettingService {
                 .replace("二字现", "二现").replace("三字现", "三现").replace("四字现", "四现")
                 .replace('跑', '走').replace('移', '走')
                 .replace("不要", "除")
-                .replace("全倒", "倒").replace("全转", "倒").replace('转', '倒');
+                .replace("全倒", "倒").replace("全转", "倒").replace('转', '倒'));
         Matcher reverseMode = Pattern.compile("^([0-9]+)([二三四])定倒(.*)$").matcher(normalized);
         return reverseMode.matches()
                 ? reverseMode.group(1) + "倒" + reverseMode.group(2) + "定" + reverseMode.group(3)
@@ -1552,8 +1553,28 @@ public class LotteryBettingService {
     }
 
     private String normalize(String value) {
-        return value == null ? "" : value.trim().replaceAll("[，,、；;\\s]+", "")
-                .replace('：', ':').replace('末', '尾').replace("两定", "二定");
+        if (value == null) return "";
+        return normalizeOppositePairSuffixAlias(value.trim().replaceAll("[，,、；;\\s]+", "")
+                .replace('：', ':').replace('末', '尾').replace("两定", "二定"));
+    }
+
+    private String normalizeOppositePairSuffixAlias(String value) {
+        Matcher matcher = Pattern.compile(
+                "(?:(取|除))?([0-9]{2})对(?=各|=|$|取|除|含|排除|上奖|(?:两|二)数合|三数合|值|千|百|十|个|五)")
+                .matcher(value);
+        StringBuffer normalized = new StringBuffer();
+        while (matcher.find()) {
+            String action = matcher.group(1) == null ? "取" : matcher.group(1);
+            matcher.appendReplacement(normalized,
+                    Matcher.quoteReplacement(action + "对数" + matcher.group(2)));
+        }
+        matcher.appendTail(normalized);
+        return normalized.toString();
+    }
+
+    private void validateOppositePairTokens(String value) {
+        String remaining = value.replaceAll("(?:取|除)(?:(?:两|二)对数|对数[0-9]*)", "");
+        if (remaining.indexOf('对') >= 0) throw exception(BET_CONTENT_INVALID);
     }
 
     private String normalizeReferenceAmountAlias(String content) {
