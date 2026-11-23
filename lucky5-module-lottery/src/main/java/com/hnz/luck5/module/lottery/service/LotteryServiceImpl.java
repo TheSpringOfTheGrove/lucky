@@ -10,6 +10,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.hnz.luck5.framework.common.exception.ServiceException;
 import com.hnz.luck5.framework.datapermission.core.util.DataPermissionUtils;
 import com.hnz.luck5.framework.common.pojo.PageResult;
@@ -100,6 +102,33 @@ public class LotteryServiceImpl implements LotteryService {
     private static final Duration MEMBER_HEARTBEAT_WRITE_INTERVAL = Duration.ofSeconds(15);
     private static final Duration MEMBER_ONLINE_TIMEOUT = Duration.ofSeconds(90);
     private static final Duration ROOM_CLIENT_TIME_TOLERANCE = Duration.ofMinutes(10);
+
+    private static final Duration ROOM_SHARED_READ_TTL = Duration.ofMillis(500);
+    private static final int ROOM_SHARED_READ_LIMIT = 256;
+
+    // Only owner-wide read models are shared. Credential and command checks still hit their normal paths.
+    private final Cache<RoomReadKey, RoomOwnerSnapshot> roomOwnerSnapshots = Caffeine.newBuilder()
+            .maximumSize(ROOM_SHARED_READ_LIMIT).expireAfterWrite(ROOM_SHARED_READ_TTL).build();
+    private final Cache<RoomReadKey, RoomGroupTimeline> roomGroupTimelines = Caffeine.newBuilder()
+            .maximumSize(ROOM_SHARED_READ_LIMIT).expireAfterWrite(ROOM_SHARED_READ_TTL).build();
+
+    private record RoomReadKey(Long tenantId, Long ownerId, String period, String status,
+                       LocalDateTime openedAt, LocalDateTime settledAt) {
+        static RoomReadKey forIssue(Long tenantId, Long ownerId, IssueDO issue) {
+            return new RoomReadKey(tenantId, ownerId,
+                    issue == null ? null : issue.getPeriod(), issue == null ? null : issue.getStatus(),
+                    issue == null ? null : issue.getOpenedAt(), issue == null ? null : issue.getSettledAt());
+        }
+    }
+
+    private record RoomOwnerSnapshot(long onlineMembers, Map<String, Integer> avatarsById,
+                                     Map<String, Integer> avatarsByName, String latestDrawPeriod,
+                                     List<Map<String, Object>> draws, List<MessageDO> drawMessages,
+                                     List<Map<String, Object>> transitions, List<Map<String, Object>> commands) {
+    }
+
+    private record RoomGroupTimeline(List<MessageDO> messages, List<MessageDO> legacyTransfers) {
+    }
 
     private record BetResult(Long messageId, String orderId, String member, String period, BigDecimal amount,
                              BigDecimal balance, int itemCount, int periodSequence,
@@ -3154,17 +3183,11 @@ public class LotteryServiceImpl implements LotteryService {
     private Map<String, Object> getRoomSessionInternal(MemberDO member, String roomMode) {
         LotteryConfigDO config = requireConfig(member.getUserId());
         SystemStateDO state = requireState(member.getUserId());
-        LocalDateTime onlineCutoff = LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT);
-        List<MemberDO> ownerMembers = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
-                new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, member.getUserId())));
-        long onlineMembers = ownerMembers.stream()
-                .filter(item -> !isAutoProxy(item) && isMemberOnline(item, onlineCutoff)).count();
-        Map<String, Integer> avatarByMemberId = ownerMembers.stream()
-                .filter(item -> StrUtil.isNotBlank(item.getId()))
-                .collect(Collectors.toMap(MemberDO::getId, item -> value(item.getAvatar(), 1), (left, right) -> left));
-        Map<String, Integer> avatarByMemberName = ownerMembers.stream()
-                .filter(item -> StrUtil.isNotBlank(item.getName()))
-                .collect(Collectors.toMap(MemberDO::getName, item -> value(item.getAvatar(), 1), (left, right) -> left));
+        IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
+                .eq(IssueDO::getUserId, member.getUserId())
+                .orderByDesc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
+        RoomReadKey roomKey = RoomReadKey.forIssue(TenantContextHolder.getRequiredTenantId(), member.getUserId(), current);
+        RoomOwnerSnapshot snapshot = roomOwnerSnapshots.get(roomKey, key -> loadRoomOwnerSnapshot(key.ownerId()));
         List<OrderDO> orders = DataPermissionUtils.executeIgnore(() -> orderMapper.selectList(new LambdaQueryWrapper<OrderDO>()
                 .eq(OrderDO::getUserId, member.getUserId()).eq(OrderDO::getMemberId, member.getId())
                 .orderByDesc(OrderDO::getCreateTime).last("LIMIT 30")));
@@ -3172,18 +3195,12 @@ public class LotteryServiceImpl implements LotteryService {
         Map<String, IssueDO> orderIssuesByPeriod = issuesForOrders(member.getUserId(), orders);
         List<AmountRecordDO> amounts = DataPermissionUtils.executeIgnore(() -> amountRecordMapper.selectList(
                 roomAmountRecordQuery(member)));
-        List<MessageDO> messages = roomMessages(member, roomMode).stream()
+        List<MessageDO> messages = roomMessages(member, roomMode, null, roomKey).stream()
                 .filter(item -> !COMMAND_DRAW_RESULT.equals(item.getCommandType())
                         || LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod()))
                 .toList();
-        List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
-                .eq(DrawDO::getUserId, member.getUserId()).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
-                .stream().filter(item -> LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod())
-                        && drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
-        messages = withRecentRoomDrawMessages(member.getUserId(), messages, draws);
-        ensureRoomDrawImages(member.getUserId(), messages);
-        Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(member.getUserId(), draws);
-        String latestDrawPeriod = draws.isEmpty() ? "" : value(draws.get(0).getPeriod(), "");
+        messages = mergeRecentDrawMessages(messages, snapshot.drawMessages());
+        String latestDrawPeriod = snapshot.latestDrawPeriod();
         LambdaQueryWrapper<IssueDO> pendingIssueQuery = new LambdaQueryWrapper<IssueDO>()
                 .eq(IssueDO::getUserId, member.getUserId());
         if (!latestDrawPeriod.isBlank()) {
@@ -3194,19 +3211,10 @@ public class LotteryServiceImpl implements LotteryService {
         }
         IssueDO pendingIssue = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(
                 pendingIssueQuery.orderByAsc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
-        IssueDO current = DataPermissionUtils.executeIgnore(() -> issueMapper.selectOne(new LambdaQueryWrapper<IssueDO>()
-                .eq(IssueDO::getUserId, member.getUserId())
-                .orderByDesc(IssueDO::getPeriod).orderByDesc(IssueDO::getUpdateTime).last("LIMIT 1")));
-        // Query OPEN/CLOSED separately so MySQL can stop on the status-time index. An IN predicate across both
-        // statuses forces a filesort over an owner's entire historical transition stream on busy rooms.
-        List<IssueTransitionDO> openedTransitions = roomIssueTransitions(member.getUserId(), "OPEN");
-        List<IssueTransitionDO> closedTransitions = roomIssueTransitions(member.getUserId(), "CLOSED");
-        List<IssueTransitionDO> transitions = mergeIssueTransitions(openedTransitions, closedTransitions, 60);
         Map<String, Boolean> switches = DataPermissionUtils.executeIgnore(() -> switchSettingMapper.selectList(
                 new LambdaQueryWrapper<SwitchSettingDO>().eq(SwitchSettingDO::getUserId, member.getUserId())))
                 .stream().collect(Collectors.toMap(SwitchSettingDO::getSettingKey,
                         item -> bool(item.getEnabled()), (a, b) -> b));
-        List<QuickCommandDO> commands = getEffectiveQuickCommands(member.getUserId(), true);
         LocalDateTime roomNow = LocalDateTime.now();
         String effectiveIssueStatus = roomIssueStatus(current, roomNow);
         boolean answeringOpen = "OPEN".equals(effectiveIssueStatus);
@@ -3216,7 +3224,7 @@ public class LotteryServiceImpl implements LotteryService {
                         "avatarPath", value(member.getAvatarPath(), playerAvatarPath(value(member.getAvatar(), 1)))),
                 "room", map("name", value(config.getRoomName(), "幸运5"), "announcement", value(config.getAnnouncement(), ""),
                         "mode", roomMode, "modeName", ROOM_MODE_PRIVATE.equals(roomMode) ? "私聊" : "群聊",
-                        "open", bool(state.getRoomOpen()), "online", onlineMembers,
+                        "open", bool(state.getRoomOpen()), "online", snapshot.onlineMembers(),
                         "bettingEnabled", answeringOpen && (ROOM_MODE_PRIVATE.equals(roomMode)
                                 || switches.getOrDefault("pullEnable", false)),
                         "cancelEnabled", switches.getOrDefault("openCancel", false),
@@ -3250,22 +3258,70 @@ public class LotteryServiceImpl implements LotteryService {
                                         && drawVerificationService.isTrusted(pendingIssue.getResult())
                                         ? pendingIssue.getResult() : "",
                                 "pendingStatus", pendingIssue == null ? "" : value(pendingIssue.getStatus(), "")),
-                "issueTransitions", transitions.stream().sorted(Comparator.comparing(IssueTransitionDO::getCreateTime))
-                        .map(item -> map("id", item.getId(), "period", item.getPeriod(), "status", item.getToStatus(),
-                                "summary", value(item.getSource(), "系统") + "：" + value(item.getFromStatus(), "-")
-                                        + " → " + value(item.getToStatus(), "-"), "createdAt", item.getCreateTime())).toList(),
-                "draws", draws.stream().map(item -> {
-                    Map<String, Object> value = drawMap(item, drawTimesByPeriod.get(item.getPeriod()));
-                    value.put("numbers", item.getResult().replaceAll("\\D", "").chars().mapToObj(c -> String.valueOf((char) c)).toList());
-                    return value;
-                }).toList(),
+                "issueTransitions", snapshot.transitions(),
+                "draws", snapshot.draws(),
                 "orders", orders.stream().map(item -> roomOrderMap(item,
                         itemCounts.getOrDefault(item.getId(), 0),
                         orderIssuesByPeriod.get(item.getPeriod()))).toList(),
                 "amountRecords", amounts.stream().map(this::amountRecordMap).toList(),
                 "messages", messages.stream().sorted(Comparator.comparing(MessageDO::getCreateTime))
-                        .map(item -> roomMessageMap(item, member, avatarByMemberId, avatarByMemberName)).toList(),
-                "quickCommands", commands.stream().map(this::quickCommandMap).toList());
+                        .map(item -> roomMessageMap(item, member, snapshot.avatarsById(), snapshot.avatarsByName())).toList(),
+                "quickCommands", snapshot.commands());
+    }
+
+    private RoomOwnerSnapshot loadRoomOwnerSnapshot(Long ownerId) {
+        LocalDateTime onlineCutoff = LocalDateTime.now().minus(MEMBER_ONLINE_TIMEOUT);
+        List<MemberDO> ownerMembers = DataPermissionUtils.executeIgnore(() -> memberMapper.selectList(
+                new LambdaQueryWrapper<MemberDO>().eq(MemberDO::getUserId, ownerId)
+                        .select(MemberDO::getId, MemberDO::getName, MemberDO::getAvatar,
+                                MemberDO::getMemberType, MemberDO::getAutoProxy, MemberDO::getLastSeenAt)));
+        long onlineMembers = ownerMembers.stream()
+                .filter(item -> !isAutoProxy(item) && isMemberOnline(item, onlineCutoff)).count();
+        Map<String, Integer> avatarByMemberId = ownerMembers.stream()
+                .filter(item -> StrUtil.isNotBlank(item.getId()))
+                .collect(Collectors.toMap(MemberDO::getId, item -> value(item.getAvatar(), 1), (left, right) -> left));
+        Map<String, Integer> avatarByMemberName = ownerMembers.stream()
+                .filter(item -> StrUtil.isNotBlank(item.getName()))
+                .collect(Collectors.toMap(MemberDO::getName, item -> value(item.getAvatar(), 1), (left, right) -> left));
+        List<DrawDO> draws = DataPermissionUtils.executeIgnore(() -> drawMapper.selectList(new LambdaQueryWrapper<DrawDO>()
+                .eq(DrawDO::getUserId, ownerId).orderByDesc(DrawDO::getPeriod).last("LIMIT 40")))
+                .stream().filter(item -> LotteryMarketSessionPolicy.isTradablePeriod(item.getPeriod())
+                        && drawVerificationService.isTrusted(item.getResult())).limit(20).toList();
+        List<MessageDO> drawMessages = withRecentRoomDrawMessages(ownerId, List.of(), draws);
+        ensureRoomDrawImages(ownerId, drawMessages);
+        Map<String, LocalDateTime> drawTimesByPeriod = drawTimesFor(ownerId, draws);
+        String latestDrawPeriod = draws.isEmpty() ? "" : value(draws.get(0).getPeriod(), "");
+        // Query OPEN/CLOSED separately so MySQL can stop on the status-time index. An IN predicate across both
+        // statuses forces a filesort over an owner's entire historical transition stream on busy rooms.
+        List<IssueTransitionDO> openedTransitions = roomIssueTransitions(ownerId, "OPEN");
+        List<IssueTransitionDO> closedTransitions = roomIssueTransitions(ownerId, "CLOSED");
+        List<IssueTransitionDO> transitions = mergeIssueTransitions(openedTransitions, closedTransitions, 60);
+        List<QuickCommandDO> commands = getEffectiveQuickCommands(ownerId, true);
+        List<Map<String, Object>> transitionRows = transitions.stream()
+                .sorted(Comparator.comparing(IssueTransitionDO::getCreateTime))
+                .map(item -> map("id", item.getId(), "period", item.getPeriod(), "status", item.getToStatus(),
+                        "summary", value(item.getSource(), "系统") + "：" + value(item.getFromStatus(), "-")
+                                + " → " + value(item.getToStatus(), "-"), "createdAt", item.getCreateTime())).toList();
+        List<Map<String, Object>> drawRows = draws.stream().map(item -> {
+            Map<String, Object> row = drawMap(item, drawTimesByPeriod.get(item.getPeriod()));
+            row.put("numbers", item.getResult().replaceAll("\\D", "").chars()
+                    .mapToObj(c -> String.valueOf((char) c)).toList());
+            return row;
+        }).toList();
+        return new RoomOwnerSnapshot(onlineMembers, Map.copyOf(avatarByMemberId), Map.copyOf(avatarByMemberName),
+                latestDrawPeriod, drawRows, List.copyOf(drawMessages), transitionRows,
+                commands.stream().map(this::quickCommandMap).toList());
+    }
+
+    private List<MessageDO> mergeRecentDrawMessages(List<MessageDO> messages, List<MessageDO> recentDraws) {
+        if (recentDraws.isEmpty()) return messages;
+        Set<String> presentPeriods = messages.stream()
+                .filter(item -> COMMAND_DRAW_RESULT.equals(item.getCommandType()))
+                .map(MessageDO::getPeriod).collect(Collectors.toSet());
+        List<MessageDO> missingDraws = recentDraws.stream()
+                .filter(item -> !presentPeriods.contains(item.getPeriod())).toList();
+        return missingDraws.isEmpty() ? messages
+                : mergeMessages(messages, missingDraws, messages.size() + missingDraws.size());
     }
 
     @Override
@@ -3330,10 +3386,6 @@ public class LotteryServiceImpl implements LotteryService {
         return map("suggestedPeriod", current == null ? "" : current.getPeriod(), "issue", issue, "draws", drawRows);
     }
 
-    private List<MessageDO> roomMessages(MemberDO member, String roomMode) {
-        return roomMessages(member, roomMode, null);
-    }
-
     private LambdaQueryWrapper<AmountRecordDO> roomAmountRecordQuery(MemberDO member) {
         // Classify from the immutable record source, not the member's current type. Keep the audit and ledger.
         return new LambdaQueryWrapper<AmountRecordDO>().eq(AmountRecordDO::getUserId, member.getUserId())
@@ -3370,6 +3422,10 @@ public class LotteryServiceImpl implements LotteryService {
     }
 
     private List<MessageDO> roomMessages(MemberDO member, String roomMode, Long beforeId) {
+        return roomMessages(member, roomMode, beforeId, null);
+    }
+
+    private List<MessageDO> roomMessages(MemberDO member, String roomMode, Long beforeId, RoomReadKey roomKey) {
         String channel = ROOM_MODE_PRIVATE.equals(roomMode) ? CHANNEL_WEB_PRIVATE : CHANNEL_WEB_GROUP;
         // Keep the legacy member-name fallback, but run it separately. Combining it with the stable member_id in
         // one OR predicate prevents MySQL from using the room-member time index and made polling wait seconds.
@@ -3393,13 +3449,32 @@ public class LotteryServiceImpl implements LotteryService {
                             .in(MessageDO::getCommandType, COMMAND_DRAW_RESULT, COMMAND_DAILY_CLOSING_GREETING)
                             .lt(beforeId != null, MessageDO::getId, beforeId)
                             .orderByDesc(MessageDO::getCreateTime).last("LIMIT 100")));
-            return mergeMessages(mergeMessages(ownMessages, settlements, 80), drawResults, 100);
+            List<MessageDO> privateMessages = mergeMessages(mergeMessages(ownMessages, settlements, 80), drawResults, 100);
+            if (roomKey != null) ensureRoomDrawImages(member.getUserId(), privateMessages);
+            return privateMessages;
         }
+        RoomGroupTimeline group;
+        if (roomKey == null) {
+            group = loadRoomGroupTimeline(member.getUserId(), beforeId);
+        } else {
+            ensureRoomDrawImages(member.getUserId(), ownMessages);
+            group = roomGroupTimelines.get(roomKey, key -> {
+                RoomGroupTimeline timeline = loadRoomGroupTimeline(key.ownerId(), null);
+                ensureRoomDrawImages(key.ownerId(), timeline.messages());
+                return timeline;
+            });
+        }
+        // For overlapping IDs, keep this member's fresh receipt from the individual query.
+        List<MessageDO> messages = mergeMessages(group.messages(), ownMessages, 100);
+        return group.legacyTransfers().isEmpty() ? messages : mergeMessages(messages, group.legacyTransfers(), 100);
+    }
+
+    private RoomGroupTimeline loadRoomGroupTimeline(Long ownerId, Long beforeId) {
         List<MessageDO> sharedMessages = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                sharedRoomMessageQuery(member.getUserId(), beforeId)));
+                sharedRoomMessageQuery(ownerId, beforeId)));
         List<MessageDO> legacyAutoProxyTransfers = DataPermissionUtils.executeIgnore(() -> messageMapper.selectList(
-                legacyAutoProxyTransferQuery(member.getUserId(), beforeId)));
-        return mergeMessages(mergeMessages(ownMessages, sharedMessages, 100), legacyAutoProxyTransfers, 100);
+                legacyAutoProxyTransferQuery(ownerId, beforeId)));
+        return new RoomGroupTimeline(sharedMessages, legacyAutoProxyTransfers);
     }
 
     private List<MessageDO> withRecentRoomDrawMessages(Long userId, List<MessageDO> messages, List<DrawDO> draws) {
@@ -3445,7 +3520,8 @@ public class LotteryServiceImpl implements LotteryService {
         Map<Long, MessageDO> byId = new LinkedHashMap<>();
         first.forEach(item -> byId.put(item.getId(), item));
         second.forEach(item -> byId.put(item.getId(), item));
-        return byId.values().stream().sorted(Comparator.comparing(MessageDO::getCreateTime).reversed())
+        return byId.values().stream().sorted(Comparator.comparing(MessageDO::getCreateTime)
+                        .thenComparing(MessageDO::getId).reversed())
                 .limit(limit).toList();
     }
 
