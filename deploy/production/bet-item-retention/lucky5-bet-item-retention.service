@@ -10,5 +10,5 @@ ExecStart=/usr/bin/docker run --rm --name lucky5-bet-item-retention \
   --network lucky5-chen-guan-xi_default --read-only --tmpfs /tmp:mode=1777 \
   --cap-drop=ALL --security-opt=no-new-privileges \
   --mount type=bind,src=/etc/lucky5/bet-item-retention.cnf,dst=/run/mysql.cnf,readonly \
-  lucky5-bet-item-retention:local --defaults-file /run/mysql.cnf --database ruoyi-vue-pro --max-rows 100000 --apply
-ExecStopPost=-/usr/bin/docker stop --time 15 lucky5-bet-item-retention
+  lucky5-bet-item-retention:local --defaults-file /run/mysql.cnf --database ruoyi-vue-pro --max-rows 20000 --apply
+ExecStopPost=-/usr/bin/docker stop --timeout 15 lucky5-bet-item-retention
