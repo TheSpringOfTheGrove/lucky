@@ -58,7 +58,7 @@ WHERE {SETTLED_ORDERS}
     SELECT 1 FROM {ITEMS} b FORCE INDEX (idx_lucky5_bet_order)
     WHERE b.tenant_id=o.tenant_id AND b.user_id=o.user_id AND b.order_id=o.id AND {SETTLED_ITEMS}
   )
-ORDER BY o.id LIMIT 32;"""
+ORDER BY o.id LIMIT 256;"""
     for row in db.rows(query):
         hex_id, tenant_id, user_id = row.split("\t")
         yield bytes.fromhex(hex_id).decode("utf-8"), int(tenant_id), int(user_id)
@@ -93,6 +93,7 @@ def run(db, batch_size, max_rows, apply):
     [cutoff] = db.rows("SELECT DATE_FORMAT(NOW()-INTERVAL 7 DAY,'%Y-%m-%d %H:%i:%s');")
     print(f"Cutoff {cutoff}, mode {'delete' if apply else 'dry run'}", flush=True)
     scanned = deleted = 0
+    next_report = 20000
     after = None
     while scanned < max_rows:
         orders = list(candidate_orders(db, cutoff, after))
@@ -109,6 +110,9 @@ def run(db, batch_size, max_rows, apply):
                 break
             removed = delete_items(db, cutoff, ids)
             deleted += removed
+            if scanned >= next_report:
+                print(f"Progress: scanned {scanned}, deleted {deleted}", flush=True)
+                next_report += 20000
             time.sleep(0.1)
             if len(ids) < limit or removed < len(ids):
                 break
