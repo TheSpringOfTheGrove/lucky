@@ -8,9 +8,8 @@ import time
 
 
 ITEMS = "lucky5_bet_item"
-SETTLED_ORDERS = """FROM lucky5_order o
-JOIN lucky5_issue i ON i.tenant_id=o.tenant_id AND i.user_id=o.user_id AND i.period=o.period
-WHERE o.deleted=b'0' AND i.deleted=b'0'
+ISSUE_SCOPE = "i.tenant_id=o.tenant_id AND i.user_id=o.user_id AND i.period=o.period"
+SETTLED_ORDERS = """o.deleted=b'0' AND i.deleted=b'0'
   AND o.order_type='AUTO_PROXY' AND o.delivery_mode='LOCAL_ONLY' AND o.market_status='NOT_REQUIRED'
   AND o.status IN ('已中奖','未中奖') AND o.item_count>0 AND o.settled_at<@cutoff
   AND i.status='SETTLED' AND i.settled_at<@cutoff"""
@@ -50,34 +49,42 @@ def candidate_orders(db, cutoff, after):
     cursor = "" if after is None else f"AND o.id>{literal(after)}"
     # The scoped order index also makes checking drained orders inexpensive.
     query = f"""{query_prefix(cutoff)}
-SELECT HEX(o.id), o.tenant_id, o.user_id {SETTLED_ORDERS}
+SELECT HEX(o.id), o.tenant_id, o.user_id
+FROM lucky5_order o FORCE INDEX (PRIMARY)
+STRAIGHT_JOIN lucky5_issue i ON {ISSUE_SCOPE}
+WHERE {SETTLED_ORDERS}
   {cursor}
   AND EXISTS (
-    SELECT 1 FROM {ITEMS} b
+    SELECT 1 FROM {ITEMS} b FORCE INDEX (idx_lucky5_bet_order)
     WHERE b.tenant_id=o.tenant_id AND b.user_id=o.user_id AND b.order_id=o.id AND {SETTLED_ITEMS}
   )
-ORDER BY o.id LIMIT 256;"""
+ORDER BY o.id LIMIT 32;"""
     for row in db.rows(query):
         hex_id, tenant_id, user_id = row.split("\t")
         yield bytes.fromhex(hex_id).decode("utf-8"), int(tenant_id), int(user_id)
 
 
-def process_batch(db, cutoff, order, limit, apply):
-    order_id, tenant_id, user_id = order
-    # The single-table DELETE can use the scoped order index and LIMIT. Recheck
-    # parent eligibility in the same statement to protect against status changes.
-    scope = f"""b.tenant_id={tenant_id} AND b.user_id={user_id} AND b.order_id={literal(order_id)}
-  AND {SETTLED_ITEMS}
-  AND EXISTS (SELECT 1 {SETTLED_ORDERS}
-    AND o.tenant_id={tenant_id} AND o.user_id={user_id} AND o.id={literal(order_id)})"""
-    query = query_prefix(cutoff)
-    if apply:
-        query += f"""SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
+def candidate_items(db, orders, limit):
+    scopes = ", ".join(f"({tenant}, {owner}, {literal(order_id)})" for order_id, tenant, owner in orders)
+    query = f"""SET SESSION MAX_EXECUTION_TIME=15000;
+SELECT HEX(b.id) FROM {ITEMS} b FORCE INDEX (idx_lucky5_bet_order)
+WHERE (b.tenant_id, b.user_id, b.order_id) IN ({scopes}) AND {SETTLED_ITEMS}
+LIMIT {limit};"""
+    return [bytes.fromhex(row).decode("utf-8") for row in db.rows(query)]
+
+
+def delete_items(db, cutoff, ids):
+    item_ids = ", ".join(map(literal, ids))
+    # The delete starts with primary keys and checks the same parent conditions
+    # after candidate selection, so a concurrent change can only defer cleanup.
+    query = f"""{query_prefix(cutoff)}
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
 SET SESSION innodb_lock_wait_timeout=3;
-DELETE FROM {ITEMS} AS b WHERE {scope} ORDER BY b.id LIMIT {limit};
+DELETE b FROM {ITEMS} b
+STRAIGHT_JOIN lucky5_order o ON o.id=b.order_id AND o.tenant_id=b.tenant_id AND o.user_id=b.user_id
+STRAIGHT_JOIN lucky5_issue i ON {ISSUE_SCOPE}
+WHERE b.id IN ({item_ids}) AND {SETTLED_ITEMS} AND {SETTLED_ORDERS};
 SELECT ROW_COUNT();"""
-    else:
-        query += f"SELECT COUNT(*) FROM (SELECT 1 FROM {ITEMS} b WHERE {scope} LIMIT {limit}) batch;"
     [count] = db.rows(query)
     return int(count)
 
@@ -85,25 +92,27 @@ SELECT ROW_COUNT();"""
 def run(db, batch_size, max_rows, apply):
     [cutoff] = db.rows("SELECT DATE_FORMAT(NOW()-INTERVAL 7 DAY,'%Y-%m-%d %H:%i:%s');")
     print(f"Cutoff {cutoff}, mode {'delete' if apply else 'dry run'}", flush=True)
-    total = 0
+    scanned = deleted = 0
     after = None
-    while total < max_rows:
+    while scanned < max_rows:
         orders = list(candidate_orders(db, cutoff, after))
         if not orders:
             break
-        for order in orders:
-            after = order[0]
-            while total < max_rows:
-                limit = min(batch_size, max_rows - total) if apply else max_rows - total
-                count = process_batch(db, cutoff, order, limit, apply)
-                total += count
-                if apply and count:
-                    time.sleep(0.1)
-                if not apply or count < limit:
-                    break
-            if total == max_rows:
+        after = orders[-1][0]
+        while scanned < max_rows:
+            limit = min(batch_size, max_rows - scanned) if apply else max_rows - scanned
+            ids = candidate_items(db, orders, limit)
+            if not ids:
                 break
-    print(f"Eligible in scan {total} (limit {max_rows}), deleted {total if apply else 0}", flush=True)
+            scanned += len(ids)
+            if not apply:
+                break
+            removed = delete_items(db, cutoff, ids)
+            deleted += removed
+            time.sleep(0.1)
+            if len(ids) < limit or removed < len(ids):
+                break
+    print(f"Eligible in scan {scanned} (limit {max_rows}), deleted {deleted}", flush=True)
 
 
 def main():
