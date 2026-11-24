@@ -1,0 +1,17 @@
+[Unit]
+Description=Archive settled Lucky5 auto-proxy bet items
+Requires=docker.service
+After=docker.service
+RequiresMountsFor=/mnt/lucky5-retention-archive
+ConditionPathIsMountPoint=/mnt/lucky5-retention-archive
+
+[Service]
+Type=oneshot
+TimeoutStartSec=45min
+ExecStart=/usr/bin/docker run --rm --name lucky5-bet-item-retention \
+  --network lucky5-chen-guan-xi_default --read-only --tmpfs /tmp:mode=1777 \
+  --cap-drop=ALL --security-opt=no-new-privileges \
+  --mount type=bind,src=/etc/lucky5/bet-item-retention.cnf,dst=/run/mysql.cnf,readonly \
+  --mount type=bind,src=/mnt/lucky5-retention-archive/bet-items,dst=/archive \
+  lucky5-bet-item-retention:local --defaults-file /run/mysql.cnf --database ruoyi-vue-pro --archive-dir /archive --apply
+ExecStopPost=-/usr/bin/docker stop --time 15 lucky5-bet-item-retention
