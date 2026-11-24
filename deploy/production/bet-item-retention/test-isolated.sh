@@ -38,7 +38,8 @@ mysql_test <<'SQL'
 SET @older=NOW()-INTERVAL 8 DAY, @recent=NOW()-INTERVAL 6 DAY;
 INSERT INTO lucky5_issue (tenant_id,user_id,period,status,settled_at) VALUES
   (1,1,'old','SETTLED',@older), (1,1,'recent','SETTLED',@recent),
-  (1,1,'unsettled','DRAW_PENDING',@older), (2,2,'old','SETTLED',@older);
+  (1,1,'unsettled','DRAW_PENDING',@older), (1,1,'late-issue','SETTLED',@recent),
+  (2,2,'old','SETTLED',@older);
 INSERT INTO lucky5_order (id,tenant_id,user_id,member_id,member_name,period,content,amount,status,
   order_type,delivery_mode,market_status,market_order_id,item_count,settled_at,period_sequence) VALUES
   ('old-auto',1,1,'member','测试','old','旧托',1,'未中奖','AUTO_PROXY','LOCAL_ONLY','NOT_REQUIRED','',2,@older,1),
@@ -47,6 +48,8 @@ INSERT INTO lucky5_order (id,tenant_id,user_id,member_id,member_name,period,cont
   ('uncertain',1,1,'member','测试','old','外盘待核对',1,'已中奖','AUTO_PROXY','MARKET_ADAPTER','MANUAL_REVIEW','',1,@older,3),
   ('pending',1,1,'member','测试','unsettled','未结算期',1,'未中奖','AUTO_PROXY','LOCAL_ONLY','NOT_REQUIRED','',1,@older,1),
   ('legacy-count',1,1,'member','测试','old','注数缺失',1,'未中奖','AUTO_PROXY','LOCAL_ONLY','NOT_REQUIRED','',0,@older,4),
+  ('late-issue-auto',1,1,'member','测试','late-issue','刚完成开奖',1,'未中奖',
+    'AUTO_PROXY','LOCAL_ONLY','NOT_REQUIRED','',1,@older,1),
   ('tenant-two',2,2,'member','测试','old','其他租户',1,'未中奖','AUTO_PROXY','LOCAL_ONLY','NOT_REQUIRED','',1,@older,1);
 INSERT INTO lucky5_bet_item (id,tenant_id,user_id,order_id,play,selection,snapshot_json,amount,odds,won,creator) VALUES
   ('a-old-compact',1,1,'old-auto','复式','甲',JSON_OBJECT('payload',CONCAT('千百十个',CHAR(10,9,34,92),'😀')),1.20,1.9500,b'0','测试'),
@@ -59,6 +62,7 @@ INSERT INTO lucky5_bet_item (id,tenant_id,user_id,order_id,play,selection,snapsh
   ('missing-count',1,1,'legacy-count','一定位','XXX1',NULL,1,9,b'0','测试'),
   ('unfinished-item',1,1,'old-auto','一定位','XXX1',NULL,1,9,NULL,'测试'),
   ('wrong-tenant',2,1,'old-auto','一定位','XXX1',NULL,1,9,b'0','测试'),
+  ('late-issue-item',1,1,'late-issue-auto','一定位','XXX1',NULL,1,9,b'0','测试'),
   ('wrong-owner',1,2,'old-auto','一定位','XXX1',NULL,1,9,b'0','测试');
 CREATE TABLE lucky5_config (setting varchar(30));
 INSERT INTO lucky5_config VALUES ('keep');
@@ -73,15 +77,12 @@ host=mysql
 user=retention
 password=synthetic-worker-password
 CNF
-mkdir "$scratch/archive"
 chmod 0755 "$scratch"
 chmod 0644 "$scratch/client.cnf"
-chmod 0777 "$scratch/archive"
 worker() {
   docker run --rm --platform "$platform" --network "$test_name" --read-only --tmpfs /tmp:mode=1777 \
     --mount "type=bind,src=$scratch/client.cnf,dst=/run/mysql.cnf,readonly" \
-    --mount "type=bind,src=$scratch/archive,dst=/archive" \
-    "$image" --defaults-file /run/mysql.cnf --database retention_test --archive-dir /archive "$@"
+    "$image" --defaults-file /run/mysql.cnf --database retention_test "$@"
 }
 dump_items() {
   mysql_test -e 'SELECT id,tenant_id,user_id,order_id,play,selection,HEX(snapshot_json),amount,odds,
@@ -89,30 +90,21 @@ dump_items() {
     FROM lucky5_bet_item ORDER BY id'
 }
 dump_items > "$scratch/before"
-worker | tee "$scratch/dry"
-grep -q 'Eligible in scan 3 .*archived 0, deleted 0' "$scratch/dry"
+worker --batch-size 1 | tee "$scratch/dry"
+grep -q 'Eligible in scan 3 .*deleted 0' "$scratch/dry"
 dump_items | cmp -s - "$scratch/before"
 
-worker --apply --batch-size 10 | tee "$scratch/apply"
-grep -q 'archived 3, deleted 3' "$scratch/apply"
-test "$(mysql_test -e 'SELECT COUNT(*) FROM lucky5_bet_item')" = 8
+worker --apply --batch-size 1 --max-rows 1 | tee "$scratch/first"
+grep -q 'Eligible in scan 1 .*deleted 1' "$scratch/first"
+worker --apply --batch-size 1 | tee "$scratch/apply"
+grep -q 'Eligible in scan 2 .*deleted 2' "$scratch/apply"
+awk -F '\t' '$1 != "a-old-compact" && $1 != "b-old-legacy" && $1 != "c-other-tenant"' "$scratch/before" > "$scratch/expected"
+dump_items | cmp -s - "$scratch/expected"
 test "$(mysql_test -e 'SELECT setting FROM lucky5_config')" = keep
-test "$(mysql_test -e 'SELECT COUNT(*) FROM lucky5_order')" = 7
+test "$(mysql_test -e 'SELECT COUNT(*) FROM lucky5_order')" = 8
+test "$(mysql_test -e 'SELECT COUNT(*) FROM lucky5_issue')" = 5
 
-worker --apply --batch-size 10 | grep -q 'Eligible in scan 0 .*archived 0, deleted 0'
-archives=("$scratch"/archive/lucky5-bet-item-v1-*.sql.gz)
-test "${#archives[@]}" = 1
-gzip -dc "${archives[0]}" | mysql_test
-dump_items | cmp -s - "$scratch/before"
-gzip -dc "${archives[0]}" | mysql_test
-dump_items | cmp -s - "$scratch/before"
-
-printf 'corrupt archive\n' > "${archives[0]}"
-if worker --apply --batch-size 10 > "$scratch/corrupt" 2>&1; then
-  echo 'Archive corruption must stop deletion' >&2
-  exit 1
-fi
-dump_items | cmp -s - "$scratch/before"
+worker --apply | grep -q 'Eligible in scan 0 .*deleted 0'
 
 if docker exec -e MYSQL_PWD=synthetic-worker-password "$test_name" \
   mysql -h127.0.0.1 -uretention retention_test -e 'DELETE FROM lucky5_config' > "$scratch/privilege" 2>&1; then

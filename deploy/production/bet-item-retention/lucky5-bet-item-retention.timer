@@ -1,9 +1,10 @@
 [Unit]
-Description=Nightly Lucky5 auto-proxy bet item retention
+Description=Lucky5 auto-proxy bet item retention
 
 [Timer]
-OnCalendar=*-*-* 04:20:00 Asia/Shanghai
+OnCalendar=*-*-* *:02,12,22,32,42,52:00 Asia/Shanghai
 Persistent=true
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target
