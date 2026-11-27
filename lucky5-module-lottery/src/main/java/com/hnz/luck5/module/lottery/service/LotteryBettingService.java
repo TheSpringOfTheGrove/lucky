@@ -541,9 +541,10 @@ public class LotteryBettingService {
                 .replace("不要", "除")
                 .replace("全倒", "倒").replace("全转", "倒").replace('转', '倒'));
         Matcher reverseMode = Pattern.compile("^([0-9]+)([二三四])定倒(.*)$").matcher(normalized);
-        return reverseMode.matches()
-                ? reverseMode.group(1) + "倒" + reverseMode.group(2) + "定" + reverseMode.group(3)
-                : normalized;
+        if (reverseMode.matches()) {
+            normalized = reverseMode.group(1) + "倒" + reverseMode.group(2) + "定" + reverseMode.group(3);
+        }
+        return normalizeModeBeforePoolReverse(normalized);
     }
 
     private boolean validateDocumentFilters(String filters) {
@@ -1575,6 +1576,8 @@ public class LotteryBettingService {
     }
 
     private String normalizeReverseFixedAlias(String content) {
+        String modeBeforePool = normalizeModeBeforePoolReverse(content);
+        if (!modeBeforePool.equals(content)) return modeBeforePool;
         Matcher matcher = Pattern.compile(
                 "^([0-9]+)([二三四])定倒(.*各" + AMOUNT_VALUE_PATTERN + ")$").matcher(content);
         if (matcher.matches()) {
@@ -1586,6 +1589,13 @@ public class LotteryBettingService {
             return implicitFour.group(1) + "倒四定" + implicitFour.group(2);
         }
         return content;
+    }
+
+    private String normalizeModeBeforePoolReverse(String content) {
+        Matcher matcher = Pattern.compile("^([二三四])定(?:全)?倒([0-9]+)(.*)$").matcher(content);
+        return matcher.matches()
+                ? matcher.group(2) + "倒" + matcher.group(1) + "定" + matcher.group(3)
+                : content;
     }
 
     private String expandNumericFixedShorthand(String content) {
