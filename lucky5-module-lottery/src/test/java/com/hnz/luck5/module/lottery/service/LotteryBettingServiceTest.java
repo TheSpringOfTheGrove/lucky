@@ -330,6 +330,24 @@ class LotteryBettingServiceTest {
     }
 
     @Test
+    void parsesReverseFixedAliasWithModeBeforePool() {
+        assertThat(service.parse("二定全倒1579各1", odds))
+                .containsExactlyElementsOf(service.parse("1579全倒二定各1", odds));
+        assertThat(service.parse("三定全倒1579各1", odds))
+                .containsExactlyElementsOf(service.parse("1579全倒三定各1", odds));
+        assertThat(service.parse("四定全倒1579各1", odds))
+                .hasSize(24)
+                .containsExactlyElementsOf(service.parse("1579全倒四定各1", odds));
+        assertThat(service.parse("四定倒1579各1", odds))
+                .containsExactlyElementsOf(service.parse("1579倒四定各1", odds));
+        assertThat(service.parse("四定全倒1123各1", odds))
+                .hasSize(12)
+                .containsExactlyElementsOf(service.parse("1123全倒四定各1", odds));
+        assertThat(service.parseCommands("四定全倒1579各1", odds).get(0).content())
+                .isEqualTo("四定全倒1579各1");
+    }
+
+    @Test
     void parsesImplicitFullReverseAsFourPositionMultiset() {
         String command = "1133557799全倒各1";
         List<LotteryBettingService.ParsedBet> bets = service.parse(command, odds);
